@@ -7,133 +7,249 @@ document.addEventListener('DOMContentLoaded', () => {
     const App = {
         init() {
             this.bindEvents();
+            this.initComponents();
             this.setupGameState();
+            this.loadSettings();
+
+            console.log('Stars Nova Web initialized');
         },
 
+        /**
+         * Initialize all UI components.
+         */
+        initComponents() {
+            // Initialize dialogs first (needed by other components)
+            if (window.Dialogs) {
+                Dialogs.init();
+            }
+
+            // Initialize galaxy map
+            if (window.GalaxyMap) {
+                GalaxyMap.init('galaxy-map');
+            }
+
+            // Initialize panels
+            if (window.StarPanel) {
+                StarPanel.init('star-panel');
+            }
+
+            if (window.FleetPanel) {
+                FleetPanel.init('fleet-panel');
+            }
+
+            if (window.DesignPanel) {
+                DesignPanel.init('design-panel');
+            }
+
+            if (window.BattleViewer) {
+                BattleViewer.init('battle-viewer');
+            }
+        },
+
+        /**
+         * Bind UI event handlers.
+         */
         bindEvents() {
-            // Menu buttons
-            document.getElementById('menu-new-game')?.addEventListener('click', () => {
-                this.showNewGameDialog();
-            });
-
-            document.getElementById('menu-continue')?.addEventListener('click', () => {
-                this.showLoadGameDialog();
-            });
-
             // Header buttons
             document.getElementById('btn-new-game')?.addEventListener('click', () => {
-                this.showNewGameDialog();
+                Dialogs.showNewGame();
             });
 
             document.getElementById('btn-load-game')?.addEventListener('click', () => {
-                this.showLoadGameDialog();
+                Dialogs.showLoadGame();
+            });
+
+            document.getElementById('btn-ship-designer')?.addEventListener('click', () => {
+                if (window.DesignPanel) {
+                    DesignPanel.toggle();
+                }
+            });
+
+            document.getElementById('btn-generate-turn')?.addEventListener('click', () => {
+                this.generateTurn();
+            });
+
+            document.getElementById('btn-settings')?.addEventListener('click', () => {
+                Dialogs.showSettings();
+            });
+
+            // Menu buttons
+            document.getElementById('menu-new-game')?.addEventListener('click', () => {
+                Dialogs.showNewGame();
+            });
+
+            document.getElementById('menu-continue')?.addEventListener('click', () => {
+                this.continueGame();
+            });
+
+            document.getElementById('menu-load-game')?.addEventListener('click', () => {
+                Dialogs.showLoadGame();
+            });
+
+            document.getElementById('menu-settings')?.addEventListener('click', () => {
+                Dialogs.showSettings();
             });
         },
 
+        /**
+         * Setup game state event listeners.
+         */
         setupGameState() {
             GameState.on('gameCreated', (game) => {
-                this.hideMenu();
-                this.showGame();
-                console.log('Game created:', game);
+                this.onGameLoaded(game);
+                this.setStatus(`Created game: ${game.name}`);
             });
 
             GameState.on('gameLoaded', (game) => {
-                this.hideMenu();
-                this.showGame();
-                console.log('Game loaded:', game);
+                this.onGameLoaded(game);
+                this.setStatus(`Loaded game: ${game.name} (Turn ${game.turn})`);
             });
 
             GameState.on('starSelected', (star) => {
-                this.showStarPanel(star);
+                this.setStatus(`Selected: ${star.name}`);
             });
 
             GameState.on('fleetSelected', (fleet) => {
-                this.showFleetPanel(fleet);
+                this.setStatus(`Selected: ${fleet.name}`);
+            });
+
+            GameState.on('selectionCleared', () => {
+                this.setStatus('Ready');
             });
 
             GameState.on('turnGenerated', (turn) => {
-                console.log('Turn generated:', turn);
+                this.setStatus(`Turn ${turn} generated`);
+                // Show turn report if there are messages
+                if (GameState.game) {
+                    this.showTurnReport();
+                }
             });
         },
 
-        async showNewGameDialog() {
-            const name = prompt('Enter game name:', 'New Game');
-            if (!name) return;
+        /**
+         * Handle game loaded.
+         */
+        onGameLoaded(game) {
+            this.hideMenu();
+            this.showGame();
 
-            try {
-                await GameState.createGame(name, 2, 'medium');
-            } catch (error) {
-                alert('Failed to create game: ' + error.message);
+            // Center galaxy map on homeworld
+            if (window.GalaxyMap) {
+                GalaxyMap.centerOnHomeworld();
             }
         },
 
-        async showLoadGameDialog() {
+        /**
+         * Continue last game.
+         */
+        async continueGame() {
             try {
                 const games = await ApiClient.listGames();
                 if (games.length === 0) {
-                    alert('No saved games found.');
+                    Dialogs.showNewGame();
                     return;
                 }
 
-                const gameList = games.map((g, i) => `${i + 1}. ${g.name} (Turn ${g.turn})`).join('\n');
-                const choice = prompt(`Select a game:\n${gameList}\n\nEnter number:`);
-
-                if (!choice) return;
-                const index = parseInt(choice) - 1;
-
-                if (index >= 0 && index < games.length) {
-                    await GameState.loadGame(games[index].id);
-                }
+                // Load most recent game
+                await GameState.loadGame(games[0].id);
             } catch (error) {
-                alert('Failed to load games: ' + error.message);
+                console.error('Failed to continue:', error);
+                Dialogs.showNewGame();
             }
         },
 
+        /**
+         * Generate next turn.
+         */
+        async generateTurn() {
+            if (!GameState.game) {
+                this.setStatus('No active game');
+                return;
+            }
+
+            // Check settings for confirmation
+            const settings = Dialogs.loadSettings();
+            if (settings.confirmEndTurn) {
+                const confirmed = await Dialogs.confirm(
+                    'Generate Turn',
+                    'Are you sure you want to generate the next turn?'
+                );
+                if (!confirmed) return;
+            }
+
+            try {
+                this.setStatus('Generating turn...');
+                await GameState.generateTurn();
+            } catch (error) {
+                this.setStatus('Turn generation failed');
+                alert('Failed to generate turn: ' + error.message);
+            }
+        },
+
+        /**
+         * Show turn report.
+         */
+        async showTurnReport() {
+            if (!GameState.game) return;
+
+            try {
+                // Construct a report from current state
+                const report = {
+                    turn: GameState.game.turn,
+                    stars: GameState.stars.filter(s => s.owner === 1).length,
+                    fleets: GameState.fleets.filter(f => f.owner === 1).length,
+                    population: GameState.stars
+                        .filter(s => s.owner === 1)
+                        .reduce((sum, s) => sum + (s.colonists || 0), 0),
+                    messages: GameState.game.messages || []
+                };
+
+                Dialogs.showTurnReport(report);
+            } catch (error) {
+                console.error('Failed to show turn report:', error);
+            }
+        },
+
+        /**
+         * Hide main menu.
+         */
         hideMenu() {
             document.getElementById('menu-container')?.classList.add('hidden');
         },
 
+        /**
+         * Show main menu.
+         */
         showMenu() {
             document.getElementById('menu-container')?.classList.remove('hidden');
+            document.getElementById('game-container')?.classList.add('hidden');
         },
 
+        /**
+         * Show game view.
+         */
         showGame() {
             document.getElementById('game-container')?.classList.remove('hidden');
         },
 
-        showStarPanel(star) {
-            const panel = document.getElementById('star-panel');
-            const info = document.getElementById('star-info');
-
-            if (!panel || !info || !star) return;
-
-            document.getElementById('fleet-panel')?.classList.add('hidden');
-            panel.classList.remove('hidden');
-
-            info.innerHTML = `
-                <p><strong>Name:</strong> ${star.name}</p>
-                <p><strong>Position:</strong> (${star.position_x}, ${star.position_y})</p>
-                <p><strong>Colonists:</strong> ${star.colonists.toLocaleString()}</p>
-                <p><strong>Factories:</strong> ${star.factories}</p>
-                <p><strong>Mines:</strong> ${star.mines}</p>
-            `;
+        /**
+         * Set status bar text.
+         */
+        setStatus(text) {
+            const statusBar = document.getElementById('status-bar');
+            if (statusBar) {
+                statusBar.textContent = text;
+            }
         },
 
-        showFleetPanel(fleet) {
-            const panel = document.getElementById('fleet-panel');
-            const info = document.getElementById('fleet-info');
-
-            if (!panel || !info || !fleet) return;
-
-            document.getElementById('star-panel')?.classList.add('hidden');
-            panel.classList.remove('hidden');
-
-            info.innerHTML = `
-                <p><strong>Name:</strong> ${fleet.name}</p>
-                <p><strong>Position:</strong> (${fleet.position_x}, ${fleet.position_y})</p>
-                <p><strong>Fuel:</strong> ${Math.round(fleet.fuel_available)} mg</p>
-                <p><strong>Cargo:</strong> ${fleet.cargo_mass} kT</p>
-            `;
+        /**
+         * Load and apply settings.
+         */
+        loadSettings() {
+            if (window.Dialogs) {
+                const settings = Dialogs.loadSettings();
+                Dialogs.applySettings(settings);
+            }
         }
     };
 

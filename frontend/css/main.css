@@ -24,24 +24,29 @@ header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 2rem;
+    padding: 0.75rem 1.5rem;
     background-color: #1a1a2e;
     border-bottom: 1px solid #333;
 }
 
 header h1 {
-    font-size: 1.5rem;
+    font-size: 1.25rem;
     color: #7cb3ff;
 }
 
+header nav {
+    display: flex;
+    gap: 0.5rem;
+}
+
 header nav button {
-    margin-left: 1rem;
-    padding: 0.5rem 1rem;
+    padding: 0.4rem 0.8rem;
     background-color: #2a2a4e;
     border: 1px solid #444;
     color: #e0e0e0;
     cursor: pointer;
     border-radius: 4px;
+    font-size: 0.875rem;
 }
 
 header nav button:hover {
@@ -71,14 +76,16 @@ main {
     width: 100%;
     height: 100%;
     background-color: #050510;
+    cursor: grab;
 }
 
-/* Info panel */
+/* Info panel (right sidebar) */
 #info-panel {
-    width: 300px;
+    width: 320px;
     background-color: #1a1a2e;
     border-left: 1px solid #333;
     padding: 1rem;
+    overflow-y: auto;
 }
 
 .panel {
@@ -96,6 +103,12 @@ main {
     padding-bottom: 0.5rem;
 }
 
+.panel h3 {
+    font-size: 0.875rem;
+    color: #9cc3ff;
+    margin: 0.75rem 0 0.5rem 0;
+}
+
 /* Menu container */
 #menu-container {
     position: absolute;
@@ -106,7 +119,7 @@ main {
     display: flex;
     justify-content: center;
     align-items: center;
-    background-color: rgba(10, 10, 26, 0.95);
+    background-color: rgba(10, 10, 26, 0.98);
 }
 
 .menu-card {
@@ -115,14 +128,16 @@ main {
     border-radius: 8px;
     padding: 2rem 3rem;
     text-align: center;
+    min-width: 300px;
 }
 
-.menu-card h2 {
+.menu-logo h2 {
     color: #7cb3ff;
+    font-size: 2rem;
     margin-bottom: 0.5rem;
 }
 
-.menu-card p {
+.menu-logo p {
     color: #888;
     margin-bottom: 2rem;
 }
@@ -130,11 +145,11 @@ main {
 .menu-buttons {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.75rem;
 }
 
 .menu-buttons button {
-    padding: 1rem 2rem;
+    padding: 0.875rem 1.5rem;
     font-size: 1rem;
     border: 1px solid #444;
     border-radius: 4px;
@@ -159,15 +174,26 @@ main {
     background-color: #3a3a5e;
 }
 
+.menu-footer {
+    margin-top: 2rem;
+    font-size: 0.75rem;
+    color: #666;
+}
+
 /* Footer */
 footer {
     display: flex;
     justify-content: space-between;
-    padding: 0.5rem 2rem;
+    align-items: center;
+    padding: 0.5rem 1.5rem;
     background-color: #1a1a2e;
     border-top: 1px solid #333;
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     color: #666;
+}
+
+#status-bar {
+    color: #888;
 }
 
 footer a {
@@ -182,4 +208,703 @@ footer a:hover {
 /* Utility */
 .hidden {
     display: none !important;
+}
+
+/* Buttons */
+.btn-primary {
+    background-color: #3a5a9e !important;
+    color: white !important;
+    border: none !important;
+}
+
+.btn-primary:hover {
+    background-color: #4a6aae !important;
+}
+
+.btn-secondary {
+    background-color: #2a2a4e !important;
+    color: #e0e0e0 !important;
+}
+
+.btn-secondary:hover {
+    background-color: #3a3a5e !important;
+}
+
+.btn-danger {
+    background-color: #8b3a3a !important;
+    color: white !important;
+}
+
+.btn-danger:hover {
+    background-color: #a04a4a !important;
+}
+
+.btn-small {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
+    border-radius: 3px;
+    cursor: pointer;
+    background-color: #2a2a4e;
+    border: 1px solid #444;
+    color: #e0e0e0;
+}
+
+.btn-small:hover {
+    background-color: #3a3a5e;
+}
+
+.btn-tiny {
+    padding: 0.2rem 0.4rem;
+    font-size: 0.7rem;
+    border-radius: 2px;
+    cursor: pointer;
+    background-color: #2a2a4e;
+    border: 1px solid #444;
+    color: #e0e0e0;
+}
+
+.btn-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem;
+}
+
+.btn-close:hover {
+    color: #fff;
+}
+
+/* Form elements */
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.35rem;
+    color: #aaa;
+    font-size: 0.875rem;
+}
+
+.form-input,
+.form-select,
+.design-select {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: #1a1a2e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+}
+
+.form-input:focus,
+.form-select:focus {
+    outline: none;
+    border-color: #7cb3ff;
+}
+
+.form-range {
+    width: 100%;
+}
+
+/* Stat rows */
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.25rem 0;
+    font-size: 0.85rem;
+}
+
+.stat-value {
+    color: #7cb3ff;
+}
+
+/* Progress bars */
+.progress-bar {
+    height: 8px;
+    background-color: #1a1a2e;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 0.35rem 0;
+}
+
+.progress-fill {
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+.progress-fill.population {
+    background-color: #4a9a4a;
+}
+
+.progress-fill.fuel {
+    background-color: #9a6a4a;
+}
+
+.progress-fill.cargo {
+    background-color: #4a6a9a;
+}
+
+/* Resource bars */
+.resource-row,
+.concentration-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.8rem;
+}
+
+.resource-name {
+    width: 80px;
+    color: #aaa;
+}
+
+.resource-bar,
+.concentration-bar {
+    flex: 1;
+    height: 10px;
+    background-color: #1a1a2e;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.resource-fill {
+    height: 100%;
+}
+
+.resource-fill.ironium {
+    background-color: #0080ff;
+}
+
+.resource-fill.boranium {
+    background-color: #00cc00;
+}
+
+.resource-fill.germanium {
+    background-color: #cccc00;
+}
+
+.concentration-fill {
+    height: 100%;
+}
+
+.concentration-fill.high {
+    background-color: #00cc00;
+}
+
+.concentration-fill.medium {
+    background-color: #cccc00;
+}
+
+.concentration-fill.low {
+    background-color: #cc4400;
+}
+
+.resource-value,
+.concentration-value {
+    width: 50px;
+    text-align: right;
+    color: #888;
+}
+
+/* Cargo breakdown */
+.cargo-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.cargo-item {
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+}
+
+.cargo-item.ironium {
+    background-color: rgba(0, 128, 255, 0.3);
+    color: #4ac0ff;
+}
+
+.cargo-item.boranium {
+    background-color: rgba(0, 204, 0, 0.3);
+    color: #4aff4a;
+}
+
+.cargo-item.germanium {
+    background-color: rgba(204, 204, 0, 0.3);
+    color: #ffff4a;
+}
+
+.cargo-item.colonists {
+    background-color: rgba(255, 128, 0, 0.3);
+    color: #ffa04a;
+}
+
+/* Lists */
+.ship-list,
+.waypoint-list,
+.production-queue {
+    list-style: none;
+    margin: 0.5rem 0;
+}
+
+.ship-item,
+.waypoint-item,
+.queue-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0.5rem;
+    background-color: #1a1a2e;
+    border-radius: 3px;
+    margin-bottom: 0.25rem;
+    font-size: 0.85rem;
+}
+
+.waypoint-item {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.waypoint-dest {
+    font-weight: bold;
+    color: #7cb3ff;
+}
+
+.waypoint-task,
+.waypoint-warp {
+    font-size: 0.75rem;
+    color: #888;
+}
+
+/* Section headers */
+.star-section,
+.fleet-section {
+    margin-bottom: 1rem;
+}
+
+.star-panel-header,
+.fleet-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.star-position,
+.fleet-position {
+    font-size: 0.75rem;
+    color: #888;
+}
+
+/* Action buttons */
+.action-buttons,
+.waypoint-buttons,
+.production-buttons {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+/* Info text */
+.info-text {
+    color: #888;
+    font-size: 0.85rem;
+    font-style: italic;
+}
+
+/* Dialog overlay */
+.dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.dialog-content {
+    background-color: #1a1a2e;
+    border: 1px solid #444;
+    border-radius: 8px;
+    min-width: 400px;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #444;
+}
+
+.dialog-header h2 {
+    color: #7cb3ff;
+    font-size: 1.25rem;
+}
+
+.dialog-body {
+    padding: 1.5rem;
+}
+
+.dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #444;
+}
+
+.dialog-footer button {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid #444;
+}
+
+/* Game list in load dialog */
+.game-list {
+    list-style: none;
+}
+
+.game-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background-color: #2a2a4e;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+}
+
+.game-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.game-name {
+    font-weight: bold;
+    color: #e0e0e0;
+}
+
+.game-turn {
+    font-size: 0.8rem;
+    color: #888;
+}
+
+.game-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Turn report */
+.turn-report .report-summary {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background-color: #2a2a4e;
+    border-radius: 4px;
+}
+
+.summary-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.summary-label {
+    font-size: 0.75rem;
+    color: #888;
+}
+
+.summary-value {
+    font-size: 1.25rem;
+    color: #7cb3ff;
+}
+
+.message-list {
+    list-style: none;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.message-item {
+    padding: 0.5rem;
+    border-left: 3px solid #444;
+    margin-bottom: 0.5rem;
+    background-color: #2a2a4e;
+}
+
+.message-type {
+    font-size: 0.75rem;
+    color: #888;
+    margin-right: 0.5rem;
+}
+
+/* Floating panels */
+.floating-panel {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #1a1a2e;
+    border: 1px solid #444;
+    border-radius: 8px;
+    min-width: 600px;
+    max-width: 900px;
+    max-height: 80vh;
+    overflow-y: auto;
+    z-index: 500;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* Design panel */
+.design-panel-header,
+.battle-viewer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #444;
+}
+
+.design-panel-content {
+    display: flex;
+    padding: 1rem;
+    gap: 1rem;
+}
+
+.design-left {
+    flex: 1;
+}
+
+.design-right {
+    flex: 1;
+}
+
+.design-section {
+    margin-bottom: 1rem;
+}
+
+.design-section h3 {
+    font-size: 0.9rem;
+    color: #9cc3ff;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid #333;
+    padding-bottom: 0.25rem;
+}
+
+.design-section h4 {
+    font-size: 0.8rem;
+    color: #888;
+    margin: 0.5rem 0 0.25rem 0;
+}
+
+.component-list {
+    list-style: none;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.component-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0.5rem;
+    background-color: #1a1a2e;
+    border-radius: 3px;
+    margin-bottom: 0.25rem;
+    font-size: 0.8rem;
+}
+
+.design-preview {
+    background-color: #0a0a1a;
+    padding: 1rem;
+    border-radius: 4px;
+    min-height: 200px;
+}
+
+.design-preview-empty {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 200px;
+    color: #666;
+}
+
+.hull-shape {
+    text-align: center;
+    font-size: 1.5rem;
+    color: #7cb3ff;
+    margin-bottom: 1rem;
+}
+
+.slots-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+}
+
+.slot {
+    padding: 0.5rem;
+    background-color: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 3px;
+    text-align: center;
+    font-size: 0.7rem;
+}
+
+.slot.filled {
+    border-color: #7cb3ff;
+}
+
+.slot-type {
+    display: block;
+    color: #888;
+}
+
+.slot-component {
+    display: block;
+    color: #e0e0e0;
+}
+
+.stats-grid {
+    background-color: #1a1a2e;
+    padding: 0.5rem;
+    border-radius: 4px;
+}
+
+.cost-grid {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.cost-item {
+    padding: 0.35rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+}
+
+.design-name-input {
+    width: 100%;
+    padding: 0.5rem;
+    background-color: #1a1a2e;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.design-panel-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #444;
+}
+
+.design-panel-footer button {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid #444;
+}
+
+/* Battle viewer */
+.battle-viewer-content {
+    display: flex;
+    padding: 1rem;
+    gap: 1rem;
+}
+
+#battle-canvas {
+    background-color: #050510;
+    border: 1px solid #333;
+}
+
+.battle-info {
+    flex: 1;
+    min-width: 200px;
+}
+
+.battle-participants,
+.battle-log {
+    margin-bottom: 1rem;
+}
+
+.battle-participants h3,
+.battle-log h3 {
+    font-size: 0.9rem;
+    color: #9cc3ff;
+    margin-bottom: 0.5rem;
+}
+
+.combatant {
+    padding: 0.35rem 0.5rem;
+    margin-bottom: 0.25rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+}
+
+.combatant.friendly {
+    background-color: rgba(0, 255, 0, 0.1);
+    border-left: 3px solid #00ff00;
+}
+
+.combatant.enemy {
+    background-color: rgba(255, 0, 0, 0.1);
+    border-left: 3px solid #ff0000;
+}
+
+#battle-log-content {
+    max-height: 200px;
+    overflow-y: auto;
+    background-color: #1a1a2e;
+    padding: 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.log-entry {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid #333;
+}
+
+.battle-viewer-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #444;
+}
+
+.step-indicator {
+    margin-left: 1rem;
+    font-size: 0.85rem;
+    color: #888;
+}
+
+.speed-select {
+    margin-left: auto;
+    padding: 0.35rem;
+    background-color: #1a1a2e;
+    border: 1px solid #444;
+    border-radius: 3px;
+    color: #e0e0e0;
 }

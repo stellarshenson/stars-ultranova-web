@@ -14,48 +14,73 @@
             <nav>
                 <button id="btn-new-game">New Game</button>
                 <button id="btn-load-game">Load Game</button>
+                <button id="btn-ship-designer">Ship Designer</button>
+                <button id="btn-generate-turn">Generate Turn</button>
+                <button id="btn-settings">Settings</button>
             </nav>
         </header>
 
         <main>
+            <!-- Game container - shown when game is active -->
             <div id="game-container" class="hidden">
                 <div id="galaxy-map-container">
                     <canvas id="galaxy-map"></canvas>
                 </div>
 
                 <aside id="info-panel">
-                    <div id="star-panel" class="panel hidden">
-                        <h2>Star System</h2>
-                        <div id="star-info"></div>
-                    </div>
+                    <!-- Star Panel -->
+                    <div id="star-panel" class="panel hidden"></div>
 
-                    <div id="fleet-panel" class="panel hidden">
-                        <h2>Fleet</h2>
-                        <div id="fleet-info"></div>
-                    </div>
+                    <!-- Fleet Panel -->
+                    <div id="fleet-panel" class="panel hidden"></div>
                 </aside>
             </div>
 
+            <!-- Menu container - shown when no game is active -->
             <div id="menu-container">
                 <div class="menu-card">
-                    <h2>Welcome to Stars Nova</h2>
-                    <p>A 4X strategy game in space</p>
+                    <div class="menu-logo">
+                        <h2>Stars Nova</h2>
+                        <p>A 4X Strategy Game in Space</p>
+                    </div>
                     <div class="menu-buttons">
                         <button id="menu-new-game" class="primary">New Game</button>
                         <button id="menu-continue">Continue</button>
+                        <button id="menu-load-game">Load Game</button>
+                        <button id="menu-settings">Settings</button>
+                    </div>
+                    <div class="menu-footer">
+                        <p>Based on Stars! by Jeff Johnson and Jeff McBride</p>
                     </div>
                 </div>
             </div>
+
+            <!-- Design Panel - floating window -->
+            <div id="design-panel" class="floating-panel hidden"></div>
+
+            <!-- Battle Viewer - floating window -->
+            <div id="battle-viewer" class="floating-panel hidden"></div>
         </main>
 
         <footer>
+            <span id="status-bar">Ready</span>
             <span>Stars Nova Web v0.1.0</span>
             <a href="/docs">API Documentation</a>
         </footer>
     </div>
 
+    <!-- Dialog overlay -->
+    <div id="dialog-overlay" class="dialog-overlay hidden"></div>
+
+    <!-- Scripts - load order matters -->
     <script src="/static/js/api/client.js"></script>
     <script src="/static/js/state/game-state.js"></script>
+    <script src="/static/js/views/galaxy-map.js"></script>
+    <script src="/static/js/views/star-panel.js"></script>
+    <script src="/static/js/views/fleet-panel.js"></script>
+    <script src="/static/js/views/design-panel.js"></script>
+    <script src="/static/js/views/battle-viewer.js"></script>
+    <script src="/static/js/views/dialogs.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>
