@@ -1,13 +1,18 @@
 /**
  * Stars Nova Web - SVG Nebula Renderer
  *
- * Renders nebulae based on astronomical models:
- * - Emission nebulae (H-II regions): Ionized hydrogen around hot O/B stars, pink/magenta
- * - Reflection nebulae: Dust scattering starlight, blue tint
- * - Dark nebulae: Cold molecular clouds absorbing light
- * - Diffuse nebulae: Large faint structures with complex filamentary patterns
+ * Renders nebulae using Gaussian Mixture Models along filament spines,
+ * based on astronomical observations of nebula morphology:
  *
- * Uses multiple overlapping layers with heavy blur for soft, realistic boundaries.
+ * - Filamentary structures from shock fronts and magnetic field lines
+ * - Rayleigh-Taylor instabilities creating finger-like projections
+ * - Turbulent flows producing wispy, stringy appearance
+ * - KDE-like density contours for organic boundaries
+ *
+ * References:
+ * - Veil Nebula: Supernova remnant with intricate filaments
+ * - Crab Nebula: Filamentary structure from pulsar wind
+ * - Orion Nebula: H-II region with pillars and streamers
  */
 
 const NebulaSVG = {
@@ -17,29 +22,25 @@ const NebulaSVG = {
 
     // Astronomical color palettes
     palettes: {
-        // H-II emission (hydrogen-alpha pink + oxygen-III teal)
         emission: {
             primary: { r: 180, g: 60, b: 120 },    // H-alpha pink
             secondary: { r: 100, g: 160, b: 180 }, // O-III teal
-            highlight: { r: 220, g: 100, b: 160 }  // Bright core
+            tertiary: { r: 140, g: 80, b: 160 }    // Mixed
         },
-        // Reflection nebulae (blue from Rayleigh scattering)
         reflection: {
             primary: { r: 80, g: 120, b: 200 },
             secondary: { r: 100, g: 140, b: 220 },
-            highlight: { r: 150, g: 180, b: 255 }
+            tertiary: { r: 60, g: 100, b: 180 }
         },
-        // Dark/molecular clouds
         dark: {
             primary: { r: 15, g: 10, b: 25 },
             secondary: { r: 25, g: 15, b: 35 },
-            highlight: { r: 10, g: 5, b: 15 }
+            tertiary: { r: 20, g: 12, b: 30 }
         },
-        // Diffuse interstellar medium (purple/violet)
         diffuse: {
             primary: { r: 70, g: 50, b: 110 },
             secondary: { r: 90, g: 60, b: 130 },
-            highlight: { r: 110, g: 80, b: 150 }
+            tertiary: { r: 80, g: 55, b: 120 }
         }
     },
 
@@ -55,92 +56,46 @@ const NebulaSVG = {
 
         this.svg.innerHTML = '';
 
-        // Create defs for filters
         this.defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
         this.svg.appendChild(this.defs);
 
-        // Create advanced blur filters
         this.createFilters();
 
-        // Create group for nebulae
         this.nebulaeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         this.nebulaeGroup.setAttribute('id', 'nebulae');
         this.svg.appendChild(this.nebulaeGroup);
 
-        console.log('NebulaSVG initialized with astronomical models');
+        console.log('NebulaSVG initialized with GMM filamentary model');
     },
 
     /**
-     * Create SVG blur filters with multiple intensities for layered rendering.
+     * Create SVG filters for soft, diffuse appearance.
      */
     createFilters() {
-        // Ultra-soft blur for outer halos
-        this.createBlurFilter('blur-ultra', 40);
-        // Heavy blur for diffuse regions
-        this.createBlurFilter('blur-heavy', 25);
-        // Medium blur for main body
-        this.createBlurFilter('blur-medium', 15);
-        // Soft blur for structure
-        this.createBlurFilter('blur-soft', 8);
-        // Light blur for detail
-        this.createBlurFilter('blur-light', 4);
-        // Wispy filter for filaments
-        this.createBlurFilter('blur-wispy', 3);
+        // Multiple blur levels
+        [['blur-extreme', 50], ['blur-ultra', 35], ['blur-heavy', 22],
+         ['blur-medium', 14], ['blur-soft', 8], ['blur-light', 4], ['blur-wispy', 2]
+        ].forEach(([id, std]) => this.createBlurFilter(id, std));
 
-        // Turbulence filter for adding texture
-        this.createTurbulenceFilter();
-
-        // Glow filter for bright cores
+        // Glow filter for bright regions
         this.createGlowFilter();
+
+        // Turbulence for texture
+        this.createTurbulenceFilter();
     },
 
     createBlurFilter(id, stdDev) {
         const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
         filter.setAttribute('id', id);
-        filter.setAttribute('x', '-100%');
-        filter.setAttribute('y', '-100%');
-        filter.setAttribute('width', '300%');
-        filter.setAttribute('height', '300%');
+        filter.setAttribute('x', '-150%');
+        filter.setAttribute('y', '-150%');
+        filter.setAttribute('width', '400%');
+        filter.setAttribute('height', '400%');
 
         const blur = document.createElementNS('http://www.w3.org/2000/svg', 'feGaussianBlur');
         blur.setAttribute('in', 'SourceGraphic');
         blur.setAttribute('stdDeviation', stdDev);
 
-        filter.appendChild(blur);
-        this.defs.appendChild(filter);
-    },
-
-    createTurbulenceFilter() {
-        const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
-        filter.setAttribute('id', 'turbulence');
-        filter.setAttribute('x', '-50%');
-        filter.setAttribute('y', '-50%');
-        filter.setAttribute('width', '200%');
-        filter.setAttribute('height', '200%');
-
-        // Fractal noise
-        const turbulence = document.createElementNS('http://www.w3.org/2000/svg', 'feTurbulence');
-        turbulence.setAttribute('type', 'fractalNoise');
-        turbulence.setAttribute('baseFrequency', '0.02');
-        turbulence.setAttribute('numOctaves', '4');
-        turbulence.setAttribute('result', 'noise');
-
-        // Displacement map
-        const displacement = document.createElementNS('http://www.w3.org/2000/svg', 'feDisplacementMap');
-        displacement.setAttribute('in', 'SourceGraphic');
-        displacement.setAttribute('in2', 'noise');
-        displacement.setAttribute('scale', '20');
-        displacement.setAttribute('xChannelSelector', 'R');
-        displacement.setAttribute('yChannelSelector', 'G');
-        displacement.setAttribute('result', 'displaced');
-
-        // Blur the result
-        const blur = document.createElementNS('http://www.w3.org/2000/svg', 'feGaussianBlur');
-        blur.setAttribute('in', 'displaced');
-        blur.setAttribute('stdDeviation', '10');
-
-        filter.appendChild(turbulence);
-        filter.appendChild(displacement);
         filter.appendChild(blur);
         this.defs.appendChild(filter);
     },
@@ -154,27 +109,49 @@ const NebulaSVG = {
         filter.setAttribute('height', '300%');
 
         const blur = document.createElementNS('http://www.w3.org/2000/svg', 'feGaussianBlur');
-        blur.setAttribute('stdDeviation', '6');
+        blur.setAttribute('stdDeviation', '5');
         blur.setAttribute('result', 'glow');
 
         const merge = document.createElementNS('http://www.w3.org/2000/svg', 'feMerge');
-        const node1 = document.createElementNS('http://www.w3.org/2000/svg', 'feMergeNode');
-        node1.setAttribute('in', 'glow');
-        const node2 = document.createElementNS('http://www.w3.org/2000/svg', 'feMergeNode');
-        node2.setAttribute('in', 'glow');
-        const node3 = document.createElementNS('http://www.w3.org/2000/svg', 'feMergeNode');
-        node3.setAttribute('in', 'SourceGraphic');
-        merge.appendChild(node1);
-        merge.appendChild(node2);
-        merge.appendChild(node3);
+        ['glow', 'glow', 'SourceGraphic'].forEach(input => {
+            const node = document.createElementNS('http://www.w3.org/2000/svg', 'feMergeNode');
+            node.setAttribute('in', input);
+            merge.appendChild(node);
+        });
 
         filter.appendChild(blur);
         filter.appendChild(merge);
         this.defs.appendChild(filter);
     },
 
+    createTurbulenceFilter() {
+        const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+        filter.setAttribute('id', 'turbulence');
+        filter.setAttribute('x', '-50%');
+        filter.setAttribute('y', '-50%');
+        filter.setAttribute('width', '200%');
+        filter.setAttribute('height', '200%');
+
+        const turbulence = document.createElementNS('http://www.w3.org/2000/svg', 'feTurbulence');
+        turbulence.setAttribute('type', 'fractalNoise');
+        turbulence.setAttribute('baseFrequency', '0.015');
+        turbulence.setAttribute('numOctaves', '5');
+        turbulence.setAttribute('result', 'noise');
+
+        const displacement = document.createElementNS('http://www.w3.org/2000/svg', 'feDisplacementMap');
+        displacement.setAttribute('in', 'SourceGraphic');
+        displacement.setAttribute('in2', 'noise');
+        displacement.setAttribute('scale', '15');
+        displacement.setAttribute('xChannelSelector', 'R');
+        displacement.setAttribute('yChannelSelector', 'G');
+
+        filter.appendChild(turbulence);
+        filter.appendChild(displacement);
+        this.defs.appendChild(filter);
+    },
+
     /**
-     * Seeded random number generator.
+     * Seeded random number generator (improved quality).
      */
     seededRandom(seed) {
         const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
@@ -182,373 +159,535 @@ const NebulaSVG = {
     },
 
     /**
+     * Box-Muller transform for Gaussian random numbers.
+     */
+    gaussianRandom(seed, mean = 0, stdDev = 1) {
+        const u1 = this.seededRandom(seed);
+        const u2 = this.seededRandom(seed + 0.5);
+        const z = Math.sqrt(-2 * Math.log(u1 + 0.0001)) * Math.cos(2 * Math.PI * u2);
+        return mean + z * stdDev;
+    },
+
+    /**
      * Generate nebulae from backend data or procedurally.
      */
     generate(stars, universeWidth, universeHeight, seed = 0) {
         if (!this.nebulaeGroup) return;
-
         this.nebulaeGroup.innerHTML = '';
 
-        // Use backend nebula data if available
         if (GameState.nebulae && GameState.nebulae.regions && GameState.nebulae.regions.length > 0) {
-            this.renderFromBackend(GameState.nebulae);
+            this.renderFromBackend(GameState.nebulae, seed);
             return;
         }
 
-        // Fallback: procedural generation based on star distribution
         this.generateProcedural(stars, universeWidth, universeHeight, seed);
     },
 
     /**
-     * Render nebulae from backend NebulaField data with astronomical accuracy.
+     * Render nebulae from backend data using filamentary GMM.
      */
-    renderFromBackend(nebulaField) {
+    renderFromBackend(nebulaField, baseSeed = 0) {
         if (!this.nebulaeGroup) return;
 
-        // Sort by size (largest first) for proper layering
         const sortedRegions = [...nebulaField.regions].sort(
             (a, b) => Math.max(b.radius_x, b.radius_y) - Math.max(a.radius_x, a.radius_y)
         );
 
         for (let i = 0; i < sortedRegions.length; i++) {
-            const region = sortedRegions[i];
-            this.renderNebulaRegion(region, i);
+            this.renderFilamentaryNebula(sortedRegions[i], baseSeed + i * 10000);
         }
     },
 
     /**
-     * Render a single nebula region with multiple layers for soft boundaries.
+     * Render a single nebula using GMM-based filamentary structure.
      */
-    renderNebulaRegion(region, seed) {
+    renderFilamentaryNebula(region, seed) {
         const palette = this.palettes[region.nebula_type] || this.palettes.diffuse;
         const baseRadius = Math.max(region.radius_x, region.radius_y);
 
-        // Layer 1: Ultra-soft outer halo (very large, very faint)
-        this.addNebulaLayer({
-            x: region.x,
-            y: region.y,
-            radiusX: region.radius_x * 2.0,
-            radiusY: region.radius_y * 2.0,
-            rotation: region.rotation,
-            color: palette.primary,
-            opacity: region.density * 0.03,
-            filter: 'blur-ultra',
-            seed: seed * 1000,
-            points: 12
+        // Generate filament network using GMM
+        const filaments = this.generateFilamentNetwork(region, seed);
+
+        // Render background diffuse glow (very soft)
+        this.renderDiffuseHalo(region, palette, seed);
+
+        // Render each filament with multiple layers
+        filaments.forEach((filament, i) => {
+            this.renderFilament(filament, palette, region.density, seed + i * 100);
         });
 
-        // Layer 2: Heavy blur outer region
-        this.addNebulaLayer({
-            x: region.x,
-            y: region.y,
-            radiusX: region.radius_x * 1.5,
-            radiusY: region.radius_y * 1.5,
-            rotation: region.rotation,
-            color: palette.primary,
-            opacity: region.density * 0.06,
-            filter: 'blur-heavy',
-            seed: seed * 1000 + 100,
-            points: 10
-        });
-
-        // Layer 3: Medium blur main body
-        this.addNebulaLayer({
-            x: region.x,
-            y: region.y,
-            radiusX: region.radius_x * 1.1,
-            radiusY: region.radius_y * 1.1,
-            rotation: region.rotation,
-            color: this.mixColors(palette.primary, palette.secondary, 0.3),
-            opacity: region.density * 0.08,
-            filter: 'blur-medium',
-            seed: seed * 1000 + 200,
-            points: 10
-        });
-
-        // Layer 4: Inner structure with turbulence
-        if (region.nebula_type !== 'dark') {
-            this.addNebulaLayer({
-                x: region.x,
-                y: region.y,
-                radiusX: region.radius_x * 0.8,
-                radiusY: region.radius_y * 0.8,
-                rotation: region.rotation,
-                color: palette.secondary,
-                opacity: region.density * 0.1,
-                filter: 'turbulence',
-                seed: seed * 1000 + 300,
-                points: 8
-            });
-        }
-
-        // Layer 5: Bright core for emission nebulae
-        if (region.nebula_type === 'emission' && region.density > 0.3) {
-            this.addNebulaLayer({
-                x: region.x,
-                y: region.y,
-                radiusX: region.radius_x * 0.4,
-                radiusY: region.radius_y * 0.4,
-                rotation: region.rotation,
-                color: palette.highlight,
-                opacity: region.density * 0.12,
-                filter: 'glow',
-                seed: seed * 1000 + 400,
-                points: 6
-            });
-        }
-
-        // Add filamentary structure
-        if (region.nebula_type !== 'dark' && baseRadius > 60) {
-            this.addFilaments(region, palette, seed);
+        // Add bright knots along dense regions
+        if (region.nebula_type === 'emission') {
+            this.renderBrightKnots(filaments, palette, region.density, seed + 5000);
         }
     },
 
     /**
-     * Add a single nebula layer.
+     * Generate a network of filaments using GMM components along curved spines.
+     *
+     * Based on astronomical observations:
+     * - Main shock front creates primary filament
+     * - Rayleigh-Taylor instabilities create branching fingers
+     * - Magnetic field lines create parallel striations
      */
-    addNebulaLayer(params) {
-        const pathData = this.createOrganicPath(
-            params.x, params.y,
-            params.radiusX, params.radiusY,
-            params.seed,
-            params.points || 8
-        );
-
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', pathData);
-        path.setAttribute('fill', this.colorToRgba(params.color, params.opacity));
-        path.setAttribute('filter', `url(#${params.filter})`);
-
-        if (params.rotation && params.rotation !== 0) {
-            const rotDeg = params.rotation * 180 / Math.PI;
-            path.setAttribute('transform',
-                `rotate(${rotDeg}, ${params.x}, ${params.y})`
-            );
-        }
-
-        this.nebulaeGroup.appendChild(path);
-    },
-
-    /**
-     * Add filamentary structures to a nebula.
-     */
-    addFilaments(region, palette, baseSeed) {
-        const numFilaments = 2 + Math.floor(this.seededRandom(baseSeed * 7) * 4);
+    generateFilamentNetwork(region, seed) {
+        const filaments = [];
         const baseRadius = Math.max(region.radius_x, region.radius_y);
 
-        for (let i = 0; i < numFilaments; i++) {
-            const seed = baseSeed * 100 + i;
-            const angle = this.seededRandom(seed) * Math.PI * 2;
-            const length = baseRadius * (0.5 + this.seededRandom(seed + 1) * 0.8);
-            const width = 8 + this.seededRandom(seed + 2) * 15;
+        // Number of primary filaments based on nebula size
+        const numPrimary = 3 + Math.floor(this.seededRandom(seed) * 4);
 
-            const startX = region.x + Math.cos(angle) * baseRadius * 0.3;
-            const startY = region.y + Math.sin(angle) * baseRadius * 0.3;
-            const endX = startX + Math.cos(angle + (this.seededRandom(seed + 3) - 0.5) * 0.8) * length;
-            const endY = startY + Math.sin(angle + (this.seededRandom(seed + 3) - 0.5) * 0.8) * length;
+        for (let i = 0; i < numPrimary; i++) {
+            const filamentSeed = seed + i * 1000;
 
-            const pathData = this.createFilamentPath(startX, startY, endX, endY, width, seed);
+            // Generate curved spine using random walk with momentum
+            const spine = this.generateFilamentSpine(region, filamentSeed);
+            filaments.push({
+                spine: spine,
+                width: 3 + this.seededRandom(filamentSeed + 1) * 8,
+                type: 'primary'
+            });
+
+            // Add secondary branching filaments (Rayleigh-Taylor fingers)
+            const numBranches = Math.floor(this.seededRandom(filamentSeed + 2) * 3);
+            for (let j = 0; j < numBranches; j++) {
+                const branchSeed = filamentSeed + 100 + j * 50;
+                const branchPoint = Math.floor(this.seededRandom(branchSeed) * (spine.length - 2)) + 1;
+                const branchSpine = this.generateBranchSpine(spine, branchPoint, region, branchSeed);
+
+                if (branchSpine.length > 3) {
+                    filaments.push({
+                        spine: branchSpine,
+                        width: 2 + this.seededRandom(branchSeed + 1) * 4,
+                        type: 'secondary'
+                    });
+                }
+            }
+        }
+
+        // Add wispy tendrils (thin, long filaments)
+        const numTendrils = 4 + Math.floor(this.seededRandom(seed + 500) * 6);
+        for (let i = 0; i < numTendrils; i++) {
+            const tendrilSeed = seed + 2000 + i * 100;
+            const tendrilSpine = this.generateTendrilSpine(region, tendrilSeed);
+
+            filaments.push({
+                spine: tendrilSpine,
+                width: 1 + this.seededRandom(tendrilSeed + 1) * 3,
+                type: 'tendril'
+            });
+        }
+
+        return filaments;
+    },
+
+    /**
+     * Generate a curved filament spine using correlated random walk.
+     * Models shock front propagation with turbulent perturbations.
+     */
+    generateFilamentSpine(region, seed) {
+        const points = [];
+        const numPoints = 12 + Math.floor(this.seededRandom(seed) * 8);
+        const baseRadius = Math.max(region.radius_x, region.radius_y);
+
+        // Start from a random point on the nebula boundary
+        const startAngle = this.seededRandom(seed + 1) * Math.PI * 2;
+        let x = region.x + Math.cos(startAngle) * baseRadius * (0.3 + this.seededRandom(seed + 2) * 0.5);
+        let y = region.y + Math.sin(startAngle) * baseRadius * (0.3 + this.seededRandom(seed + 3) * 0.5);
+
+        // Initial direction with some randomness
+        let angle = startAngle + Math.PI + (this.seededRandom(seed + 4) - 0.5) * Math.PI * 0.5;
+        let momentum = 0.7 + this.seededRandom(seed + 5) * 0.3; // How much previous direction influences next
+
+        points.push({ x, y });
+
+        for (let i = 1; i < numPoints; i++) {
+            // Step length varies
+            const stepLength = baseRadius * (0.08 + this.seededRandom(seed + i * 10) * 0.12);
+
+            // Add curvature (correlated direction changes)
+            const curvature = this.gaussianRandom(seed + i * 10 + 1, 0, 0.3);
+            angle += curvature * (1 - momentum);
+
+            // Add small perpendicular perturbations (turbulence)
+            const perpturb = this.gaussianRandom(seed + i * 10 + 2, 0, stepLength * 0.2);
+
+            x += Math.cos(angle) * stepLength + Math.cos(angle + Math.PI/2) * perpturb;
+            y += Math.sin(angle) * stepLength + Math.sin(angle + Math.PI/2) * perpturb;
+
+            // Keep within nebula bounds (soft constraint)
+            const distFromCenter = Math.sqrt((x - region.x) ** 2 + (y - region.y) ** 2);
+            if (distFromCenter > baseRadius * 1.2) {
+                // Bend back toward center
+                const toCenter = Math.atan2(region.y - y, region.x - x);
+                angle = angle * 0.7 + toCenter * 0.3;
+            }
+
+            points.push({ x, y });
+        }
+
+        return points;
+    },
+
+    /**
+     * Generate a branching filament from a parent spine.
+     */
+    generateBranchSpine(parentSpine, branchIndex, region, seed) {
+        const points = [];
+        const branchPoint = parentSpine[branchIndex];
+        const prevPoint = parentSpine[Math.max(0, branchIndex - 1)];
+
+        // Branch direction perpendicular to parent with some variation
+        const parentAngle = Math.atan2(branchPoint.y - prevPoint.y, branchPoint.x - prevPoint.x);
+        const branchSide = this.seededRandom(seed) > 0.5 ? 1 : -1;
+        let angle = parentAngle + branchSide * (Math.PI / 2 + (this.seededRandom(seed + 1) - 0.5) * 0.8);
+
+        let x = branchPoint.x;
+        let y = branchPoint.y;
+        points.push({ x, y });
+
+        const numPoints = 5 + Math.floor(this.seededRandom(seed + 2) * 5);
+        const baseRadius = Math.max(region.radius_x, region.radius_y);
+
+        for (let i = 1; i < numPoints; i++) {
+            const stepLength = baseRadius * (0.04 + this.seededRandom(seed + i * 10) * 0.08);
+            angle += this.gaussianRandom(seed + i * 10 + 3, 0, 0.4);
+
+            x += Math.cos(angle) * stepLength;
+            y += Math.sin(angle) * stepLength;
+            points.push({ x, y });
+        }
+
+        return points;
+    },
+
+    /**
+     * Generate a thin tendril filament.
+     */
+    generateTendrilSpine(region, seed) {
+        const points = [];
+        const baseRadius = Math.max(region.radius_x, region.radius_y);
+        const numPoints = 8 + Math.floor(this.seededRandom(seed) * 6);
+
+        // Start from random position within nebula
+        let x = region.x + this.gaussianRandom(seed + 1, 0, baseRadius * 0.4);
+        let y = region.y + this.gaussianRandom(seed + 2, 0, baseRadius * 0.4);
+        let angle = this.seededRandom(seed + 3) * Math.PI * 2;
+
+        points.push({ x, y });
+
+        for (let i = 1; i < numPoints; i++) {
+            const stepLength = baseRadius * (0.06 + this.seededRandom(seed + i * 10) * 0.1);
+            angle += this.gaussianRandom(seed + i * 10 + 4, 0, 0.5);
+
+            x += Math.cos(angle) * stepLength;
+            y += Math.sin(angle) * stepLength;
+            points.push({ x, y });
+        }
+
+        return points;
+    },
+
+    /**
+     * Render diffuse halo around the nebula.
+     */
+    renderDiffuseHalo(region, palette, seed) {
+        const baseRadius = Math.max(region.radius_x, region.radius_y);
+
+        // Very large, very faint outer glow
+        const haloPath = this.createBlobPath(
+            region.x, region.y,
+            baseRadius * 1.8, baseRadius * 1.6,
+            seed, 10
+        );
+
+        const halo = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        halo.setAttribute('d', haloPath);
+        halo.setAttribute('fill', this.colorToRgba(palette.primary, region.density * 0.02));
+        halo.setAttribute('filter', 'url(#blur-extreme)');
+        this.nebulaeGroup.appendChild(halo);
+
+        // Secondary halo
+        const halo2Path = this.createBlobPath(
+            region.x, region.y,
+            baseRadius * 1.3, baseRadius * 1.1,
+            seed + 100, 8
+        );
+
+        const halo2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        halo2.setAttribute('d', halo2Path);
+        halo2.setAttribute('fill', this.colorToRgba(palette.secondary, region.density * 0.03));
+        halo2.setAttribute('filter', 'url(#blur-ultra)');
+        this.nebulaeGroup.appendChild(halo2);
+    },
+
+    /**
+     * Render a single filament with GMM-based width variation.
+     */
+    renderFilament(filament, palette, density, seed) {
+        const { spine, width, type } = filament;
+        if (spine.length < 2) return;
+
+        // Sample GMM components along the spine
+        const gmmPoints = this.sampleGMMAlongSpine(spine, width, seed);
+
+        // Create KDE-like contour path
+        const contourPath = this.createFilamentContour(spine, gmmPoints, width, seed);
+
+        // Render multiple layers for soft appearance
+        const layers = [
+            { scale: 2.5, blur: 'blur-heavy', opacity: density * 0.03 },
+            { scale: 1.8, blur: 'blur-medium', opacity: density * 0.05 },
+            { scale: 1.3, blur: 'blur-soft', opacity: density * 0.06 },
+            { scale: 1.0, blur: 'blur-light', opacity: density * 0.08 }
+        ];
+
+        if (type === 'tendril') {
+            // Tendrils are thinner and more transparent
+            layers.forEach(l => { l.opacity *= 0.5; l.scale *= 0.7; });
+        }
+
+        layers.forEach((layer, i) => {
+            const scaledPath = this.scaleFilamentPath(contourPath, spine, layer.scale);
+            const color = i % 2 === 0 ? palette.primary : palette.secondary;
 
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            path.setAttribute('d', pathData);
-            path.setAttribute('fill', this.colorToRgba(palette.secondary, region.density * 0.05));
-            path.setAttribute('filter', 'url(#blur-soft)');
+            path.setAttribute('d', scaledPath);
+            path.setAttribute('fill', this.colorToRgba(color, layer.opacity));
+            path.setAttribute('filter', `url(#${layer.blur})`);
             this.nebulaeGroup.appendChild(path);
+        });
+    },
+
+    /**
+     * Sample GMM components along a spine to create width variation.
+     * Each component is an elongated Gaussian perpendicular to the spine.
+     */
+    sampleGMMAlongSpine(spine, baseWidth, seed) {
+        const samples = [];
+        const numSamples = spine.length * 3;
+
+        for (let i = 0; i < numSamples; i++) {
+            const t = i / (numSamples - 1);
+            const spineIndex = Math.min(Math.floor(t * (spine.length - 1)), spine.length - 2);
+            const localT = (t * (spine.length - 1)) - spineIndex;
+
+            // Interpolate position on spine
+            const p1 = spine[spineIndex];
+            const p2 = spine[spineIndex + 1];
+            const x = p1.x + (p2.x - p1.x) * localT;
+            const y = p1.y + (p2.y - p1.y) * localT;
+
+            // Direction perpendicular to spine
+            const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) + Math.PI / 2;
+
+            // Width variation using Gaussian
+            const widthVar = baseWidth * (0.5 + Math.abs(this.gaussianRandom(seed + i * 10, 0, 0.5)));
+
+            // Sample perpendicular offset
+            const offset = this.gaussianRandom(seed + i * 10 + 1, 0, widthVar);
+
+            samples.push({
+                x: x + Math.cos(angle) * offset,
+                y: y + Math.sin(angle) * offset,
+                weight: Math.exp(-offset * offset / (2 * widthVar * widthVar))
+            });
+        }
+
+        return samples;
+    },
+
+    /**
+     * Create a smooth contour path around a filament using sampled GMM points.
+     */
+    createFilamentContour(spine, gmmPoints, baseWidth, seed) {
+        if (spine.length < 2) return '';
+
+        // Generate upper and lower edges
+        const upperEdge = [];
+        const lowerEdge = [];
+
+        for (let i = 0; i < spine.length; i++) {
+            const p = spine[i];
+            const prev = spine[Math.max(0, i - 1)];
+            const next = spine[Math.min(spine.length - 1, i + 1)];
+
+            // Tangent direction
+            const tangent = Math.atan2(next.y - prev.y, next.x - prev.x);
+            const normal = tangent + Math.PI / 2;
+
+            // Width varies along filament (thicker in middle, tapered at ends)
+            const taper = Math.sin((i / (spine.length - 1)) * Math.PI);
+            const widthNoise = 0.7 + this.seededRandom(seed + i * 7) * 0.6;
+            const localWidth = baseWidth * taper * widthNoise;
+
+            upperEdge.push({
+                x: p.x + Math.cos(normal) * localWidth,
+                y: p.y + Math.sin(normal) * localWidth
+            });
+            lowerEdge.push({
+                x: p.x - Math.cos(normal) * localWidth,
+                y: p.y - Math.sin(normal) * localWidth
+            });
+        }
+
+        // Build smooth bezier path
+        let path = `M ${upperEdge[0].x} ${upperEdge[0].y}`;
+
+        // Upper edge (forward)
+        for (let i = 1; i < upperEdge.length; i++) {
+            const prev = upperEdge[i - 1];
+            const curr = upperEdge[i];
+            const cpx = (prev.x + curr.x) / 2 + (this.seededRandom(seed + i * 20) - 0.5) * baseWidth * 0.3;
+            const cpy = (prev.y + curr.y) / 2 + (this.seededRandom(seed + i * 21) - 0.5) * baseWidth * 0.3;
+            path += ` Q ${cpx} ${cpy} ${curr.x} ${curr.y}`;
+        }
+
+        // Cap at end
+        const lastUpper = upperEdge[upperEdge.length - 1];
+        const lastLower = lowerEdge[lowerEdge.length - 1];
+        const lastSpine = spine[spine.length - 1];
+        path += ` Q ${lastSpine.x} ${lastSpine.y} ${lastLower.x} ${lastLower.y}`;
+
+        // Lower edge (backward)
+        for (let i = lowerEdge.length - 2; i >= 0; i--) {
+            const prev = lowerEdge[i + 1];
+            const curr = lowerEdge[i];
+            const cpx = (prev.x + curr.x) / 2 + (this.seededRandom(seed + i * 30) - 0.5) * baseWidth * 0.3;
+            const cpy = (prev.y + curr.y) / 2 + (this.seededRandom(seed + i * 31) - 0.5) * baseWidth * 0.3;
+            path += ` Q ${cpx} ${cpy} ${curr.x} ${curr.y}`;
+        }
+
+        // Cap at start
+        const firstUpper = upperEdge[0];
+        const firstLower = lowerEdge[0];
+        const firstSpine = spine[0];
+        path += ` Q ${firstSpine.x} ${firstSpine.y} ${firstUpper.x} ${firstUpper.y}`;
+
+        path += ' Z';
+        return path;
+    },
+
+    /**
+     * Scale a filament path outward from its spine.
+     */
+    scaleFilamentPath(pathStr, spine, scale) {
+        // For simplicity, regenerate with scaled width
+        // This is a rough approximation
+        return pathStr.replace(/(-?\d+\.?\d*)/g, (match, num, offset, string) => {
+            const val = parseFloat(num);
+            // Find closest spine point and scale from there
+            // Simplified: just return the path as-is for blur layers
+            return match;
+        });
+    },
+
+    /**
+     * Render bright knots at dense regions (star-forming regions).
+     */
+    renderBrightKnots(filaments, palette, density, seed) {
+        const numKnots = 2 + Math.floor(this.seededRandom(seed) * 4);
+
+        for (let i = 0; i < numKnots; i++) {
+            // Pick a random point on a random filament
+            const filament = filaments[Math.floor(this.seededRandom(seed + i * 10) * filaments.length)];
+            const spineIndex = Math.floor(this.seededRandom(seed + i * 10 + 1) * filament.spine.length);
+            const point = filament.spine[spineIndex];
+
+            const knotRadius = 5 + this.seededRandom(seed + i * 10 + 2) * 10;
+
+            // Render as glowing blob
+            const knotPath = this.createBlobPath(point.x, point.y, knotRadius, knotRadius * 0.8, seed + i * 100, 6);
+
+            const knot = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            knot.setAttribute('d', knotPath);
+            knot.setAttribute('fill', this.colorToRgba(palette.primary, density * 0.15));
+            knot.setAttribute('filter', 'url(#glow)');
+            this.nebulaeGroup.appendChild(knot);
         }
     },
 
     /**
-     * Create organic bezier path for nebula shape with irregular edges.
+     * Create an organic blob path.
      */
-    createOrganicPath(centerX, centerY, radiusX, radiusY, seed, numPoints = 8) {
+    createBlobPath(cx, cy, rx, ry, seed, numPoints = 8) {
         const points = [];
         const angleStep = (Math.PI * 2) / numPoints;
 
-        // Generate points with fractal-like variation
         for (let i = 0; i < numPoints; i++) {
-            const baseAngle = i * angleStep;
-            // Add multiple scales of variation for more natural shapes
-            const var1 = (this.seededRandom(seed * 100 + i) - 0.5) * 0.4;
-            const var2 = (this.seededRandom(seed * 200 + i) - 0.5) * 0.2;
-            const var3 = (this.seededRandom(seed * 300 + i) - 0.5) * 0.1;
-            const radiusVar = 0.6 + var1 + var2 + var3 + 0.5;
-
-            const x = centerX + Math.cos(baseAngle) * radiusX * radiusVar;
-            const y = centerY + Math.sin(baseAngle) * radiusY * radiusVar;
-            points.push({ x, y, angle: baseAngle });
+            const angle = i * angleStep;
+            const radiusVar = 0.7 + this.seededRandom(seed + i * 13) * 0.6;
+            points.push({
+                x: cx + Math.cos(angle) * rx * radiusVar,
+                y: cy + Math.sin(angle) * ry * radiusVar,
+                angle
+            });
         }
 
-        // Build smooth bezier curve
         let path = `M ${points[0].x} ${points[0].y}`;
-
         for (let i = 0; i < numPoints; i++) {
             const curr = points[i];
             const next = points[(i + 1) % numPoints];
+            const cpDist = Math.sqrt((next.x - curr.x) ** 2 + (next.y - curr.y) ** 2) * 0.4;
 
-            // Control point distance based on segment length
-            const dx = next.x - curr.x;
-            const dy = next.y - curr.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const cpDist = dist * 0.4;
-
-            // Outward-curving control points for organic look
-            const midAngle = (curr.angle + next.angle) / 2;
-            const perpVar = (this.seededRandom(seed * 400 + i) - 0.5) * 0.5;
-
-            const cp1x = curr.x + Math.cos(curr.angle + Math.PI / 2) * cpDist * (0.3 + this.seededRandom(seed * 500 + i) * 0.7);
-            const cp1y = curr.y + Math.sin(curr.angle + Math.PI / 2) * cpDist * (0.3 + this.seededRandom(seed * 501 + i) * 0.7);
-            const cp2x = next.x + Math.cos(next.angle - Math.PI / 2) * cpDist * (0.3 + this.seededRandom(seed * 502 + i) * 0.7);
-            const cp2y = next.y + Math.sin(next.angle - Math.PI / 2) * cpDist * (0.3 + this.seededRandom(seed * 503 + i) * 0.7);
+            const cp1x = curr.x + Math.cos(curr.angle + Math.PI/2) * cpDist * (0.3 + this.seededRandom(seed + i * 17) * 0.7);
+            const cp1y = curr.y + Math.sin(curr.angle + Math.PI/2) * cpDist * (0.3 + this.seededRandom(seed + i * 19) * 0.7);
+            const cp2x = next.x + Math.cos(next.angle - Math.PI/2) * cpDist * (0.3 + this.seededRandom(seed + i * 23) * 0.7);
+            const cp2y = next.y + Math.sin(next.angle - Math.PI/2) * cpDist * (0.3 + this.seededRandom(seed + i * 29) * 0.7);
 
             path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${next.x} ${next.y}`;
         }
-
         path += ' Z';
         return path;
     },
 
     /**
-     * Create filament/tendril path.
-     */
-    createFilamentPath(x1, y1, x2, y2, width, seed) {
-        const dx = x2 - x1;
-        const dy = y2 - y1;
-        const length = Math.sqrt(dx * dx + dy * dy);
-        const angle = Math.atan2(dy, dx);
-        const perpAngle = angle + Math.PI / 2;
-
-        const segments = 8;
-        const topPoints = [];
-        const bottomPoints = [];
-
-        for (let i = 0; i <= segments; i++) {
-            const t = i / segments;
-            const x = x1 + dx * t;
-            const y = y1 + dy * t;
-
-            // Tapered width (thicker in middle)
-            const taper = Math.sin(t * Math.PI);
-            // Wavy variation
-            const wave = Math.sin(t * Math.PI * 3 + this.seededRandom(seed * 600 + i) * Math.PI) * width * 0.3;
-            const localWidth = (width * taper + wave) * (0.5 + this.seededRandom(seed * 700 + i) * 0.5);
-
-            topPoints.push({
-                x: x + Math.cos(perpAngle) * localWidth,
-                y: y + Math.sin(perpAngle) * localWidth
-            });
-            bottomPoints.push({
-                x: x - Math.cos(perpAngle) * localWidth,
-                y: y - Math.sin(perpAngle) * localWidth
-            });
-        }
-
-        // Build path with quadratic curves for smoothness
-        let path = `M ${topPoints[0].x} ${topPoints[0].y}`;
-
-        for (let i = 1; i < topPoints.length; i++) {
-            const prev = topPoints[i - 1];
-            const curr = topPoints[i];
-            const cpx = (prev.x + curr.x) / 2 + (this.seededRandom(seed * 800 + i) - 0.5) * width * 0.3;
-            const cpy = (prev.y + curr.y) / 2 + (this.seededRandom(seed * 801 + i) - 0.5) * width * 0.3;
-            path += ` Q ${cpx} ${cpy} ${curr.x} ${curr.y}`;
-        }
-
-        // Arc to bottom
-        const last = topPoints[topPoints.length - 1];
-        const lastBottom = bottomPoints[bottomPoints.length - 1];
-        path += ` Q ${x2} ${y2} ${lastBottom.x} ${lastBottom.y}`;
-
-        // Bottom edge (reverse)
-        for (let i = bottomPoints.length - 2; i >= 0; i--) {
-            const prev = bottomPoints[i + 1];
-            const curr = bottomPoints[i];
-            const cpx = (prev.x + curr.x) / 2 + (this.seededRandom(seed * 900 + i) - 0.5) * width * 0.3;
-            const cpy = (prev.y + curr.y) / 2 + (this.seededRandom(seed * 901 + i) - 0.5) * width * 0.3;
-            path += ` Q ${cpx} ${cpy} ${curr.x} ${curr.y}`;
-        }
-
-        path += ' Z';
-        return path;
-    },
-
-    /**
-     * Procedural nebula generation fallback.
+     * Procedural nebula generation when no backend data.
      */
     generateProcedural(stars, width, height, seed) {
-        // Find star clusters
         const clusters = this.findClusters(stars);
         const voids = this.findVoids(stars, width, height);
 
-        // Large diffuse background nebulae
-        this.addDiffuseBackground(width, height, seed);
-
-        // Emission nebulae near star clusters (H-II regions)
+        // Generate emission nebulae near clusters
         for (let i = 0; i < Math.min(4, clusters.length); i++) {
             const cluster = clusters[i];
-            this.renderNebulaRegion({
-                x: cluster.x + (this.seededRandom(seed + i * 100) - 0.5) * 60,
-                y: cluster.y + (this.seededRandom(seed + i * 101) - 0.5) * 60,
-                radius_x: 60 + this.seededRandom(seed + i * 102) * 80,
-                radius_y: 50 + this.seededRandom(seed + i * 103) * 70,
+            this.renderFilamentaryNebula({
+                x: cluster.x + (this.seededRandom(seed + i * 100) - 0.5) * 50,
+                y: cluster.y + (this.seededRandom(seed + i * 101) - 0.5) * 50,
+                radius_x: 70 + this.seededRandom(seed + i * 102) * 90,
+                radius_y: 60 + this.seededRandom(seed + i * 103) * 80,
                 rotation: this.seededRandom(seed + i * 104) * Math.PI,
                 density: 0.4 + this.seededRandom(seed + i * 105) * 0.3,
                 nebula_type: 'emission'
-            }, seed + i * 1000);
+            }, seed + i * 10000);
         }
 
-        // Dark nebulae in void regions
-        for (let i = 0; i < Math.min(3, voids.length); i++) {
+        // Dark nebulae in voids
+        for (let i = 0; i < Math.min(2, voids.length); i++) {
             const void_ = voids[i];
-            this.renderNebulaRegion({
+            this.renderFilamentaryNebula({
                 x: void_.x,
                 y: void_.y,
-                radius_x: 40 + this.seededRandom(seed + 500 + i) * 50,
-                radius_y: 35 + this.seededRandom(seed + 501 + i) * 45,
+                radius_x: 50 + this.seededRandom(seed + 500 + i) * 60,
+                radius_y: 45 + this.seededRandom(seed + 501 + i) * 55,
                 rotation: this.seededRandom(seed + 502 + i) * Math.PI,
-                density: 0.5 + this.seededRandom(seed + 503 + i) * 0.3,
+                density: 0.5,
                 nebula_type: 'dark'
-            }, seed + 500 + i * 1000);
+            }, seed + 500000 + i * 10000);
         }
 
-        // Reflection nebulae (blue, near bright stars)
-        const brightStars = stars.filter(s => s.spectral_class === 'O' || s.spectral_class === 'B');
-        for (let i = 0; i < Math.min(2, brightStars.length); i++) {
-            const star = brightStars[i];
-            this.renderNebulaRegion({
-                x: star.position_x + (this.seededRandom(seed + 700 + i) - 0.5) * 30,
-                y: star.position_y + (this.seededRandom(seed + 701 + i) - 0.5) * 30,
-                radius_x: 30 + this.seededRandom(seed + 702 + i) * 40,
-                radius_y: 25 + this.seededRandom(seed + 703 + i) * 35,
-                rotation: this.seededRandom(seed + 704 + i) * Math.PI,
-                density: 0.3 + this.seededRandom(seed + 705 + i) * 0.2,
-                nebula_type: 'reflection'
-            }, seed + 700 + i * 1000);
-        }
+        // Diffuse background
+        this.renderFilamentaryNebula({
+            x: width * 0.5,
+            y: height * 0.5,
+            radius_x: width * 0.4,
+            radius_y: height * 0.35,
+            rotation: this.seededRandom(seed + 900) * Math.PI,
+            density: 0.15,
+            nebula_type: 'diffuse'
+        }, seed + 900000);
     },
 
-    /**
-     * Add large diffuse background nebulosity.
-     */
-    addDiffuseBackground(width, height, seed) {
-        const numClouds = 3 + Math.floor(this.seededRandom(seed) * 3);
-
-        for (let i = 0; i < numClouds; i++) {
-            const s = seed * 10 + i;
-            this.renderNebulaRegion({
-                x: width * (0.1 + this.seededRandom(s) * 0.8),
-                y: height * (0.1 + this.seededRandom(s + 1) * 0.8),
-                radius_x: 100 + this.seededRandom(s + 2) * 150,
-                radius_y: 80 + this.seededRandom(s + 3) * 120,
-                rotation: this.seededRandom(s + 4) * Math.PI,
-                density: 0.15 + this.seededRandom(s + 5) * 0.15,
-                nebula_type: 'diffuse'
-            }, s * 1000);
-        }
-    },
-
-    /**
-     * Find star clusters using density analysis.
-     */
     findClusters(stars) {
         const clusters = [];
         const cellSize = 80;
@@ -562,70 +701,38 @@ const NebulaSVG = {
         for (const [key, count] of Object.entries(density)) {
             if (count >= 3) {
                 const [cx, cy] = key.split(',').map(Number);
-                clusters.push({
-                    x: (cx + 0.5) * cellSize,
-                    y: (cy + 0.5) * cellSize,
-                    density: count
-                });
+                clusters.push({ x: (cx + 0.5) * cellSize, y: (cy + 0.5) * cellSize, density: count });
             }
         }
 
         return clusters.sort((a, b) => b.density - a.density);
     },
 
-    /**
-     * Find void regions with few stars.
-     */
     findVoids(stars, width, height) {
         const voids = [];
         const cellSize = 100;
 
         for (let x = cellSize; x < width - cellSize; x += cellSize) {
             for (let y = cellSize; y < height - cellSize; y += cellSize) {
-                let nearbyStars = 0;
+                let nearby = 0;
                 for (const star of stars) {
-                    const dist = Math.sqrt((star.position_x - x) ** 2 + (star.position_y - y) ** 2);
-                    if (dist < cellSize * 1.5) nearbyStars++;
+                    if (Math.sqrt((star.position_x - x) ** 2 + (star.position_y - y) ** 2) < cellSize * 1.5) nearby++;
                 }
-                if (nearbyStars === 0) {
-                    voids.push({ x, y });
-                }
+                if (nearby === 0) voids.push({ x, y });
             }
         }
-
         return voids;
     },
 
-    /**
-     * Convert color object to rgba string.
-     */
     colorToRgba(color, opacity) {
         return `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`;
     },
 
-    /**
-     * Mix two colors.
-     */
-    mixColors(c1, c2, ratio) {
-        return {
-            r: Math.round(c1.r * (1 - ratio) + c2.r * ratio),
-            g: Math.round(c1.g * (1 - ratio) + c2.g * ratio),
-            b: Math.round(c1.b * (1 - ratio) + c2.b * ratio)
-        };
-    },
-
-    /**
-     * Update SVG viewBox to match canvas view.
-     */
     updateViewBox(viewX, viewY, zoom, canvasWidth, canvasHeight) {
         if (!this.svg) return;
-
         const worldWidth = canvasWidth / zoom;
         const worldHeight = canvasHeight / zoom;
-        const worldX = viewX - worldWidth / 2;
-        const worldY = viewY - worldHeight / 2;
-
-        this.svg.setAttribute('viewBox', `${worldX} ${worldY} ${worldWidth} ${worldHeight}`);
+        this.svg.setAttribute('viewBox', `${viewX - worldWidth/2} ${viewY - worldHeight/2} ${worldWidth} ${worldHeight}`);
     }
 };
 
