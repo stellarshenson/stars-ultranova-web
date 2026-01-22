@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 
 from .config import config
-from .api.routes import games_router, stars_router, fleets_router
+from .api.routes import games_router, stars_router, fleets_router, designs_router
 
 # Create FastAPI application
 app = FastAPI(
@@ -22,6 +22,7 @@ app = FastAPI(
 app.include_router(games_router)
 app.include_router(stars_router)
 app.include_router(fleets_router)
+app.include_router(designs_router)
 
 # Static files for frontend
 frontend_path = Path(__file__).parent.parent / "frontend"

@@ -11,6 +11,9 @@ from typing import Dict, List, Optional
 import logging
 
 from .component import Component, ComponentProperty
+from .hull import Hull
+from .hull_module import HullModule
+from .engine import Engine
 from ..data_structures.resources import Resources
 from ..data_structures.tech_level import TechLevel, RESEARCH_KEYS
 from ..game_objects.item import ItemType
@@ -181,13 +184,29 @@ class ComponentLoader:
         prop = ComponentProperty()
         property_type = None
 
+        # First pass: find the type
+        for child in node:
+            if child.tag.lower() == "type":
+                property_type = child.text or ""
+                prop.property_type = property_type
+                break
+
+        if not property_type:
+            return None
+
+        # Handle specialized property types
+        if property_type == "Hull":
+            return self._parse_hull_property(node)
+        elif property_type == "Engine":
+            return self._parse_engine_property(node)
+
+        # Standard property parsing
         for child in node:
             tag = child.tag.lower()
             text = child.text or ""
 
             if tag == "type":
-                property_type = text
-                prop.property_type = text
+                continue  # Already handled
             else:
                 # Try to parse as number, fall back to string
                 try:
@@ -204,7 +223,110 @@ class ComponentLoader:
                     else:
                         prop.values[child.tag] = text
 
-        return prop if property_type else None
+        return prop
+
+    def _parse_hull_property(self, node: ET.Element) -> ComponentProperty:
+        """Parse a Hull property with module slots."""
+        prop = ComponentProperty()
+        prop.property_type = "Hull"
+
+        hull = Hull()
+        modules = []
+
+        for child in node:
+            tag = child.tag
+            text = child.text or ""
+
+            if tag == "Type":
+                continue
+            elif tag == "FuelCapacity":
+                hull.fuel_capacity = int(text) if text else 0
+            elif tag == "DockCapacity":
+                hull.dock_capacity = int(text) if text else 0
+            elif tag == "ARMaxPop":
+                hull.ar_max_pop = int(text) if text else 0
+            elif tag == "BaseCargo":
+                hull.base_cargo = int(text) if text else 0
+            elif tag == "ArmorStrength":
+                hull.armor_strength = int(text) if text else 0
+            elif tag == "BattleInitiative":
+                hull.battle_initiative = int(text) if text else 0
+            elif tag == "HealsOthersPercent":
+                hull.heals_others_percent = int(text) if text else 0
+            elif tag == "Module":
+                module = self._parse_hull_module(child)
+                if module:
+                    modules.append(module)
+
+        hull.modules = modules
+
+        # Store hull data in values dict for serialization
+        prop.values = hull.to_dict()
+        return prop
+
+    def _parse_hull_module(self, node: ET.Element) -> Optional[HullModule]:
+        """Parse a hull module slot."""
+        module = HullModule()
+
+        for child in node:
+            tag = child.tag
+            text = child.text or ""
+
+            if tag == "CellNumber":
+                module.cell_number = int(text) if text else -1
+            elif tag == "ComponentCount":
+                module.component_count = int(text) if text else 0
+            elif tag == "ComponentMaximum":
+                module.component_maximum = int(text) if text else 1
+            elif tag == "ComponentType":
+                module.component_type = text
+
+        return module
+
+    def _parse_engine_property(self, node: ET.Element) -> ComponentProperty:
+        """Parse an Engine property with fuel consumption table."""
+        prop = ComponentProperty()
+        prop.property_type = "Engine"
+
+        engine = Engine()
+
+        for child in node:
+            tag = child.tag
+            text = child.text or ""
+
+            if tag == "Type":
+                continue
+            elif tag == "RamScoop":
+                engine.ram_scoop = text.lower() == "true"
+            elif tag == "FastestSafeSpeed":
+                engine.fastest_safe_speed = int(text) if text else 0
+            elif tag == "OptimalSpeed":
+                engine.optimal_speed = int(text) if text else 0
+            elif tag == "FuelConsumption":
+                engine.fuel_consumption = self._parse_fuel_consumption(child)
+
+        # Store engine data in values dict
+        prop.values = engine.to_dict()
+        return prop
+
+    def _parse_fuel_consumption(self, node: ET.Element) -> List[int]:
+        """Parse fuel consumption table (Warp0-Warp9)."""
+        consumption = [0] * 10
+
+        for child in node:
+            tag = child.tag
+            text = child.text or "0"
+
+            # Parse Warp0 through Warp9
+            if tag.startswith("Warp") and len(tag) == 5:
+                try:
+                    warp_idx = int(tag[4])
+                    if 0 <= warp_idx <= 9:
+                        consumption[warp_idx] = int(text)
+                except ValueError:
+                    pass
+
+        return consumption
 
     def get_component(self, name: str) -> Optional[Component]:
         """Get a component by name."""
