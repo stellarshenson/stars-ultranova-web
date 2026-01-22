@@ -609,7 +609,15 @@ footer a:hover {
     margin-bottom: 1rem;
 }
 
-.star-panel-header,
+.star-panel-header {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+    gap: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #333;
+}
+
 .fleet-panel-header {
     display: flex;
     justify-content: space-between;
@@ -617,6 +625,45 @@ footer a:hover {
     margin-bottom: 0.5rem;
     flex-wrap: wrap;
     gap: 0.5rem;
+}
+
+/* Planet display in star panel */
+.planet-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+#planet-canvas {
+    border-radius: 50%;
+}
+
+.habitability-indicator {
+    font-size: 0.85rem;
+    font-weight: bold;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+}
+
+.habitability-indicator.positive {
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.15);
+}
+
+.habitability-indicator.negative {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.15);
+}
+
+.star-info {
+    flex: 1;
+}
+
+.star-info h2 {
+    color: #7cb3ff;
+    font-size: 1.1rem;
+    margin-bottom: 0.25rem;
 }
 
 /* Fleet selector dropdown */

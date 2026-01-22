@@ -8,6 +8,10 @@ const StarPanel = {
     // DOM elements
     container: null,
 
+    // Planet canvas for procedural rendering
+    planetCanvas: null,
+    planetCtx: null,
+
     // Current star being displayed
     currentStar: null,
 
@@ -84,10 +88,21 @@ const StarPanel = {
         const isColonized = star.colonists > 0;
         const isOwned = star.owner === 1;  // Player owns it
 
+        // Calculate habitability value (simplified - based on whether colonized and environment)
+        const habitability = this.calculateHabitability(star);
+
         let html = `
             <div class="star-panel-header">
-                <h2>${star.name}</h2>
-                <span class="star-position">(${star.position_x}, ${star.position_y})</span>
+                <div class="planet-display">
+                    <canvas id="planet-canvas" width="80" height="80"></canvas>
+                    <div class="habitability-indicator ${habitability >= 0 ? 'positive' : 'negative'}">
+                        ${habitability >= 0 ? '+' : ''}${habitability}%
+                    </div>
+                </div>
+                <div class="star-info">
+                    <h2>${star.name}</h2>
+                    <span class="star-position">(${star.position_x}, ${star.position_y})</span>
+                </div>
             </div>
         `;
 
@@ -99,10 +114,248 @@ const StarPanel = {
 
         this.container.innerHTML = html;
 
+        // Render the procedural planet
+        this.renderPlanetGraphic(star);
+
         // Bind production queue events if owned
         if (isOwned && isColonized) {
             this.bindProductionEvents();
         }
+    },
+
+    /**
+     * Calculate habitability value for display.
+     * Returns percentage from -45 to 100.
+     */
+    calculateHabitability(star) {
+        // Use stored value if available
+        if (star.habitability !== undefined) {
+            return Math.round(star.habitability);
+        }
+
+        // Calculate based on environment (simplified)
+        const gravity = star.gravity || 50;
+        const temperature = star.temperature || 50;
+        const radiation = star.radiation || 50;
+
+        // Ideal ranges (can be customized per race)
+        const gravityDiff = Math.abs(gravity - 50);
+        const tempDiff = Math.abs(temperature - 50);
+        const radDiff = Math.abs(radiation - 50);
+
+        // Each diff reduces habitability
+        const penalty = (gravityDiff + tempDiff + radDiff) / 3;
+        const value = Math.round(100 - penalty * 2);
+
+        return Math.max(-45, Math.min(100, value));
+    },
+
+    /**
+     * Render procedural planet graphic on canvas.
+     */
+    renderPlanetGraphic(star) {
+        this.planetCanvas = document.getElementById('planet-canvas');
+        if (!this.planetCanvas) return;
+
+        this.planetCtx = this.planetCanvas.getContext('2d');
+        const ctx = this.planetCtx;
+        const width = this.planetCanvas.width;
+        const height = this.planetCanvas.height;
+
+        // Clear canvas
+        ctx.clearRect(0, 0, width, height);
+
+        // Get environmental values (0-100 scale)
+        const gravity = star.gravity || 50;
+        const temperature = star.temperature || 50;
+        const radiation = star.radiation || 50;
+
+        // Planet size based on gravity (larger gravity = larger planet)
+        const baseRadius = 25;
+        const radiusVariation = (gravity - 50) / 50 * 8;
+        const radius = baseRadius + radiusVariation;
+
+        const centerX = width / 2;
+        const centerY = height / 2;
+
+        // Determine planet colors based on temperature
+        const colors = this.getPlanetColors(temperature, radiation);
+
+        // Draw atmosphere glow (radiation based)
+        if (radiation > 30) {
+            const glowIntensity = (radiation - 30) / 70;
+            const gradient = ctx.createRadialGradient(
+                centerX, centerY, radius,
+                centerX, centerY, radius + 10 + glowIntensity * 8
+            );
+            gradient.addColorStop(0, `rgba(${colors.glow}, ${0.3 + glowIntensity * 0.3})`);
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius + 15, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw planet base with gradient
+        const planetGradient = ctx.createRadialGradient(
+            centerX - radius * 0.3, centerY - radius * 0.3, 0,
+            centerX, centerY, radius
+        );
+        planetGradient.addColorStop(0, colors.highlight);
+        planetGradient.addColorStop(0.5, colors.base);
+        planetGradient.addColorStop(1, colors.shadow);
+
+        ctx.fillStyle = planetGradient;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Add surface texture/bands based on star name hash for consistency
+        this.drawPlanetTexture(ctx, centerX, centerY, radius, star.name, colors);
+
+        // Draw terminator (shadow edge)
+        const shadowGradient = ctx.createLinearGradient(
+            centerX - radius, centerY,
+            centerX + radius, centerY
+        );
+        shadowGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        shadowGradient.addColorStop(0.6, 'rgba(0, 0, 0, 0)');
+        shadowGradient.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+
+        ctx.fillStyle = shadowGradient;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Add specular highlight
+        const specGradient = ctx.createRadialGradient(
+            centerX - radius * 0.4, centerY - radius * 0.4, 0,
+            centerX - radius * 0.4, centerY - radius * 0.4, radius * 0.5
+        );
+        specGradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+        specGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+        ctx.fillStyle = specGradient;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.fill();
+    },
+
+    /**
+     * Get planet colors based on temperature and radiation.
+     */
+    getPlanetColors(temperature, radiation) {
+        // Temperature determines base color
+        // 0-20: Frozen (white/blue)
+        // 20-40: Cold (light blue/gray)
+        // 40-60: Temperate (green/brown)
+        // 60-80: Hot (orange/brown)
+        // 80-100: Scorching (red/orange)
+
+        let base, highlight, shadow, glow;
+
+        if (temperature < 20) {
+            // Frozen
+            base = '#a0c8e8';
+            highlight = '#e8f4ff';
+            shadow = '#4080a0';
+            glow = '150, 200, 255';
+        } else if (temperature < 40) {
+            // Cold
+            base = '#7090a8';
+            highlight = '#b0d0e8';
+            shadow = '#304050';
+            glow = '100, 150, 200';
+        } else if (temperature < 60) {
+            // Temperate (habitable)
+            base = '#408040';
+            highlight = '#80c080';
+            shadow = '#204020';
+            glow = '100, 200, 100';
+        } else if (temperature < 80) {
+            // Hot
+            base = '#a08050';
+            highlight = '#d0b080';
+            shadow = '#604020';
+            glow = '255, 150, 50';
+        } else {
+            // Scorching
+            base = '#c04020';
+            highlight = '#ff8060';
+            shadow = '#601008';
+            glow = '255, 100, 50';
+        }
+
+        // Radiation shifts toward purple/magenta
+        if (radiation > 70) {
+            const shift = (radiation - 70) / 30;
+            base = this.shiftTowardPurple(base, shift * 0.3);
+            glow = `${180 + shift * 75}, ${80 - shift * 30}, ${180 + shift * 75}`;
+        }
+
+        return { base, highlight, shadow, glow };
+    },
+
+    /**
+     * Shift a color toward purple/magenta.
+     */
+    shiftTowardPurple(hexColor, amount) {
+        const r = parseInt(hexColor.slice(1, 3), 16);
+        const g = parseInt(hexColor.slice(3, 5), 16);
+        const b = parseInt(hexColor.slice(5, 7), 16);
+
+        const newR = Math.min(255, Math.round(r + (180 - r) * amount));
+        const newG = Math.max(0, Math.round(g - g * amount * 0.5));
+        const newB = Math.min(255, Math.round(b + (200 - b) * amount));
+
+        return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
+    },
+
+    /**
+     * Draw texture/bands on planet surface.
+     */
+    drawPlanetTexture(ctx, cx, cy, radius, starName, colors) {
+        // Use star name hash for consistent texture per planet
+        let hash = 0;
+        for (let i = 0; i < starName.length; i++) {
+            hash = ((hash << 5) - hash) + starName.charCodeAt(i);
+            hash = hash & hash;
+        }
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.clip();
+
+        // Draw horizontal bands
+        const numBands = 3 + (Math.abs(hash) % 4);
+        for (let i = 0; i < numBands; i++) {
+            const y = cy - radius + (radius * 2 / numBands) * (i + 0.5);
+            const bandHeight = radius * 0.15 + (Math.abs(hash >> (i * 4)) % 10) / 50;
+            const offset = ((hash >> (i * 2)) % 20) - 10;
+
+            ctx.fillStyle = `rgba(0, 0, 0, 0.1)`;
+            ctx.beginPath();
+            ctx.ellipse(cx + offset, y, radius * 0.9, bandHeight * radius, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Add some spot features
+        const numSpots = 1 + (Math.abs(hash >> 8) % 3);
+        for (let i = 0; i < numSpots; i++) {
+            const angle = (hash >> (i * 6)) % 360 * Math.PI / 180;
+            const dist = radius * 0.3 + (Math.abs(hash >> (i * 3)) % 30) / 100 * radius;
+            const spotX = cx + Math.cos(angle) * dist * 0.7;
+            const spotY = cy + Math.sin(angle) * dist * 0.5;
+            const spotRadius = radius * 0.08 + (Math.abs(hash >> (i * 5)) % 10) / 100 * radius;
+
+            ctx.fillStyle = `rgba(0, 0, 0, 0.15)`;
+            ctx.beginPath();
+            ctx.ellipse(spotX, spotY, spotRadius, spotRadius * 0.7, angle, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.restore();
     },
 
     /**
