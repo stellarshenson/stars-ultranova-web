@@ -159,6 +159,9 @@ class TurnGenerator:
         # Update minefield visibility
         self._update_minefield_visibility()
 
+        # Return all generated messages
+        return self.server_state.all_messages
+
     def assemble_empire_data(self):
         """
         Utility function to set intel for the first turn.
@@ -414,14 +417,17 @@ class TurnGenerator:
         # Repair
         repair_rate = self._get_repair_rate(fleet, star)
 
-        for token in fleet.composition.values():
+        for token in fleet.tokens.values():
             # Restore shields fully
-            if token.design is not None:
-                token.shields = token.design.shield * token.quantity
+            # Note: ShipToken stores cached design values directly (armor, shields)
+            # Without linked design object, we skip regeneration for now
+            design = getattr(token, 'design', None)
+            if design is not None:
+                token.shields = design.shield * token.quantity
 
                 # Repair armor
                 if repair_rate > 0:
-                    max_armor = token.design.armor * token.quantity
+                    max_armor = design.armor * token.quantity
                     repair_amount = max(max_armor * repair_rate // 100, 1)
                     token.armor = min(token.armor + repair_amount, max_armor)
 
@@ -572,10 +578,10 @@ class TurnGenerator:
             # Minefields within scan range
             for fleet in empire.owned_fleets.values():
                 scan_range = 0
-                for token in fleet.composition.values():
-                    if token.design is not None:
-                        scan_range = max(scan_range,
-                                         getattr(token.design, 'scan_range', 0))
+                for token in fleet.tokens.values():
+                    # Use cached scan_range_normal from ShipToken
+                    token_scan = getattr(token, 'scan_range_normal', 0)
+                    scan_range = max(scan_range, token_scan)
 
                 for minefield in self.server_state.all_minefields.values():
                     dx = fleet.position.x - minefield.position_x

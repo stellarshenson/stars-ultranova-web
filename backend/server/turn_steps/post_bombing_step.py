@@ -173,13 +173,13 @@ class PostBombingStep(ITurnStep):
 
         # Transfer cargo to planet
         if hasattr(fleet.cargo, 'ironium'):
-            star.resource_stockpile.ironium += fleet.cargo.ironium
+            star.resources_on_hand.ironium += fleet.cargo.ironium
             fleet.cargo.ironium = 0
         if hasattr(fleet.cargo, 'boranium'):
-            star.resource_stockpile.boranium += fleet.cargo.boranium
+            star.resources_on_hand.boranium += fleet.cargo.boranium
             fleet.cargo.boranium = 0
         if hasattr(fleet.cargo, 'germanium'):
-            star.resource_stockpile.germanium += fleet.cargo.germanium
+            star.resources_on_hand.germanium += fleet.cargo.germanium
             fleet.cargo.germanium = 0
 
         # Add star to sender's owned stars

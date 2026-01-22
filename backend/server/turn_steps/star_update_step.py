@@ -121,9 +121,9 @@ class StarUpdateStep(ITurnStep):
         bor_mined = int(mines * bor_conc * base_rate)
         germ_mined = int(mines * germ_conc * base_rate)
 
-        star.resource_stockpile.ironium += iron_mined
-        star.resource_stockpile.boranium += bor_mined
-        star.resource_stockpile.germanium += germ_mined
+        star.resources_on_hand.ironium += iron_mined
+        star.resources_on_hand.boranium += bor_mined
+        star.resources_on_hand.germanium += germ_mined
 
         # Concentration decreases slightly over time
         # Actual formula is more complex
@@ -191,8 +191,14 @@ class StarUpdateStep(ITurnStep):
                 growth_rate = (empire.race.growth_rate if empire.race else 15) / 100.0
                 growth_rate *= hab_value / 100.0  # Scale by habitability
 
-                # Crowding factor
-                max_pop = getattr(star, 'max_population', 1000000)
+                # Crowding factor - max_population can be a method or attribute
+                max_pop = 1000000  # Default
+                if hasattr(star, 'max_population'):
+                    max_pop_attr = getattr(star, 'max_population')
+                    if callable(max_pop_attr) and empire.race is not None:
+                        max_pop = max_pop_attr(empire.race)
+                    elif isinstance(max_pop_attr, (int, float)):
+                        max_pop = int(max_pop_attr)
                 if star.colonists > max_pop * 0.25:
                     crowding = 1 - ((star.colonists - max_pop * 0.25) / (max_pop * 0.75))
                     crowding = max(0, crowding)
@@ -263,10 +269,11 @@ class StarUpdateStep(ITurnStep):
         target_area = self._get_research_target(empire)
 
         # Leftover energy goes to research
-        leftover = getattr(star, 'resources_on_hand', 0)
-        if hasattr(star, 'resource_stockpile') and hasattr(star.resource_stockpile, 'energy'):
-            leftover = star.resource_stockpile.energy
-            star.resource_stockpile.energy = 0
+        leftover = 0
+        resources = getattr(star, 'resources_on_hand', None)
+        if resources is not None and hasattr(resources, 'energy'):
+            leftover = resources.energy
+            resources.energy = 0
 
         if leftover > 0:
             current = empire.research_resources.get_level(target_area)

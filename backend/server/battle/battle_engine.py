@@ -262,7 +262,7 @@ class BattleEngine:
         number_of_targets = 0
 
         for wolf in battling_stacks:
-            if not wolf.composition:
+            if not wolf.tokens:
                 continue
 
             wolf.target = None
@@ -273,7 +273,7 @@ class BattleEngine:
             max_attractiveness = 0.0
 
             for lamb in battling_stacks:
-                if not lamb.composition:
+                if not lamb.tokens:
                     continue
 
                 if self._are_enemies(wolf, lamb):
@@ -334,7 +334,7 @@ class BattleEngine:
         """Move stacks toward their targets."""
         for phase in range(1, self.MOVEMENT_PHASES_PER_ROUND + 1):
             for stack in battling_stacks:
-                if stack is None or not stack.composition:
+                if stack is None or not stack.tokens:
                     continue
 
                 # Record position

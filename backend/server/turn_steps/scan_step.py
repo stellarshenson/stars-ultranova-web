@@ -173,21 +173,21 @@ class ScanStep(ITurnStep):
 
     def _get_fleet_scan_range(self, fleet, empire) -> int:
         """Get fleet's non-penetrating scan range."""
-        # Base scan range from scanner components
+        # Base scan range from scanner components (cached on ShipToken)
         scan_range = 0
-        for token in fleet.composition.values():
-            if token.design is not None:
-                design_scan = getattr(token.design, 'scan_range', 0)
-                scan_range = max(scan_range, design_scan)
+        for token in fleet.tokens.values():
+            # Use cached scan_range_normal from ShipToken
+            token_scan = getattr(token, 'scan_range_normal', 0)
+            scan_range = max(scan_range, token_scan)
         return scan_range
 
     def _get_fleet_pen_scan_range(self, fleet, empire) -> int:
         """Get fleet's penetrating scan range."""
+        # Use cached scan_range_penetrating from ShipToken
         pen_range = 0
-        for token in fleet.composition.values():
-            if token.design is not None:
-                design_pen = getattr(token.design, 'pen_scan_range', 0)
-                pen_range = max(pen_range, design_pen)
+        for token in fleet.tokens.values():
+            token_pen = getattr(token, 'scan_range_penetrating', 0)
+            pen_range = max(pen_range, token_pen)
         return pen_range
 
     def _distance(self, x1: float, y1: float, x2: float, y2: float) -> float:
@@ -234,9 +234,9 @@ class ScanStep(ITurnStep):
                 "factories": getattr(star, 'factories', 0),
                 "mines": getattr(star, 'mines', 0),
                 "defenses": getattr(star, 'defenses', 0),
-                "ironium_stockpile": star.resource_stockpile.ironium if hasattr(star, 'resource_stockpile') else 0,
-                "boranium_stockpile": star.resource_stockpile.boranium if hasattr(star, 'resource_stockpile') else 0,
-                "germanium_stockpile": star.resource_stockpile.germanium if hasattr(star, 'resource_stockpile') else 0,
+                "ironium_stockpile": star.resources_on_hand.ironium if hasattr(star, 'resources_on_hand') else 0,
+                "boranium_stockpile": star.resources_on_hand.boranium if hasattr(star, 'resources_on_hand') else 0,
+                "germanium_stockpile": star.resources_on_hand.germanium if hasattr(star, 'resources_on_hand') else 0,
             })
 
         return report
@@ -259,7 +259,7 @@ class ScanStep(ITurnStep):
             "position_x": fleet.position.x,
             "position_y": fleet.position.y,
             "year": year,
-            "ship_count": sum(t.quantity for t in fleet.composition.values()),
+            "ship_count": sum(t.quantity for t in fleet.tokens.values()),
             "bearing": getattr(fleet, 'bearing', 0),
             "warp": getattr(fleet, 'warp_factor', 0)
         }

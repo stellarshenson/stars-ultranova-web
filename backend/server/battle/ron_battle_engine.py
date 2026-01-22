@@ -281,7 +281,7 @@ class RonBattleEngine:
         number_of_targets = 0
 
         for wolf in battling_stacks:
-            if not wolf.composition:
+            if not wolf.tokens:
                 continue
 
             wolf.target = None
@@ -289,7 +289,7 @@ class RonBattleEngine:
             have_incremented = False
 
             for lamb in battling_stacks:
-                if not lamb.composition:
+                if not lamb.tokens:
                     continue
                 if lamb.token is None or lamb.token.armor <= 0:
                     continue
@@ -424,7 +424,7 @@ class RonBattleEngine:
     ) -> None:
         """Move stacks using Ron's improved movement system."""
         for stack in battling_stacks:
-            if stack is None or not stack.composition:
+            if stack is None or not stack.tokens:
                 continue
 
             if stack.target is None or stack.is_starbase:

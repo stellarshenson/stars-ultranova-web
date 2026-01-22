@@ -3,13 +3,15 @@ Stars Nova Web - FastAPI Application Entry Point
 
 A web port of the Stars! Nova 4X strategy game.
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
+from typing import Optional
 
 from .config import config
 from .api.routes import games_router, stars_router, fleets_router, designs_router
+from .api.websocket import handle_websocket
 
 # Create FastAPI application
 app = FastAPI(
@@ -48,6 +50,19 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.websocket("/ws/games/{game_id}")
+async def websocket_game(websocket: WebSocket, game_id: str, empire_id: Optional[int] = None):
+    """
+    WebSocket endpoint for real-time game updates.
+
+    Args:
+        websocket: WebSocket connection.
+        game_id: Game to connect to.
+        empire_id: Optional empire filter for private messages.
+    """
+    await handle_websocket(websocket, game_id, empire_id)
 
 
 if __name__ == "__main__":

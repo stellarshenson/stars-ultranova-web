@@ -223,3 +223,39 @@ This journal tracks substantive work on documents, diagrams, and documentation c
    - Fixed test using `fleet.key` directly when it should use `fleet.id` (Item.key encodes owner in upper bits)
 
    **Verification**: All 215 unit tests pass (38 new for Phase 5). Both battle engines functional. Movement table verified against C# source values. Stack creation from Fleet preserves all token properties.
+
+7. **Task - Phase 6 implementation**: Complete Phase 6 of Stars Nova Web - API Layer<br>
+   **Result**: Implemented complete REST/WebSocket API layer with SQLite persistence, game management services, and galaxy generation for new games.
+
+   **Persistence Layer** (`backend/persistence/`):
+   - `database.py`: SQLite database management with schema for games, game_states (serialized JSON), stars, empires, commands tables. Singleton pattern with `get_database()`. Schema initialization on first connection.
+   - `game_repository.py`: Repository pattern for game operations. `create_game()` creates record with UUID, `save_game_state()`/`load_game_state()` handle serialized ServerData as JSON blob, `save_command()` queues turn commands with empire_id and turn_year, `get_commands()` retrieves commands for processing, `clear_commands()` removes processed commands.
+
+   **Services Layer** (`backend/services/`):
+   - `game_manager.py`: Central game management service. `create_game()` initializes galaxy via GalaxyGenerator and persists to database. `get_game()`/`list_games()`/`delete_game()` for CRUD. `generate_turn()` loads state, runs TurnGenerator, saves updated state. Entity accessors `get_stars()`, `get_fleets()`, `get_empires()`. Game state caching for performance.
+   - `galaxy_generator.py`: New game generation. Creates stars with random positions using minimum distance constraints (STAR_DENSITY * 0.6). Random habitability (gravity, temperature, radiation) and mineral concentrations. 53 star names from original Stars! pool. Creates races from DEFAULT_RACES templates (Humanoids/JOAT, Rabbitoids/HE, Insectoids/WM, Siliconoids/AR). Selects home worlds maximizing distance between players, sets optimal habitability (50, 50, 50). Creates EmpireData with starting tech (level 3), research budget (15%), owned stars. Creates starting Scout fleet with Long Range Scout token.
+
+   **API Endpoints** (`backend/api/routes/`):
+   Updated routes to use GameManager:
+   - `games.py`: Full game lifecycle - create (POST), list (GET), get by ID, delete, generate turn. Empires endpoint lists empires with star/fleet counts. Commands endpoint queues player orders.
+   - `stars.py`: List stars, get by name with full details (habitability, concentrations, owner, population).
+   - `fleets.py`: List fleets, get by key, get waypoints.
+
+   **WebSocket Support** (`backend/api/websocket.py`):
+   - `ConnectionManager`: Manages WebSocket connections per game_id/empire_id. Supports broadcast to all game subscribers and targeted messages to specific empires.
+   - WS endpoint at `/ws/games/{game_id}`: Real-time updates for turn generation, chat, game state changes.
+
+   **Bug Fixes During Integration**:
+   - Fixed `fleet.composition` -> `fleet.tokens` throughout codebase (turn_generator.py, server_data.py, turn_steps, battle engines)
+   - Fixed `token.design` references to use cached ShipToken properties (scan_range_normal, scan_range_penetrating) or defensive getattr checks
+   - Fixed `star.resource_stockpile` -> `star.resources_on_hand` in turn steps
+   - Fixed `star.max_population` to check if callable (method) vs attribute
+   - Fixed TurnGenerator.generate() to return messages list
+   - Fixed TechLevel instantiation to use `TechLevel.from_level()` instead of keyword arguments
+   - Updated test mocks (MockFleet.composition -> tokens, MockStar.resource_stockpile -> resources_on_hand)
+   - Added scan_range_normal/scan_range_penetrating to MockFleetToken with __post_init__ from design
+
+   **Test Suite** (`tests/unit/test_api.py`):
+   19 tests covering: Game CRUD (7 tests), star endpoints (3 tests), fleet endpoints (1 test), empire endpoints (3 tests), command submission (1 test), galaxy generator (2 tests), health check (1 test). Tests use temporary SQLite database with test fixture isolation.
+
+   **Verification**: All 234 unit tests pass (19 new for Phase 6). API functional - games create with generated galaxies, turn generation processes correctly, entities queryable. WebSocket infrastructure in place for real-time updates.

@@ -15,6 +15,7 @@ from ..waypoints import Waypoint, NoTask
 
 if TYPE_CHECKING:
     from ..race import Race
+    from .star import Star
 
 
 class TravelStatus(IntEnum):
@@ -128,6 +129,7 @@ class Fleet(Mappable):
 
     # Orbit and movement
     in_orbit_name: Optional[str] = None
+    in_orbit: Optional['Star'] = field(default=None, repr=False)  # Runtime reference, not persisted
     bearing: float = 0.0
     cloaked: float = 0.0
     fuel_available: float = 0.0

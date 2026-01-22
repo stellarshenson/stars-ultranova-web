@@ -106,7 +106,7 @@ class BombingStep(ITurnStep):
 
         # Count bombers and calculate kill rate
         total_kill_rate = 0
-        for token in fleet.composition.values():
+        for token in fleet.tokens.values():
             if token.design is not None:
                 # Check if design has bombs
                 bomb_count = getattr(token.design, 'bomb_count', 0)

@@ -141,14 +141,14 @@ class DesignCommand(Command):
         for fleet_key, fleet in empire.owned_fleets.items():
             tokens_to_remove = []
 
-            for token_key, token in fleet.composition.items():
+            for token_key, token in fleet.tokens.items():
                 if token.design.key == design_key:
                     tokens_to_remove.append(token_key)
 
             for token_key in tokens_to_remove:
-                del fleet.composition[token_key]
+                del fleet.tokens[token_key]
 
-            if len(fleet.composition) == 0:
+            if len(fleet.tokens) == 0:
                 fleets_to_remove.append(fleet_key)
 
         for fleet_key in fleets_to_remove:

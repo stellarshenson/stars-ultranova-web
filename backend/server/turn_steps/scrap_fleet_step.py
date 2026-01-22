@@ -70,7 +70,7 @@ class ScrapFleetStep(ITurnStep):
 
             # Calculate resources recovered
             total_recovered = 0
-            for token in list(fleet.composition.values()):
+            for token in list(fleet.tokens.values()):
                 if token.design is not None:
                     cost = token.design.cost
                     recovered_ironium = int(cost.ironium * token.quantity * scrap_percent)
@@ -78,13 +78,13 @@ class ScrapFleetStep(ITurnStep):
                     recovered_germanium = int(cost.germanium * token.quantity * scrap_percent)
 
                     if target_star is not None:
-                        target_star.resource_stockpile.ironium += recovered_ironium
-                        target_star.resource_stockpile.boranium += recovered_boranium
-                        target_star.resource_stockpile.germanium += recovered_germanium
+                        target_star.resources_on_hand.ironium += recovered_ironium
+                        target_star.resources_on_hand.boranium += recovered_boranium
+                        target_star.resources_on_hand.germanium += recovered_germanium
                         total_recovered += recovered_ironium + recovered_boranium + recovered_germanium
 
             # Clear fleet composition (marks it for cleanup)
-            fleet.composition.clear()
+            fleet.tokens.clear()
 
             if total_recovered > 0:
                 messages.append(Message(

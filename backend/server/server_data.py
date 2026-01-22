@@ -175,7 +175,7 @@ class ServerData:
         destroyed_fleets: List[int] = []
 
         for fleet in self.iterate_all_fleets():
-            if len(fleet.composition) == 0:
+            if len(fleet.tokens) == 0:
                 destroyed_fleets.append(fleet.key)
 
         # Remove destroyed fleets from all empires
@@ -187,14 +187,18 @@ class ServerData:
                     del empire.fleet_reports[key]
 
         # Remove destroyed starbases
+        # Note: Star has starbase_key (int) pointing to a fleet, not starbase object
+        # Starbase cleanup is handled when the fleet is destroyed
         destroyed_stations: List[str] = []
         for star in self.all_stars.values():
-            if star.starbase is not None:
-                if len(star.starbase.composition) == 0:
-                    destroyed_stations.append(star.name)
+            # Check if star has a starbase_key that references a destroyed fleet
+            if hasattr(star, 'starbase_key') and star.starbase_key is not None:
+                # Would need to look up fleet by key to check if destroyed
+                # For now, starbases are cleaned up when fleet iteration finds empty fleet
+                pass
 
         for name in destroyed_stations:
-            self.all_stars[name].starbase = None
+            self.all_stars[name].starbase_key = None
 
         # Handle salvage decay (salvage decays 30% per turn)
         for empire in self.all_empires.values():

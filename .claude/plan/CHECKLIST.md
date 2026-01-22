@@ -149,25 +149,38 @@ Combat resolution system.
 
 ---
 
-## Phase 6: API Layer
+## Phase 6: API Layer ✅ COMPLETE
 
 Complete REST/WebSocket endpoints.
 
-- [ ] **Game Endpoints**
-  - [ ] GET/POST /api/games
-  - [ ] GET/DELETE /api/games/{id}
-  - [ ] POST /api/games/{id}/turn/generate
-- [ ] **Fleet Endpoints**
-  - [ ] GET/PUT /api/games/{id}/fleets/{key}/waypoints
-  - [ ] Fleet orders submission
-- [ ] **Design Endpoints**
-  - [ ] GET/POST /api/games/{id}/designs
-- [ ] **WebSocket**
-  - [ ] Real-time turn notifications
-  - [ ] Chat support
-- [ ] **Persistence**
-  - [ ] SQLite database
-  - [ ] Game state serialization
+- [x] **Persistence Layer** (`backend/persistence/`)
+  - [x] `database.py` - SQLite database with games, game_states, stars, empires, commands tables
+  - [x] `game_repository.py` - Game CRUD, state serialization, command storage
+- [x] **Services Layer** (`backend/services/`)
+  - [x] `game_manager.py` - Central game management (create, load, turn generation)
+  - [x] `galaxy_generator.py` - New game generation with stars, empires, starting fleets
+- [x] **Game Endpoints**
+  - [x] POST /api/games - Create game with name, player_count, universe_size, seed
+  - [x] GET /api/games - List all games
+  - [x] GET /api/games/{id} - Get game by ID
+  - [x] DELETE /api/games/{id} - Delete game
+  - [x] POST /api/games/{id}/turn/generate - Generate turn
+- [x] **Entity Endpoints**
+  - [x] GET /api/games/{id}/stars - List stars
+  - [x] GET /api/games/{id}/stars/{name} - Get star by name
+  - [x] GET /api/games/{id}/fleets - List fleets
+  - [x] GET /api/games/{id}/fleets/{key} - Get fleet by key
+  - [x] GET /api/games/{id}/fleets/{key}/waypoints - Get fleet waypoints
+  - [x] GET /api/games/{id}/empires - List empires
+  - [x] GET /api/games/{id}/empires/{id} - Get empire by ID
+- [x] **Command Submission**
+  - [x] POST /api/games/{id}/empires/{empire_id}/commands - Submit commands
+- [x] **WebSocket**
+  - [x] `websocket.py` - ConnectionManager with game/empire subscriptions
+  - [x] WS /ws/games/{game_id} - Real-time game updates
+- [x] **Tests**
+  - [x] test_api.py (19 tests) - Games, stars, fleets, empires, commands, galaxy generation
+- [x] All 234 tests passing
 
 ---
 
@@ -233,9 +246,9 @@ Final verification and refinement.
 | 3 | Commands and Waypoints | ✅ Complete |
 | 4 | Turn Processing | ✅ Complete |
 | 5 | Battle Engines | ✅ Complete |
-| 6 | API Layer | ⬜ Pending |
+| 6 | API Layer | ✅ Complete |
 | 7 | Frontend | ⬜ Pending |
 | 8 | AI System | ⬜ Pending |
 | 9 | Testing and Polish | ⬜ Pending |
 
-**Current Focus**: Phase 6 - API Layer
+**Current Focus**: Phase 7 - Frontend

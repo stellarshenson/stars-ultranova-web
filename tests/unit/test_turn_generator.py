@@ -27,9 +27,19 @@ from backend.core.globals import STARTING_YEAR, NOBODY
 
 @dataclass
 class MockFleetToken:
-    """Mock ship token for fleet composition."""
+    """Mock ship token for fleet tokens."""
     quantity: int = 1
     design: Optional[object] = None
+    scan_range_normal: int = 0
+    scan_range_penetrating: int = 0
+
+    def __post_init__(self):
+        # Copy scan ranges from design if provided
+        if self.design is not None:
+            if hasattr(self.design, 'scan_range'):
+                self.scan_range_normal = self.design.scan_range
+            if hasattr(self.design, 'pen_scan_range'):
+                self.scan_range_penetrating = self.design.pen_scan_range
 
 
 @dataclass
@@ -60,7 +70,7 @@ class MockFleet:
     owner: int = 0
     position: NovaPoint = field(default_factory=lambda: NovaPoint(0, 0))
     waypoints: List[Waypoint] = field(default_factory=list)
-    composition: Dict[int, MockFleetToken] = field(default_factory=dict)
+    tokens: Dict[int, MockFleetToken] = field(default_factory=dict)
     cargo: MockCargo = field(default_factory=MockCargo)
     in_orbit: Optional[object] = None
     is_starbase: bool = False
@@ -84,7 +94,7 @@ class MockResourceStockpile:
 @dataclass
 class MockStarbase:
     """Mock starbase for testing."""
-    composition: Dict[int, MockFleetToken] = field(default_factory=lambda: {1: MockFleetToken(quantity=1)})
+    tokens: Dict[int, MockFleetToken] = field(default_factory=lambda: {1: MockFleetToken(quantity=1)})
 
 
 @dataclass
@@ -94,7 +104,7 @@ class MockStar:
     owner: int = NOBODY
     position: NovaPoint = field(default_factory=lambda: NovaPoint(100, 100))
     colonists: int = 0
-    resource_stockpile: MockResourceStockpile = field(default_factory=MockResourceStockpile)
+    resources_on_hand: MockResourceStockpile = field(default_factory=MockResourceStockpile)
     starbase: Optional[object] = None
     gravity: int = 50
     temperature: int = 50
@@ -170,10 +180,10 @@ class TestServerData:
         data = ServerData()
 
         empire = EmpireData(id=0)
-        fleet_empty = MockFleet(key=1, owner=0, composition={})
+        fleet_empty = MockFleet(key=1, owner=0, tokens={})
         fleet_with_ships = MockFleet(
             key=2, owner=0,
-            composition={1: MockFleetToken(quantity=5)}
+            tokens={1: MockFleetToken(quantity=5)}
         )
         empire.owned_fleets = {1: fleet_empty, 2: fleet_with_ships}
         data.all_empires = {0: empire}
@@ -275,7 +285,7 @@ class TestScrapFleetStep:
                 destination="Home",
                 task=WaypointTask.SCRAP
             )],
-            composition={1: token}
+            tokens={1: token}
         )
         empire.owned_fleets = {1: fleet}
         data.all_empires = {0: empire}
@@ -286,9 +296,9 @@ class TestScrapFleetStep:
         # 75% of (100*2) = 150 ironium
         # 75% of (50*2) = 75 boranium
         # 75% of (25*2) = 37 germanium
-        assert star.resource_stockpile.ironium == 150
-        assert star.resource_stockpile.boranium == 75
-        assert star.resource_stockpile.germanium == 37
+        assert star.resources_on_hand.ironium == 150
+        assert star.resources_on_hand.boranium == 75
+        assert star.resources_on_hand.germanium == 37
         assert len(messages) > 0
 
     def test_scrap_at_planet_33_percent(self):
@@ -309,7 +319,7 @@ class TestScrapFleetStep:
                 destination="Colony",
                 task=WaypointTask.SCRAP
             )],
-            composition={1: token}
+            tokens={1: token}
         )
         empire.owned_fleets = {1: fleet}
         data.all_empires = {0: empire}
@@ -318,9 +328,9 @@ class TestScrapFleetStep:
         step.process(data)
 
         # 33% of 100 = 33
-        assert star.resource_stockpile.ironium == 33
-        assert star.resource_stockpile.boranium == 33
-        assert star.resource_stockpile.germanium == 33
+        assert star.resources_on_hand.ironium == 33
+        assert star.resources_on_hand.boranium == 33
+        assert star.resources_on_hand.germanium == 33
 
 
 # --------------------------------------------------------------------------
@@ -342,7 +352,7 @@ class TestSplitFleetStep:
                 Waypoint(position_x=100, position_y=100, destination="Here", task=WaypointTask.SPLIT_MERGE),
                 Waypoint(position_x=200, position_y=200, destination="There", task=WaypointTask.NO_TASK),
             ],
-            composition={1: MockFleetToken(quantity=5)}
+            tokens={1: MockFleetToken(quantity=5)}
         )
         empire.owned_fleets = {1: fleet}
         data.all_empires = {0: empire}
@@ -365,7 +375,7 @@ class TestSplitFleetStep:
             waypoints=[
                 Waypoint(position_x=100, position_y=100, destination="Here", task=WaypointTask.SPLIT_MERGE),
             ],
-            composition={1: MockFleetToken(quantity=5)}
+            tokens={1: MockFleetToken(quantity=5)}
         )
         empire.owned_fleets = {1: fleet}
         data.all_empires = {0: empire}
@@ -411,7 +421,7 @@ class TestScanStep:
         scanner_fleet = MockFleet(
             key=1, owner=0,
             position=NovaPoint(100, 100),
-            composition={1: MockFleetToken(quantity=1, design=scanner_design)}
+            tokens={1: MockFleetToken(quantity=1, design=scanner_design)}
         )
         empire0.owned_fleets = {1: scanner_fleet}
 
@@ -419,7 +429,7 @@ class TestScanStep:
         enemy_fleet = MockFleet(
             key=(1 << 32) + 1, owner=1,
             position=NovaPoint(150, 150),  # Within 200 ly
-            composition={1: MockFleetToken(quantity=3)}
+            tokens={1: MockFleetToken(quantity=3)}
         )
         empire1.owned_fleets = {(1 << 32) + 1: enemy_fleet}
 
@@ -454,7 +464,7 @@ class TestBombingStep:
             key=1, owner=0,
             in_orbit=star,
             has_bombers=True,
-            composition={1: token}
+            tokens={1: token}
         )
         empire0.owned_fleets = {1: fleet}
 
@@ -494,7 +504,7 @@ class TestPostBombingStep:
             )],
             cargo=MockCargo(colonists=10000, ironium=500),
             can_colonize=True,
-            composition={1: MockFleetToken(quantity=1)}
+            tokens={1: MockFleetToken(quantity=1)}
         )
         empire.owned_fleets = {1: fleet}
         data.all_empires = {0: empire}
@@ -504,7 +514,7 @@ class TestPostBombingStep:
 
         assert star.owner == 0
         assert star.colonists == 10000
-        assert star.resource_stockpile.ironium == 500
+        assert star.resources_on_hand.ironium == 500
         assert fleet.cargo.colonists == 0
         assert any("colonized" in m.text.lower() for m in messages)
 
