@@ -14,6 +14,7 @@ A web-based implementation of the Stars! strategy game, ported directly from the
 - Python 3.11+
 - FastAPI + uvicorn
 - HTML/CSS/JavaScript frontend (original Stars! aesthetic)
+- Configuration via `project.env` file
 
 ## Setup
 
@@ -24,21 +25,34 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Create virtual environment and install dependencies
 uv sync
 
-# Run development server
-uv run uvicorn backend.main:app --reload
+# Copy example configuration (if needed)
+cp project.env.example project.env
+
+# Run development server (default port: 9800)
+make run
 
 # Run tests
-uv run pytest
+make test
 ```
+
+The server will start on `http://localhost:9800` by default. You can customize settings in `project.env`.
+
+### Configuration
+
+Edit `project.env` to customize:
+- Server port (default: 9800)
+- CORS origins
+- Database URL
+- Game settings (max players, universe sizes)
+- Debug mode
 
 ### Development dependencies
 
 ```bash
 # Install with dev dependencies
-uv sync --all-extras
+make dev-install
 
-# Install playwright browsers for screenshot tests
-uv run playwright install chromium
+# This installs pytest, httpx, playwright and browser drivers
 ```
 
 ## Source

@@ -8,7 +8,7 @@ dev-install:
 	uv run playwright install chromium
 
 run:
-	uv run uvicorn backend.main:app --reload --port 8000
+	uv run python -m backend.main
 
 test:
 	uv run pytest tests/

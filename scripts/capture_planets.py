@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 from playwright.async_api import async_playwright
 
 OUTPUT_DIR = project_root / "walkthrough" / "planets"
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:9800"
 
 
 # Planet configurations to capture

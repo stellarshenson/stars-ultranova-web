@@ -25,7 +25,7 @@ from playwright.async_api import async_playwright
 
 
 OUTPUT_DIR = project_root / "walkthrough" / "ui_redesign"
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:9800"
 
 
 async def wait_for_app(page):

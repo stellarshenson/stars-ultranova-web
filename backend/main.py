@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from typing import Optional
 
-from .config import config
+from .config import settings
 from .api.routes import games_router, stars_router, fleets_router, designs_router
 from .api.websocket import handle_websocket
 
@@ -24,18 +24,18 @@ logger = logging.getLogger(__name__)
 
 # Create FastAPI application
 app = FastAPI(
-    title=config.app_name,
-    version=config.version,
+    title=settings.app_name,
+    version=settings.version,
     description="Web port of Stars! Nova 4X strategy game"
 )
 
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
 )
 
 
@@ -76,8 +76,8 @@ app.include_router(fleets_router)
 app.include_router(designs_router)
 
 # Static files for frontend
-frontend_path = Path(__file__).parent.parent / "frontend"
-if frontend_path.exists():
+frontend_path = Path(__file__).parent.parent / settings.frontend_dir
+if settings.static_files and frontend_path.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_path)), name="static")
 
 
@@ -88,8 +88,8 @@ async def root():
     if index_path.exists():
         return FileResponse(str(index_path))
     return {
-        "name": config.app_name,
-        "version": config.version,
+        "name": settings.app_name,
+        "version": settings.version,
         "docs": "/docs",
         "api": "/api/games"
     }
@@ -116,4 +116,9 @@ async def websocket_game(websocket: WebSocket, game_id: str, empire_id: Optional
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=config.host, port=config.port)
+    uvicorn.run(
+        "backend.main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=settings.reload
+    )
