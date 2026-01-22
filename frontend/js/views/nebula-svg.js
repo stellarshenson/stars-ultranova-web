@@ -106,7 +106,7 @@ const NebulaSVG = {
     },
 
     /**
-     * Generate nebulae based on star distribution.
+     * Generate nebulae from backend data or star distribution.
      */
     generate(stars, universeWidth, universeHeight, seed = 0) {
         if (!this.nebulaeGroup) return;
@@ -114,7 +114,13 @@ const NebulaSVG = {
         // Clear existing nebulae
         this.nebulaeGroup.innerHTML = '';
 
-        // Analyze star distribution
+        // Use backend nebula data if available
+        if (GameState.nebulae && GameState.nebulae.regions && GameState.nebulae.regions.length > 0) {
+            this.renderFromBackend(GameState.nebulae);
+            return;
+        }
+
+        // Fallback: analyze star distribution
         const clusters = this.findClusters(stars);
         const voids = this.findVoids(stars, universeWidth, universeHeight);
 
@@ -123,6 +129,77 @@ const NebulaSVG = {
         this.addFilamentNebulae(stars, universeWidth, universeHeight, seed + 1000);
         this.addDarkNebulae(voids, seed + 2000);
         this.addBrightCores(clusters, seed + 3000);
+    },
+
+    /**
+     * Render nebulae from backend NebulaField data.
+     */
+    renderFromBackend(nebulaField) {
+        if (!this.nebulaeGroup) return;
+
+        for (let i = 0; i < nebulaField.regions.length; i++) {
+            const region = nebulaField.regions[i];
+            const seed = i * 1000;
+
+            // Create organic path for this region
+            const pathData = this.createOrganicPath(
+                region.x, region.y,
+                Math.max(region.radius_x, region.radius_y),
+                seed,
+                8
+            );
+
+            // Determine filter based on nebula type
+            let filter = 'url(#blur-medium)';
+            if (region.nebula_type === 'dark') {
+                filter = 'url(#blur-heavy)';
+            } else if (region.nebula_type === 'filament') {
+                filter = 'url(#blur-wispy)';
+            }
+
+            // Color based on type
+            let color;
+            if (region.nebula_type === 'dark') {
+                color = `rgba(30, 20, 50, ${region.density * 0.5})`;
+            } else {
+                color = this.getColor(seed, region.density * 0.3);
+            }
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', pathData);
+            path.setAttribute('fill', color);
+            path.setAttribute('filter', filter);
+
+            // Apply elongation transform if radii differ significantly
+            if (Math.abs(region.radius_x - region.radius_y) > 10) {
+                const scaleX = region.radius_x / Math.max(region.radius_x, region.radius_y);
+                const scaleY = region.radius_y / Math.max(region.radius_x, region.radius_y);
+                const rotDeg = (region.rotation || 0) * 180 / Math.PI;
+                path.setAttribute('transform',
+                    `translate(${region.x}, ${region.y}) ` +
+                    `rotate(${rotDeg}) ` +
+                    `scale(${scaleX}, ${scaleY}) ` +
+                    `translate(${-region.x}, ${-region.y})`
+                );
+            }
+
+            this.nebulaeGroup.appendChild(path);
+
+            // Add inner glow for emission nebulae
+            if (region.nebula_type === 'emission' && region.density > 0.4) {
+                const innerPath = this.createOrganicPath(
+                    region.x, region.y,
+                    Math.max(region.radius_x, region.radius_y) * 0.5,
+                    seed + 500,
+                    6
+                );
+                const inner = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                inner.setAttribute('d', innerPath);
+                inner.setAttribute('fill', this.getColor(seed + 500, region.density * 0.15));
+                inner.setAttribute('filter', 'url(#glow)');
+                this.nebulaeGroup.appendChild(inner);
+            }
+        }
     },
 
     /**

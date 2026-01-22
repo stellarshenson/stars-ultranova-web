@@ -184,3 +184,18 @@ async def submit_command(game_id: str, empire_id: int, command: CommandSubmit) -
         turn_year=result["turn_year"],
         status=result["status"]
     )
+
+
+@router.get("/{game_id}/nebulae")
+async def get_nebulae(game_id: str) -> dict:
+    """
+    Get nebula field data for rendering and gameplay.
+
+    Returns nebula regions with position, shape, and density.
+    Density affects warp speed - higher density = slower travel.
+    """
+    manager = get_game_manager()
+    nebula_data = manager.get_nebula_field(game_id)
+    if nebula_data is None:
+        raise HTTPException(status_code=404, detail="Game not found or no nebula data")
+    return nebula_data

@@ -232,6 +232,25 @@ class GameManager:
 
         return self._star_to_dict(star)
 
+    def get_nebula_field(self, game_id: str) -> Optional[dict]:
+        """
+        Get nebula density field for a game.
+
+        Args:
+            game_id: Game identifier.
+
+        Returns:
+            Nebula field data or None.
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return None
+
+        if not server_data.nebula_field:
+            return {"regions": [], "universe_width": 600, "universe_height": 600}
+
+        return server_data.nebula_field.to_dict()
+
     def get_fleets(self, game_id: str, empire_id: Optional[int] = None) -> List[dict]:
         """
         Get fleets for a game.

@@ -15,7 +15,7 @@ from ..core.game_objects.star import Star
 from ..core.game_objects.fleet import Fleet, ShipToken
 from ..core.race.race import Race
 from ..core.globals import STARTING_YEAR, COLONISTS_PER_KILOTON
-from ..server.server_data import ServerData, PlayerSettings
+from ..server.server_data import ServerData, PlayerSettings, NebulaField, NebulaRegion
 
 
 # Universe size configurations (width x height in light years)
@@ -104,6 +104,9 @@ class GalaxyGenerator:
         stars = self._generate_stars(width, height)
         for star in stars:
             server_data.all_stars[star.name] = star
+
+        # Generate nebula density field
+        server_data.nebula_field = self._generate_nebulae(stars, width, height)
 
         # Create player settings and races
         races = self._create_races(player_count)
@@ -354,6 +357,110 @@ class GalaxyGenerator:
         y = selected['mean_y'] + world_y
 
         return x, y
+
+    def _generate_nebulae(self, stars: List[Star], width: int, height: int) -> NebulaField:
+        """
+        Generate nebula density field based on star distribution.
+
+        Creates nebula regions near star clusters and in void areas.
+        The density field will later affect warp speed calculations.
+
+        Args:
+            stars: List of stars in the galaxy.
+            width: Universe width.
+            height: Universe height.
+
+        Returns:
+            NebulaField with density regions.
+        """
+        nebula_field = NebulaField(universe_width=width, universe_height=height)
+
+        # Analyze star distribution to find clusters
+        cell_size = 80
+        cols = width // cell_size + 1
+        rows = height // cell_size + 1
+        density_grid = [[0 for _ in range(cols)] for _ in range(rows)]
+
+        for star in stars:
+            gx = int(star.position.x / cell_size)
+            gy = int(star.position.y / cell_size)
+            if 0 <= gx < cols and 0 <= gy < rows:
+                density_grid[gy][gx] += 1
+
+        # Find high-density regions (star clusters) - add emission nebulae
+        clusters = []
+        for gy in range(1, rows - 1):
+            for gx in range(1, cols - 1):
+                # Sum 3x3 neighborhood
+                neighborhood = sum(
+                    density_grid[gy + dy][gx + dx]
+                    for dy in range(-1, 2) for dx in range(-1, 2)
+                )
+                if neighborhood >= 5:
+                    clusters.append({
+                        'x': (gx + 0.5) * cell_size,
+                        'y': (gy + 0.5) * cell_size,
+                        'density': neighborhood
+                    })
+
+        # Add emission nebulae near clusters
+        for i, cluster in enumerate(clusters[:6]):
+            angle = self.rng.random() * math.pi * 2
+            offset = 30 + self.rng.random() * 50
+            nebula_field.regions.append(NebulaRegion(
+                x=cluster['x'] + math.cos(angle) * offset,
+                y=cluster['y'] + math.sin(angle) * offset,
+                radius_x=50 + self.rng.random() * 80,
+                radius_y=40 + self.rng.random() * 60,
+                rotation=self.rng.random() * math.pi,
+                density=0.3 + self.rng.random() * 0.4,
+                nebula_type='emission'
+            ))
+
+        # Find void regions - add dark nebulae
+        voids = []
+        for gy in range(1, rows - 1):
+            for gx in range(1, cols - 1):
+                neighborhood = sum(
+                    density_grid[gy + dy][gx + dx]
+                    for dy in range(-1, 2) for dx in range(-1, 2)
+                )
+                if neighborhood == 0:
+                    voids.append({
+                        'x': (gx + 0.5) * cell_size,
+                        'y': (gy + 0.5) * cell_size
+                    })
+
+        # Add dark nebulae in voids
+        for i, void in enumerate(voids[:4]):
+            nebula_field.regions.append(NebulaRegion(
+                x=void['x'],
+                y=void['y'],
+                radius_x=40 + self.rng.random() * 60,
+                radius_y=40 + self.rng.random() * 60,
+                rotation=self.rng.random() * math.pi,
+                density=0.4 + self.rng.random() * 0.3,
+                nebula_type='dark'
+            ))
+
+        # Add filament nebulae connecting regions
+        num_filaments = 2 + self.rng.randint(0, 3)
+        cx, cy = width / 2, height / 2
+        for i in range(num_filaments):
+            angle = self.rng.random() * math.pi
+            offset_angle = self.rng.random() * math.pi * 2
+            offset_dist = (width / 4) * (0.3 + self.rng.random() * 0.5)
+            nebula_field.regions.append(NebulaRegion(
+                x=cx + math.cos(offset_angle) * offset_dist,
+                y=cy + math.sin(offset_angle) * offset_dist,
+                radius_x=80 + self.rng.random() * 120,
+                radius_y=15 + self.rng.random() * 25,
+                rotation=angle,
+                density=0.2 + self.rng.random() * 0.3,
+                nebula_type='filament'
+            ))
+
+        return nebula_field
 
     def _create_races(self, player_count: int) -> List[Race]:
         """

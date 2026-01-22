@@ -8,6 +8,7 @@ const GameState = {
     game: null,
     stars: [],
     fleets: [],
+    nebulae: null,  // Nebula field data from backend
 
     // Selection state
     selectedStar: null,
@@ -24,6 +25,7 @@ const GameState = {
             this.game = await ApiClient.getGame(gameId);
             this.stars = await ApiClient.listStars(gameId);
             this.fleets = await ApiClient.listFleets(gameId);
+            this.nebulae = await ApiClient.getNebulae(gameId);
             this.emit('gameLoaded', this.game);
         } catch (error) {
             console.error('Failed to load game:', error);
@@ -37,9 +39,10 @@ const GameState = {
     async createGame(name, playerCount, universeSize, density, seed) {
         try {
             this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed);
-            // Load stars and fleets for the new game
+            // Load stars, fleets, and nebulae for the new game
             this.stars = await ApiClient.listStars(this.game.id);
             this.fleets = await ApiClient.listFleets(this.game.id);
+            this.nebulae = await ApiClient.getNebulae(this.game.id);
             this.emit('gameCreated', this.game);
             return this.game;
         } catch (error) {

@@ -153,6 +153,11 @@ const ApiClient = {
         return this.request('GET', `/games/${gameId}/stars/${encodeURIComponent(starName)}`);
     },
 
+    // Nebulae
+    async getNebulae(gameId) {
+        return this.request('GET', `/games/${gameId}/nebulae`);
+    },
+
     // Fleets
     async listFleets(gameId) {
         return this.request('GET', `/games/${gameId}/fleets/`);

@@ -64,6 +64,171 @@ class Minefield:
 
 
 @dataclass
+class NebulaRegion:
+    """
+    A single nebula region with position, shape, and density.
+    """
+    x: float = 0.0
+    y: float = 0.0
+    radius_x: float = 50.0  # Semi-axis X (for elliptical shape)
+    radius_y: float = 50.0  # Semi-axis Y
+    rotation: float = 0.0   # Rotation in radians
+    density: float = 0.5    # Peak density (0.0 to 1.0)
+    nebula_type: str = "emission"  # emission, dark, planetary, etc.
+
+
+@dataclass
+class NebulaField:
+    """
+    Nebula density field for the galaxy.
+
+    Stores nebula regions and provides density lookup for any position.
+    Density affects warp speed: higher density = slower travel.
+    """
+    regions: List[NebulaRegion] = field(default_factory=list)
+    universe_width: int = 600
+    universe_height: int = 600
+
+    # Cached density grid for fast lookups
+    _grid: Optional[List[List[float]]] = field(default=None, repr=False)
+    _grid_resolution: int = 20  # Grid cell size in light years
+
+    def get_density_at(self, x: float, y: float) -> float:
+        """
+        Get nebula density at a specific position.
+
+        Returns value from 0.0 (no nebula) to 1.0 (dense nebula core).
+        Uses cached grid for performance.
+        """
+        if self._grid is None:
+            self._build_grid()
+
+        # Convert world position to grid cell
+        grid_x = int(x / self._grid_resolution)
+        grid_y = int(y / self._grid_resolution)
+
+        # Bounds check
+        if self._grid and 0 <= grid_y < len(self._grid):
+            row = self._grid[grid_y]
+            if 0 <= grid_x < len(row):
+                return row[grid_x]
+
+        return 0.0
+
+    def get_average_density_along_path(
+        self, x1: float, y1: float, x2: float, y2: float, samples: int = 10
+    ) -> float:
+        """
+        Get average nebula density along a path (for warp speed calculation).
+
+        Args:
+            x1, y1: Start position
+            x2, y2: End position
+            samples: Number of sample points along path
+
+        Returns:
+            Average density along the path (0.0 to 1.0)
+        """
+        if samples < 2:
+            samples = 2
+
+        total_density = 0.0
+        for i in range(samples):
+            t = i / (samples - 1)
+            x = x1 + (x2 - x1) * t
+            y = y1 + (y2 - y1) * t
+            total_density += self.get_density_at(x, y)
+
+        return total_density / samples
+
+    def _build_grid(self) -> None:
+        """Build cached density grid from regions."""
+        import math
+
+        cols = max(1, self.universe_width // self._grid_resolution + 1)
+        rows = max(1, self.universe_height // self._grid_resolution + 1)
+
+        self._grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
+
+        for region in self.regions:
+            # Calculate bounding box for this region
+            max_radius = max(region.radius_x, region.radius_y)
+            min_gx = max(0, int((region.x - max_radius) / self._grid_resolution))
+            max_gx = min(cols - 1, int((region.x + max_radius) / self._grid_resolution))
+            min_gy = max(0, int((region.y - max_radius) / self._grid_resolution))
+            max_gy = min(rows - 1, int((region.y + max_radius) / self._grid_resolution))
+
+            cos_r = math.cos(-region.rotation)
+            sin_r = math.sin(-region.rotation)
+
+            for gy in range(min_gy, max_gy + 1):
+                for gx in range(min_gx, max_gx + 1):
+                    # World position of grid cell center
+                    wx = (gx + 0.5) * self._grid_resolution
+                    wy = (gy + 0.5) * self._grid_resolution
+
+                    # Transform to region's local coordinate system
+                    dx = wx - region.x
+                    dy = wy - region.y
+                    local_x = dx * cos_r - dy * sin_r
+                    local_y = dx * sin_r + dy * cos_r
+
+                    # Normalized distance (elliptical)
+                    if region.radius_x > 0 and region.radius_y > 0:
+                        norm_dist = math.sqrt(
+                            (local_x / region.radius_x) ** 2 +
+                            (local_y / region.radius_y) ** 2
+                        )
+                    else:
+                        norm_dist = float('inf')
+
+                    # Gaussian falloff
+                    if norm_dist < 2.0:  # Only compute within 2 sigma
+                        contribution = region.density * math.exp(-norm_dist ** 2)
+                        # Additive blending, clamped to 1.0
+                        self._grid[gy][gx] = min(1.0, self._grid[gy][gx] + contribution)
+
+    def invalidate_cache(self) -> None:
+        """Invalidate the cached grid (call after modifying regions)."""
+        self._grid = None
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for persistence."""
+        return {
+            'regions': [
+                {
+                    'x': r.x, 'y': r.y,
+                    'radius_x': r.radius_x, 'radius_y': r.radius_y,
+                    'rotation': r.rotation, 'density': r.density,
+                    'nebula_type': r.nebula_type
+                }
+                for r in self.regions
+            ],
+            'universe_width': self.universe_width,
+            'universe_height': self.universe_height
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'NebulaField':
+        """Deserialize from dictionary."""
+        nebula_field = cls(
+            universe_width=data.get('universe_width', 600),
+            universe_height=data.get('universe_height', 600)
+        )
+        for r in data.get('regions', []):
+            nebula_field.regions.append(NebulaRegion(
+                x=r.get('x', 0),
+                y=r.get('y', 0),
+                radius_x=r.get('radius_x', 50),
+                radius_y=r.get('radius_y', 50),
+                rotation=r.get('rotation', 0),
+                density=r.get('density', 0.5),
+                nebula_type=r.get('nebula_type', 'emission')
+            ))
+        return nebula_field
+
+
+@dataclass
 class ServerData:
     """
     Server-side game state container.
@@ -93,6 +258,9 @@ class ServerData:
 
     # All minefields (by key)
     all_minefields: Dict[int, Minefield] = field(default_factory=dict)
+
+    # Nebula density field (affects warp speed)
+    nebula_field: Optional[NebulaField] = None
 
     # Messages generated this turn
     all_messages: List['Message'] = field(default_factory=list)
