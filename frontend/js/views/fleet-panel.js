@@ -11,6 +11,9 @@ const FleetPanel = {
     // Current fleet being displayed
     currentFleet: null,
 
+    // Fleets at same location (for dropdown)
+    fleetsAtLocation: [],
+
     // Waypoint editing state
     editingWaypoints: false,
 
@@ -42,6 +45,9 @@ const FleetPanel = {
         this.currentFleet = fleet;
         this.container.classList.remove('hidden');
 
+        // Find all fleets at this location
+        this.fleetsAtLocation = this.getFleetsAtLocation(fleet.position_x, fleet.position_y);
+
         // Fetch waypoints if owned by player
         if (fleet.owner === 1 && GameState.game) {
             try {
@@ -54,6 +60,18 @@ const FleetPanel = {
         }
 
         this.render();
+    },
+
+    /**
+     * Get all fleets at a given location.
+     */
+    getFleetsAtLocation(x, y, threshold = 5) {
+        return GameState.fleets.filter(fleet => {
+            const dx = fleet.position_x - x;
+            const dy = fleet.position_y - y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            return dist <= threshold;
+        });
     },
 
     /**
@@ -91,7 +109,7 @@ const FleetPanel = {
 
         let html = `
             <div class="fleet-panel-header">
-                <h2>${fleet.name}</h2>
+                ${this.renderFleetHeader(fleet)}
                 <span class="fleet-position">(${fleet.position_x}, ${fleet.position_y})</span>
             </div>
 
@@ -108,8 +126,56 @@ const FleetPanel = {
         this.container.innerHTML = html;
 
         // Bind events
+        this.bindFleetSelector();
         if (isOwned) {
             this.bindEvents();
+        }
+    },
+
+    /**
+     * Render fleet header - dropdown if multiple fleets, plain text otherwise.
+     */
+    renderFleetHeader(fleet) {
+        if (this.fleetsAtLocation.length <= 1) {
+            return `<h2>${fleet.name}</h2>`;
+        }
+
+        // Multiple fleets at location - show dropdown
+        let options = '';
+        for (const f of this.fleetsAtLocation) {
+            const selected = f.key === fleet.key ? 'selected' : '';
+            const ownerLabel = f.owner === 1 ? '' : ' (Enemy)';
+            const tokenCount = Object.keys(f.tokens || {}).length;
+            const shipInfo = tokenCount > 0 ? ` - ${tokenCount} ship type(s)` : '';
+            options += `<option value="${f.key}" ${selected}>${f.name}${ownerLabel}${shipInfo}</option>`;
+        }
+
+        return `
+            <select class="fleet-selector" id="fleet-selector">
+                ${options}
+            </select>
+            <span class="fleet-count">${this.fleetsAtLocation.length} fleets here</span>
+        `;
+    },
+
+    /**
+     * Bind fleet selector change event.
+     */
+    bindFleetSelector() {
+        const selector = document.getElementById('fleet-selector');
+        if (selector) {
+            selector.addEventListener('change', (e) => this.onFleetSelectorChange(e));
+        }
+    },
+
+    /**
+     * Handle fleet selector change.
+     */
+    onFleetSelectorChange(e) {
+        const selectedKey = parseInt(e.target.value);
+        const fleet = GameState.fleets.find(f => f.key === selectedKey);
+        if (fleet) {
+            GameState.selectFleet(fleet);
         }
     },
 

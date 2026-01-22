@@ -37,12 +37,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 FleetPanel.init('fleet-panel');
             }
 
+            if (window.MessagePanel) {
+                MessagePanel.init('message-panel');
+            }
+
             if (window.DesignPanel) {
                 DesignPanel.init('design-panel');
             }
 
             if (window.BattleViewer) {
                 BattleViewer.init('battle-viewer');
+            }
+
+            if (window.RaceWizard) {
+                RaceWizard.init('race-wizard');
             }
         },
 

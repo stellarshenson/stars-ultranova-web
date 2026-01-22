@@ -110,6 +110,10 @@ const Dialogs = {
                     <label for="game-seed">Seed (optional)</label>
                     <input type="number" id="game-seed" placeholder="Random" class="form-input">
                 </div>
+
+                <div class="form-group">
+                    <button class="btn-small" id="btn-design-race">Design Custom Race...</button>
+                </div>
             </div>
 
             <div class="dialog-footer">
@@ -133,6 +137,13 @@ const Dialogs = {
                 this.close();
             } catch (error) {
                 alert('Failed to create game: ' + error.message);
+            }
+        });
+
+        // Bind race designer button
+        document.getElementById('btn-design-race')?.addEventListener('click', () => {
+            if (window.RaceWizard) {
+                RaceWizard.show();
             }
         });
     },

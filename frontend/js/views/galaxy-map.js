@@ -37,6 +37,12 @@ const GalaxyMap = {
     showGrid: true,
     showNames: true,
     showNebulae: true,
+    showScannerRange: false,
+
+    // Distance measuring state
+    isMeasuring: false,
+    measureStart: null,
+    measureEnd: null,
 
     // Nebulae cache (generated once per game)
     nebulae: null,
@@ -58,7 +64,11 @@ const GalaxyMap = {
         waypoint: '#00ffff',
         waypointLine: '#006666',
         text: '#c0c0c0',
-        textHighlight: '#ffff00'
+        textHighlight: '#ffff00',
+        scannerRange: 'rgba(0, 255, 0, 0.15)',
+        scannerRangeBorder: 'rgba(0, 255, 0, 0.4)',
+        measureLine: '#ffff00',
+        measureText: '#ffff00'
     },
 
     /**
@@ -155,7 +165,7 @@ const GalaxyMap = {
     },
 
     /**
-     * Mouse down - start drag or select.
+     * Mouse down - start drag, select, or measure distance.
      */
     onMouseDown(e) {
         const rect = this.canvas.getBoundingClientRect();
@@ -163,8 +173,19 @@ const GalaxyMap = {
         const y = e.clientY - rect.top;
 
         if (e.button === 0) {  // Left click
-            // Check for star/fleet click first
             const worldPos = this.screenToWorld(x, y);
+
+            // Shift+click for distance measuring
+            if (e.shiftKey) {
+                this.isMeasuring = true;
+                this.measureStart = { x: worldPos.x, y: worldPos.y };
+                this.measureEnd = { x: worldPos.x, y: worldPos.y };
+                this.canvas.style.cursor = 'crosshair';
+                this.render();
+                return;
+            }
+
+            // Check for star/fleet click first
             const clicked = this.findObjectAt(worldPos.x, worldPos.y);
 
             if (clicked) {
@@ -186,12 +207,20 @@ const GalaxyMap = {
     },
 
     /**
-     * Mouse move - pan or hover.
+     * Mouse move - pan, hover, or measure.
      */
     onMouseMove(e) {
         const rect = this.canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
+
+        if (this.isMeasuring) {
+            // Update measure end position
+            const worldPos = this.screenToWorld(x, y);
+            this.measureEnd = { x: worldPos.x, y: worldPos.y };
+            this.render();
+            return;
+        }
 
         if (this.isDragging) {
             // Pan view
@@ -231,9 +260,15 @@ const GalaxyMap = {
     },
 
     /**
-     * Mouse up - end drag.
+     * Mouse up - end drag or measuring.
      */
     onMouseUp(e) {
+        if (this.isMeasuring) {
+            // Keep the measurement visible until next click or Escape
+            this.isMeasuring = false;
+            this.canvas.style.cursor = 'grab';
+            return;
+        }
         this.isDragging = false;
         this.canvas.style.cursor = 'grab';
     },
@@ -366,8 +401,22 @@ const GalaxyMap = {
                 this.showNames = !this.showNames;
                 this.render();
                 break;
+            case 'S':
+                // Shift+S for scanner range toggle
+                if (e.shiftKey) {
+                    this.showScannerRange = !this.showScannerRange;
+                    this.render();
+                }
+                break;
             case 'Escape':
                 GameState.clearSelection();
+                // Also cancel measuring
+                if (this.isMeasuring) {
+                    this.isMeasuring = false;
+                    this.measureStart = null;
+                    this.measureEnd = null;
+                    this.render();
+                }
                 break;
         }
     },
@@ -498,6 +547,16 @@ const GalaxyMap = {
         // Draw fleets
         for (const fleet of GameState.fleets) {
             this.renderFleet(fleet);
+        }
+
+        // Draw scanner range overlay
+        if (this.showScannerRange) {
+            this.renderScannerRanges();
+        }
+
+        // Draw distance measuring line
+        if (this.measureStart && this.measureEnd) {
+            this.renderMeasureLine();
         }
 
         // Draw selection indicator
@@ -970,8 +1029,111 @@ const GalaxyMap = {
         // Controls hint (bottom right)
         ctx.textAlign = 'right';
         ctx.fillStyle = '#666666';
-        ctx.fillText('WASD/Arrows: Pan | +/-: Zoom | G: Grid | N: Names',
+        ctx.fillText('WASD: Pan | +/-: Zoom | G: Grid | N: Names | Shift+S: Scanner | Shift+Drag: Measure',
             this.canvas.width - padding, this.canvas.height - padding);
+    },
+
+    /**
+     * Render scanner range circles for player's fleets.
+     */
+    renderScannerRanges() {
+        const ctx = this.ctx;
+
+        // Draw scanner ranges for player's fleets
+        for (const fleet of GameState.fleets) {
+            if (fleet.owner !== 1) continue;  // Only player fleets
+
+            // Get scanner range from fleet (default to 50 ly if not set)
+            const scanRange = fleet.scan_range || fleet.scanner_range || 50;
+            if (scanRange <= 0) continue;
+
+            const pos = this.worldToScreen(fleet.position_x, fleet.position_y);
+            const radius = scanRange * this.zoom;
+
+            // Draw filled circle
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = this.colors.scannerRange;
+            ctx.fill();
+
+            // Draw border
+            ctx.strokeStyle = this.colors.scannerRangeBorder;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // Also draw scanner ranges for player's colonized stars
+        for (const star of GameState.stars) {
+            if (star.owner !== 1 || star.colonists <= 0) continue;
+
+            // Colonized planets have a base scanner range
+            const scanRange = 30;  // Base planetary scanner range
+            const pos = this.worldToScreen(star.position_x, star.position_y);
+            const radius = scanRange * this.zoom;
+
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = this.colors.scannerRange;
+            ctx.fill();
+
+            ctx.strokeStyle = this.colors.scannerRangeBorder;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+    },
+
+    /**
+     * Render distance measuring line.
+     */
+    renderMeasureLine() {
+        if (!this.measureStart || !this.measureEnd) return;
+
+        const ctx = this.ctx;
+        const start = this.worldToScreen(this.measureStart.x, this.measureStart.y);
+        const end = this.worldToScreen(this.measureEnd.x, this.measureEnd.y);
+
+        // Calculate distance in light years
+        const dx = this.measureEnd.x - this.measureStart.x;
+        const dy = this.measureEnd.y - this.measureStart.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // Draw dashed line
+        ctx.strokeStyle = this.colors.measureLine;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 4]);
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw start and end markers
+        ctx.fillStyle = this.colors.measureLine;
+        ctx.beginPath();
+        ctx.arc(start.x, start.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(end.x, end.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw distance label at midpoint
+        const midX = (start.x + end.x) / 2;
+        const midY = (start.y + end.y) / 2;
+        const label = `${distance.toFixed(1)} ly`;
+
+        ctx.font = 'bold 14px monospace';
+        ctx.fillStyle = this.colors.measureText;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+
+        // Draw background for text
+        const textWidth = ctx.measureText(label).width;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(midX - textWidth / 2 - 4, midY - 20, textWidth + 8, 18);
+
+        // Draw text
+        ctx.fillStyle = this.colors.measureText;
+        ctx.fillText(label, midX, midY - 5);
     },
 
     /**

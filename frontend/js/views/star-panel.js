@@ -11,6 +11,15 @@ const StarPanel = {
     // Current star being displayed
     currentStar: null,
 
+    // Item costs (from game data - simplified for now)
+    itemCosts: {
+        factory: { ironium: 4, boranium: 0, germanium: 4, resources: 10 },
+        mine: { ironium: 0, boranium: 0, germanium: 4, resources: 5 },
+        defense: { ironium: 5, boranium: 5, germanium: 5, resources: 15 },
+        scout: { ironium: 8, boranium: 2, germanium: 7, resources: 25 },
+        colony_ship: { ironium: 20, boranium: 10, germanium: 15, resources: 50 }
+    },
+
     /**
      * Initialize the star panel.
      */
@@ -229,6 +238,71 @@ const StarPanel = {
     },
 
     /**
+     * Get the cost of a production item.
+     */
+    getItemCost(item) {
+        const itemType = (item.type || item.name || '').toLowerCase().replace(' ', '_');
+        return this.itemCosts[itemType] || { ironium: 10, boranium: 10, germanium: 10, resources: 20 };
+    },
+
+    /**
+     * Calculate completion time for a queue item.
+     */
+    calculateCompletionTime(star, item, queuePosition = 0) {
+        const cost = this.getItemCost(item);
+        const resourcesPerYear = star.resources_per_year || 1;
+        const totalResourceCost = cost.resources * item.quantity;
+
+        // Account for items ahead in queue
+        const queue = star.production_queue || [];
+        let resourcesUsedByPrior = 0;
+        for (let i = 0; i < queuePosition; i++) {
+            const priorItem = queue[i];
+            const priorCost = this.getItemCost(priorItem);
+            resourcesUsedByPrior += priorCost.resources * priorItem.quantity;
+        }
+
+        // Calculate years including queue wait
+        const startYear = Math.floor(resourcesUsedByPrior / resourcesPerYear);
+        const endYear = Math.ceil((resourcesUsedByPrior + totalResourceCost) / resourcesPerYear);
+
+        const currentYear = GameState.game ? GameState.game.turn + 2400 : 2400;
+        return {
+            startYear: currentYear + startYear,
+            endYear: currentYear + endYear,
+            turnsRemaining: endYear - startYear
+        };
+    },
+
+    /**
+     * Check if star has enough minerals for item.
+     */
+    hasEnoughMinerals(star, item) {
+        const cost = this.getItemCost(item);
+        return (
+            (star.ironium || 0) >= cost.ironium * item.quantity &&
+            (star.boranium || 0) >= cost.boranium * item.quantity &&
+            (star.germanium || 0) >= cost.germanium * item.quantity
+        );
+    },
+
+    /**
+     * Get queue item status class.
+     */
+    getQueueItemStatus(star, item, queuePosition) {
+        const completion = this.calculateCompletionTime(star, item, queuePosition);
+        const hasMinerals = this.hasEnoughMinerals(star, item);
+
+        if (!hasMinerals) {
+            return 'queue-insufficient';
+        }
+        if (completion.turnsRemaining === 0) {
+            return 'queue-this-turn';
+        }
+        return 'queue-future';
+    },
+
+    /**
      * Render production queue.
      */
     renderProductionQueue(star) {
@@ -239,11 +313,32 @@ const StarPanel = {
             queueHtml = '<p class="info-text">Production queue is empty.</p>';
         } else {
             queueHtml = '<ul class="production-queue">';
-            for (const item of queue) {
+            for (let i = 0; i < queue.length; i++) {
+                const item = queue[i];
+                const completion = this.calculateCompletionTime(star, item, i);
+                const statusClass = this.getQueueItemStatus(star, item, i);
+                const hasMinerals = this.hasEnoughMinerals(star, item);
+
+                let completionText = '';
+                if (!hasMinerals) {
+                    completionText = `<span class="queue-status insufficient">Insufficient minerals</span>`;
+                } else if (completion.turnsRemaining === 0) {
+                    completionText = `<span class="queue-status this-turn">Completes this turn</span>`;
+                } else if (completion.startYear === completion.endYear) {
+                    completionText = `<span class="queue-status">Year ${completion.endYear}</span>`;
+                } else {
+                    completionText = `<span class="queue-status">Year ${completion.startYear}-${completion.endYear}</span>`;
+                }
+
                 queueHtml += `
-                    <li class="queue-item">
-                        <span class="queue-name">${item.name || item.type}</span>
-                        <span class="queue-quantity">x${item.quantity}</span>
+                    <li class="queue-item ${statusClass}">
+                        <div class="queue-item-main">
+                            <span class="queue-name">${item.name || item.type}</span>
+                            <span class="queue-quantity">x${item.quantity}</span>
+                        </div>
+                        <div class="queue-item-details">
+                            ${completionText}
+                        </div>
                     </li>
                 `;
             }
@@ -257,6 +352,9 @@ const StarPanel = {
                 <div class="production-buttons">
                     <button class="btn-small" id="btn-add-production">Add</button>
                     <button class="btn-small" id="btn-clear-queue">Clear</button>
+                </div>
+                <div class="production-hint">
+                    <small>Shift+click: 10 | Ctrl+click: 100 | Both: 1000</small>
                 </div>
             </div>
 
@@ -278,7 +376,7 @@ const StarPanel = {
         const clearBtn = document.getElementById('btn-clear-queue');
 
         if (addBtn) {
-            addBtn.addEventListener('click', () => this.showProductionDialog());
+            addBtn.addEventListener('click', (e) => this.showProductionDialog(e));
         }
 
         if (clearBtn) {
@@ -289,14 +387,24 @@ const StarPanel = {
     /**
      * Show production dialog.
      */
-    showProductionDialog() {
-        // For now, use simple prompt - will be replaced with proper dialog
+    showProductionDialog(event) {
+        // Calculate default quantity based on modifier keys
+        let defaultQuantity = 1;
+        if (event && event.shiftKey && event.ctrlKey) {
+            defaultQuantity = 1000;
+        } else if (event && event.ctrlKey) {
+            defaultQuantity = 100;
+        } else if (event && event.shiftKey) {
+            defaultQuantity = 10;
+        }
+
+        // Build options with costs
         const options = [
-            '1. Factories',
-            '2. Mines',
-            '3. Defenses',
-            '4. Scout Ship',
-            '5. Colony Ship'
+            '1. Factories (4 Ir, 4 Ge, 10 res)',
+            '2. Mines (4 Ge, 5 res)',
+            '3. Defenses (5 Ir, 5 Bo, 5 Ge, 15 res)',
+            '4. Scout Ship (8 Ir, 2 Bo, 7 Ge, 25 res)',
+            '5. Colony Ship (20 Ir, 10 Bo, 15 Ge, 50 res)'
         ].join('\n');
 
         const choice = prompt(`Add to production queue:\n${options}\n\nEnter number:`);
@@ -306,7 +414,8 @@ const StarPanel = {
         const index = parseInt(choice) - 1;
 
         if (index >= 0 && index < types.length) {
-            const quantity = parseInt(prompt('Quantity:', '10')) || 1;
+            const quantityHint = defaultQuantity > 1 ? ` (default ${defaultQuantity} from modifier keys)` : '';
+            const quantity = parseInt(prompt(`Quantity${quantityHint}:`, defaultQuantity.toString())) || 1;
             this.addToProductionQueue(types[index], quantity);
         }
     },
