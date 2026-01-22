@@ -6,7 +6,7 @@ Data access layer for game persistence.
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from .database import Database
@@ -50,7 +50,7 @@ class GameRepository:
             Created game record.
         """
         game_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
@@ -110,7 +110,7 @@ class GameRepository:
         if not updates:
             return self.get_game(game_id)
 
-        updates["updated_at"] = datetime.utcnow().isoformat()
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
         values = list(updates.values()) + [game_id]
@@ -333,7 +333,7 @@ class GameRepository:
             Command ID.
         """
         command_json = json.dumps(command_dict)
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()

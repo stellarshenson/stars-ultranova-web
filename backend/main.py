@@ -3,9 +3,11 @@ Stars Nova Web - FastAPI Application Entry Point
 
 A web port of the Stars! Nova 4X strategy game.
 """
-from fastapi import FastAPI, WebSocket
+import logging
+from fastapi import FastAPI, WebSocket, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from typing import Optional
 
@@ -13,12 +15,59 @@ from .config import config
 from .api.routes import games_router, stars_router, fleets_router, designs_router
 from .api.websocket import handle_websocket
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 # Create FastAPI application
 app = FastAPI(
     title=config.app_name,
     version=config.version,
     description="Web port of Stars! Nova 4X strategy game"
 )
+
+# CORS middleware for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, restrict to specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Exception handlers
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Handle validation errors."""
+    logger.warning(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc), "type": "validation_error"}
+    )
+
+
+@app.exception_handler(KeyError)
+async def key_error_handler(request: Request, exc: KeyError):
+    """Handle missing key errors."""
+    logger.warning(f"Key error: {exc}")
+    return JSONResponse(
+        status_code=404,
+        content={"detail": f"Resource not found: {exc}", "type": "not_found"}
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected errors."""
+    logger.error(f"Unexpected error: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "type": "internal_error"}
+    )
 
 # Include API routers
 app.include_router(games_router)
