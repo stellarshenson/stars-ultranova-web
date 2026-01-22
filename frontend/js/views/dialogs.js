@@ -125,10 +125,11 @@ const Dialogs = {
             const name = document.getElementById('game-name').value || 'New Game';
             const playerCount = parseInt(document.getElementById('player-count').value) || 2;
             const universeSize = document.getElementById('universe-size').value || 'medium';
+            const density = document.getElementById('star-density').value || 'normal';
             const seed = document.getElementById('game-seed').value || null;
 
             try {
-                await GameState.createGame(name, playerCount, universeSize, seed);
+                await GameState.createGame(name, playerCount, universeSize, density, seed);
                 this.close();
             } catch (error) {
                 alert('Failed to create game: ' + error.message);

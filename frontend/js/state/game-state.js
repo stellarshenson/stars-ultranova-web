@@ -34,11 +34,12 @@ const GameState = {
     /**
      * Create a new game.
      */
-    async createGame(name, playerCount, universeSize) {
+    async createGame(name, playerCount, universeSize, density, seed) {
         try {
-            this.game = await ApiClient.createGame(name, playerCount, universeSize);
-            this.stars = [];
-            this.fleets = [];
+            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed);
+            // Load stars and fleets for the new game
+            this.stars = await ApiClient.listStars(this.game.id);
+            this.fleets = await ApiClient.listFleets(this.game.id);
             this.emit('gameCreated', this.game);
             return this.game;
         } catch (error) {

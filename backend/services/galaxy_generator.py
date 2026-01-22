@@ -137,7 +137,9 @@ class GalaxyGenerator:
 
     def _generate_stars(self, width: int, height: int) -> List[Star]:
         """
-        Generate stars for the galaxy.
+        Generate stars for the galaxy using Gaussian Mixture Model distribution.
+
+        Creates natural-looking clusters, streams, and voids.
 
         Args:
             width: Galaxy width in light years.
@@ -159,20 +161,122 @@ class GalaxyGenerator:
         available_names = list(STAR_NAMES)
         self.rng.shuffle(available_names)
 
+        # Galaxy center
+        cx, cy = width / 2, height / 2
+        max_radius = min(width, height) * 0.45
+
+        # Create Gaussian mixture components
+        components = []
+
+        # 1. Central core - high weight, circular
+        components.append({
+            'weight': 0.15,
+            'mean_x': cx,
+            'mean_y': cy,
+            'std_x': max_radius * 0.20,
+            'std_y': max_radius * 0.20,
+            'rotation': 0
+        })
+
+        # 2. Main galactic band - elongated ellipse
+        band_angle = self.rng.random() * math.pi
+        band_stretch = 1.5 + self.rng.random() * 1.0  # 1.5 to 2.5
+        components.append({
+            'weight': 0.35,
+            'mean_x': cx,
+            'mean_y': cy,
+            'std_x': max_radius * 0.6 * band_stretch,
+            'std_y': max_radius * 0.25,
+            'rotation': band_angle
+        })
+
+        # 3-5. Star clusters - compact groups
+        num_clusters = 2 + self.rng.randint(0, 3)
+        for i in range(num_clusters):
+            angle = self.rng.random() * math.pi * 2
+            dist = max_radius * (0.3 + self.rng.random() * 0.5)
+            cluster_size = 25 + self.rng.random() * 40
+            components.append({
+                'weight': 0.08,
+                'mean_x': cx + math.cos(angle) * dist,
+                'mean_y': cy + math.sin(angle) * dist,
+                'std_x': cluster_size,
+                'std_y': cluster_size * (0.5 + self.rng.random() * 0.5),
+                'rotation': self.rng.random() * math.pi
+            })
+
+        # 6-7. Star streams - very elongated
+        num_streams = 1 + self.rng.randint(0, 2)
+        for i in range(num_streams):
+            stream_angle = self.rng.random() * math.pi
+            offset_angle = self.rng.random() * math.pi * 2
+            offset_dist = max_radius * (0.2 + self.rng.random() * 0.4)
+            components.append({
+                'weight': 0.06,
+                'mean_x': cx + math.cos(offset_angle) * offset_dist,
+                'mean_y': cy + math.sin(offset_angle) * offset_dist,
+                'std_x': max_radius * (0.3 + self.rng.random() * 0.4),
+                'std_y': 15 + self.rng.random() * 20,
+                'rotation': stream_angle
+            })
+
+        # 8. Outer halo - diffuse background
+        components.append({
+            'weight': 0.10,
+            'mean_x': cx,
+            'mean_y': cy,
+            'std_x': max_radius * 0.8,
+            'std_y': max_radius * 0.8,
+            'rotation': 0
+        })
+
+        # Normalize weights
+        total_weight = sum(c['weight'] for c in components)
+        for c in components:
+            c['weight'] /= total_weight
+
+        # Generate void regions (rejection sampling)
+        voids = []
+        num_voids = 2 + self.rng.randint(0, 3)
+        for i in range(num_voids):
+            angle = self.rng.random() * math.pi * 2
+            dist = max_radius * (0.3 + self.rng.random() * 0.5)
+            voids.append({
+                'x': cx + math.cos(angle) * dist,
+                'y': cy + math.sin(angle) * dist,
+                'radius': 25 + self.rng.random() * 45
+            })
+
         attempts = 0
-        while len(stars) < num_stars and attempts < num_stars * 10:
+        while len(stars) < num_stars and attempts < num_stars * 20:
             attempts += 1
 
-            # Random position with margin
+            # Sample from Gaussian mixture
+            x, y = self._sample_gmm(components)
+
+            x = int(x)
+            y = int(y)
+
+            # Clamp to bounds with margin
             margin = 20
-            x = self.rng.randint(margin, width - margin)
-            y = self.rng.randint(margin, height - margin)
+            x = max(margin, min(width - margin, x))
+            y = max(margin, min(height - margin, y))
+
+            # Check if in void region
+            in_void = False
+            for void in voids:
+                dist_to_void = math.sqrt((x - void['x'])**2 + (y - void['y'])**2)
+                if dist_to_void < void['radius']:
+                    in_void = True
+                    break
+            if in_void:
+                continue
 
             # Check minimum distance from other stars
             too_close = False
             for px, py in used_positions:
                 dist = math.sqrt((x - px) ** 2 + (y - py) ** 2)
-                if dist < STAR_DENSITY * 0.6:
+                if dist < STAR_DENSITY * 0.5:
                     too_close = True
                     break
 
@@ -212,6 +316,44 @@ class GalaxyGenerator:
             used_positions.add((x, y))
 
         return stars
+
+    def _sample_gmm(self, components: List[dict]) -> Tuple[float, float]:
+        """
+        Sample a point from a Gaussian Mixture Model.
+
+        Args:
+            components: List of GMM components with weight, mean, std, and rotation.
+
+        Returns:
+            (x, y) coordinate tuple.
+        """
+        # Select component based on weights
+        r = self.rng.random()
+        cumulative = 0
+        selected = components[0]
+        for c in components:
+            cumulative += c['weight']
+            if r <= cumulative:
+                selected = c
+                break
+
+        # Sample from 2D Gaussian
+        # Generate in local coordinates (aligned with ellipse axes)
+        local_x = self.rng.gauss(0, selected['std_x'])
+        local_y = self.rng.gauss(0, selected['std_y'])
+
+        # Rotate to world coordinates
+        rotation = selected.get('rotation', 0)
+        cos_r = math.cos(rotation)
+        sin_r = math.sin(rotation)
+        world_x = local_x * cos_r - local_y * sin_r
+        world_y = local_x * sin_r + local_y * cos_r
+
+        # Translate to mean position
+        x = selected['mean_x'] + world_x
+        y = selected['mean_y'] + world_y
+
+        return x, y
 
     def _create_races(self, player_count: int) -> List[Race]:
         """

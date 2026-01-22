@@ -133,10 +133,77 @@ document.addEventListener('DOMContentLoaded', () => {
             this.hideMenu();
             this.showGame();
 
-            // Center galaxy map on homeworld
+            // Resize and center galaxy map on homeworld
+            // Must resize after showing the container so canvas has dimensions
             if (window.GalaxyMap) {
+                GalaxyMap.resize();
                 GalaxyMap.centerOnHomeworld();
             }
+
+            // Update empire summary
+            this.updateEmpireSummary();
+        },
+
+        /**
+         * Update the empire summary display.
+         */
+        updateEmpireSummary() {
+            if (!GameState.game) return;
+
+            // Count player's planets and calculate totals
+            const playerStars = GameState.stars.filter(s => s.owner === 1);
+            const playerFleets = GameState.fleets.filter(f => f.owner === 1);
+
+            const totalPop = playerStars.reduce((sum, s) => sum + (s.colonists || 0), 0);
+            const totalIronium = playerStars.reduce((sum, s) => sum + (s.ironium || 0), 0);
+            const totalBoranium = playerStars.reduce((sum, s) => sum + (s.boranium || 0), 0);
+            const totalGermanium = playerStars.reduce((sum, s) => sum + (s.germanium || 0), 0);
+
+            // Update DOM
+            const setPlanets = document.getElementById('summary-planets');
+            const setFleets = document.getElementById('summary-fleets');
+            const setPop = document.getElementById('summary-population');
+            const setResearch = document.getElementById('summary-research');
+
+            if (setPlanets) setPlanets.textContent = playerStars.length;
+            if (setFleets) setFleets.textContent = playerFleets.length;
+            if (setPop) setPop.textContent = this.formatPopulation(totalPop);
+            if (setResearch) setResearch.textContent = '15%';  // Default research budget
+
+            // Update resources
+            const resContainer = document.getElementById('summary-resources');
+            if (resContainer) {
+                const irEl = resContainer.querySelector('.res-ir');
+                const boEl = resContainer.querySelector('.res-bo');
+                const geEl = resContainer.querySelector('.res-ge');
+                if (irEl) irEl.textContent = this.formatNumber(totalIronium);
+                if (boEl) boEl.textContent = this.formatNumber(totalBoranium);
+                if (geEl) geEl.textContent = this.formatNumber(totalGermanium);
+            }
+        },
+
+        /**
+         * Format population for display.
+         */
+        formatPopulation(pop) {
+            if (pop >= 1000000) {
+                return (pop / 1000000).toFixed(1) + 'M';
+            } else if (pop >= 1000) {
+                return (pop / 1000).toFixed(1) + 'K';
+            }
+            return pop.toString();
+        },
+
+        /**
+         * Format number with K/M suffix.
+         */
+        formatNumber(num) {
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(1) + 'M';
+            } else if (num >= 1000) {
+                return (num / 1000).toFixed(0) + 'K';
+            }
+            return num.toString();
         },
 
         /**

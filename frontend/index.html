@@ -23,7 +23,36 @@
         <main>
             <!-- Game container - shown when game is active -->
             <div id="game-container" class="hidden">
+                <!-- Empire Summary - always visible -->
+                <div id="empire-summary">
+                    <div class="summary-section">
+                        <span class="summary-label">Planets</span>
+                        <span id="summary-planets" class="summary-value">0</span>
+                    </div>
+                    <div class="summary-section">
+                        <span class="summary-label">Fleets</span>
+                        <span id="summary-fleets" class="summary-value">0</span>
+                    </div>
+                    <div class="summary-section">
+                        <span class="summary-label">Population</span>
+                        <span id="summary-population" class="summary-value">0</span>
+                    </div>
+                    <div class="summary-section resources">
+                        <span class="summary-label">Resources</span>
+                        <span id="summary-resources" class="summary-value">
+                            <span class="res-ir" title="Ironium">0</span>
+                            <span class="res-bo" title="Boranium">0</span>
+                            <span class="res-ge" title="Germanium">0</span>
+                        </span>
+                    </div>
+                    <div class="summary-section">
+                        <span class="summary-label">Research</span>
+                        <span id="summary-research" class="summary-value">0%</span>
+                    </div>
+                </div>
+
                 <div id="galaxy-map-container">
+                    <svg id="nebula-layer" class="nebula-svg"></svg>
                     <canvas id="galaxy-map"></canvas>
                 </div>
 
@@ -75,6 +104,8 @@
     <!-- Scripts - load order matters -->
     <script src="/static/js/api/client.js"></script>
     <script src="/static/js/state/game-state.js"></script>
+    <script src="/static/js/views/nebula-designer.js"></script>
+    <script src="/static/js/views/nebula-svg.js"></script>
     <script src="/static/js/views/galaxy-map.js"></script>
     <script src="/static/js/views/star-panel.js"></script>
     <script src="/static/js/views/fleet-panel.js"></script>

@@ -36,6 +36,11 @@ const GalaxyMap = {
     gridSize: 100,
     showGrid: true,
     showNames: true,
+    showNebulae: true,
+
+    // Nebulae cache (generated once per game)
+    nebulae: null,
+    nebulaeSeed: 0,
 
     // Colors (matching Stars! original)
     colors: {
@@ -68,6 +73,11 @@ const GalaxyMap = {
 
         this.ctx = this.canvas.getContext('2d');
         this.resize();
+
+        // Initialize SVG nebula layer
+        if (window.NebulaSVG) {
+            NebulaSVG.init('nebula-layer');
+        }
 
         // Bind events
         this.bindEvents();
@@ -410,6 +420,18 @@ const GalaxyMap = {
     onGameLoaded() {
         this.selectedStar = null;
         this.selectedFleet = null;
+        // Regenerate nebulae for this game
+        this.nebulae = null;
+
+        // Generate SVG nebulae
+        if (window.NebulaSVG && GameState.stars && GameState.stars.length > 0) {
+            const universeSize = GameState.game?.universe_size || 'medium';
+            const sizes = { tiny: 200, small: 400, medium: 600, large: 800, huge: 1000 };
+            const size = sizes[universeSize] || 600;
+            const seed = GameState.game ? (GameState.game.id.charCodeAt(0) || 1) : Date.now();
+            NebulaSVG.generate(GameState.stars, size, size, seed);
+        }
+
         this.centerOnHomeworld();
     },
 
@@ -450,9 +472,13 @@ const GalaxyMap = {
         const w = this.canvas.width;
         const h = this.canvas.height;
 
-        // Clear
-        ctx.fillStyle = this.colors.background;
-        ctx.fillRect(0, 0, w, h);
+        // Clear with transparent background (SVG shows through)
+        ctx.clearRect(0, 0, w, h);
+
+        // Update SVG viewBox to match canvas view
+        if (window.NebulaSVG) {
+            NebulaSVG.updateViewBox(this.viewX, this.viewY, this.zoom, w, h);
+        }
 
         // Draw grid
         if (this.showGrid) {
@@ -552,6 +578,167 @@ const GalaxyMap = {
             }
         }
         ctx.stroke();
+    },
+
+    /**
+     * Generate nebulae using NebulaDesigner if available.
+     */
+    generateNebulae(seed = 0) {
+        this.nebulaeSeed = seed;
+
+        // Use NebulaDesigner if available and we have stars
+        if (window.NebulaDesigner && GameState.stars && GameState.stars.length > 0) {
+            const universeSize = GameState.game?.universe_size || 'medium';
+            const sizes = { tiny: 200, small: 400, medium: 600, large: 800, huge: 1000 };
+            const size = sizes[universeSize] || 600;
+            this.nebulae = NebulaDesigner.generate(GameState.stars, size, size, seed);
+        } else {
+            // Fallback to simple generation
+            this.nebulae = this.generateSimpleNebulae(seed);
+        }
+    },
+
+    /**
+     * Simple nebula generation fallback.
+     */
+    generateSimpleNebulae(seed) {
+        const nebulae = [];
+        const seededRandom = (s) => {
+            const x = Math.sin(s) * 10000;
+            return x - Math.floor(x);
+        };
+
+        // Single consistent blue-purple color scheme
+        const baseColor = { r: 70, g: 90, b: 140 };
+
+        const count = 8 + Math.floor(seededRandom(seed * 7) * 6);
+
+        for (let i = 0; i < count; i++) {
+            const s = seed * 100 + i;
+            const centerX = seededRandom(s * 11) * 800 + 100;
+            const centerY = seededRandom(s * 13) * 800 + 100;
+            const baseRadius = 60 + seededRandom(s * 17) * 100;
+
+            const particleCount = 12 + Math.floor(seededRandom(s * 19) * 12);
+
+            for (let j = 0; j < particleCount; j++) {
+                const ps = s * 1000 + j;
+                const angle = seededRandom(ps * 23) * Math.PI * 2;
+                const dist = seededRandom(ps * 29) * baseRadius;
+
+                nebulae.push({
+                    x: centerX + Math.cos(angle) * dist,
+                    y: centerY + Math.sin(angle) * dist,
+                    radius: 25 + seededRandom(ps * 43) * 40,
+                    color: {
+                        r: baseColor.r + Math.floor(seededRandom(ps * 47) * 20 - 10),
+                        g: baseColor.g + Math.floor(seededRandom(ps * 53) * 20 - 10),
+                        b: baseColor.b + Math.floor(seededRandom(ps * 59) * 20 - 10)
+                    },
+                    opacity: 0.12 + seededRandom(ps * 61) * 0.08,
+                    scaleX: 0.8 + seededRandom(ps * 67) * 0.4,
+                    scaleY: 0.8 + seededRandom(ps * 71) * 0.4,
+                    rotation: seededRandom(ps * 73) * Math.PI * 2
+                });
+            }
+        }
+        return nebulae;
+    },
+
+    /**
+     * Render nebulae with sharper edges and elongated shapes.
+     */
+    renderNebulae() {
+        if (!this.nebulae || this.nebulae.length === 0) {
+            const seed = GameState.game ? (GameState.game.id.charCodeAt(0) || 1) : Date.now();
+            this.generateNebulae(seed);
+        }
+
+        const ctx = this.ctx;
+
+        for (const nebula of this.nebulae) {
+            const screenPos = this.worldToScreen(nebula.x, nebula.y);
+
+            // Support both old (radius) and new (width/height) formats
+            const hasWidthHeight = nebula.width !== undefined && nebula.height !== undefined;
+            const screenWidth = hasWidthHeight ? nebula.width * this.zoom : (nebula.radius || 30) * this.zoom;
+            const screenHeight = hasWidthHeight ? nebula.height * this.zoom : screenWidth;
+            const maxDim = Math.max(screenWidth, screenHeight);
+
+            // Skip if off screen
+            const margin = maxDim * 2;
+            if (screenPos.x < -margin || screenPos.x > this.canvas.width + margin ||
+                screenPos.y < -margin || screenPos.y > this.canvas.height + margin) {
+                continue;
+            }
+
+            ctx.save();
+            ctx.translate(screenPos.x, screenPos.y);
+            ctx.rotate(nebula.rotation || 0);
+
+            // Apply scale for old format, or use width/height ratio for new format
+            if (!hasWidthHeight) {
+                ctx.scale(nebula.scaleX || 1, nebula.scaleY || 1);
+            }
+
+            const { r, g, b } = nebula.color;
+            const opacity = nebula.opacity || 0.15;
+
+            // Create elliptical gradient by scaling
+            if (hasWidthHeight) {
+                const scaleRatio = screenHeight / screenWidth;
+                ctx.scale(1, scaleRatio);
+
+                // Sharper gradient for more defined edges
+                const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, screenWidth);
+
+                if (nebula.type === 'core') {
+                    gradient.addColorStop(0, `rgba(${r + 30}, ${g + 30}, ${b + 30}, ${opacity * 1.5})`);
+                    gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${opacity})`);
+                    gradient.addColorStop(0.8, `rgba(${r}, ${g}, ${b}, ${opacity * 0.3})`);
+                    gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                } else if (nebula.type === 'dust') {
+                    // Darker, more diffuse
+                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity * 0.8})`);
+                    gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${opacity * 0.4})`);
+                    gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                } else {
+                    // Wispy/filament - sharper edges
+                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity})`);
+                    gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${opacity * 0.8})`);
+                    gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${opacity * 0.3})`);
+                    gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                }
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, screenWidth, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // Old format (radius only)
+                const screenRadius = screenWidth;
+                const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, screenRadius);
+
+                if (nebula.isBright) {
+                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity * 1.8})`);
+                    gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${opacity * 1.2})`);
+                    gradient.addColorStop(0.75, `rgba(${r}, ${g}, ${b}, ${opacity * 0.5})`);
+                    gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                } else {
+                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity})`);
+                    gradient.addColorStop(0.6, `rgba(${r}, ${g}, ${b}, ${opacity * 0.7})`);
+                    gradient.addColorStop(0.85, `rgba(${r}, ${g}, ${b}, ${opacity * 0.2})`);
+                    gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                }
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, screenRadius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
     },
 
     /**
