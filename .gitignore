@@ -62,5 +62,9 @@ logs/
 *.db
 *.sqlite
 
+# Data directory (except .gitkeep)
+data/*
+!data/.gitkeep
+
 # JupyterLab checkpoints
 .ipynb_checkpoints/
