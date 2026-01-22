@@ -64,8 +64,12 @@ class EmpireData:
     battle_plans: Dict[str, dict] = field(default_factory=dict)
     battle_reports: List[dict] = field(default_factory=list)
 
-    # Visible minefields
+    # Visible minefields (key -> Minefield)
     visible_minefields: Dict[int, dict] = field(default_factory=dict)
+
+    # Star and fleet reports (for intel)
+    star_reports: Dict[str, dict] = field(default_factory=dict)
+    fleet_reports: Dict[int, dict] = field(default_factory=dict)
 
     # Counters for key generation
     _fleet_counter: int = field(default=0, repr=False)

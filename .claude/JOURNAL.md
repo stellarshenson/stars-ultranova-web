@@ -139,3 +139,43 @@ This journal tracks substantive work on documents, diagrams, and documentation c
    - TestEmpireData: 5 tests (key generation, serialization)
 
    **Verification**: All 155 unit tests pass (27 new for Phase 3). Command pattern enables clean separation between order submission and execution. Commands serialize to/from dict for API transport and persistence.
+
+5. **Task - Phase 4 implementation**: Complete Phase 4 of Stars Nova Web - Turn Processing<br>
+   **Result**: Implemented the complete server-side turn processing system with modular turn steps following the C# TurnGenerator.cs structure.
+
+   **Server Infrastructure** (`backend/server/`):
+   - `server_data.py`: Ported from `ServerState/Persistence/ServerData.cs` (623 lines). Central game state container with `all_empires`, `all_stars`, `all_minefields`, `all_messages`. Includes `Minefield` dataclass with radius calculation and mine type descriptors. `PlayerSettings` for player configuration. Key methods: `iterate_all_fleets()`, `cleanup_fleets()` (removes empty fleets and handles salvage decay), `set_fleet_orbit()`, `get_star_at_position()`.
+   - `turn_generator.py`: Ported from `ServerState/TurnGenerator.cs` (750 lines). Main turn processing orchestrator executing 14-step sequence: parse commands, split/merge fleets, lay mines (FirstStep), scrap fleets, move fleets with fuel consumption, check minefields, cleanup fleets, battle engine (placeholder), victory check, increment year, run turn steps (StarUpdateStep, BombingStep, PostBombingStep, ScanStep), move mineral packets, update minefield visibility.
+
+   **Turn Step Classes** (`backend/server/turn_steps/`):
+   - `base.py`: ITurnStep abstract base class with `process(server_state) -> List[Message]` interface.
+   - `first_step.py`: Ported from `FirstStep.cs` (108 lines). Mine laying from fleets with LAY_MINES task. Minefield decay (1% per year). Removes fields with <=10 mines. Key structure encodes position grid, owner, mine type.
+   - `scrap_fleet_step.py`: Ported from `ScrapFleetStep.cs` (65 lines). Fleet scrapping with resource recovery: 75% at starbase, 33% at planet without starbase, 0% in deep space.
+   - `split_fleet_step.py`: Ported from `SplitFleetStep.cs` (118 lines). Removes already-processed SPLIT_MERGE waypoints at position zero. Handles spent cargo tasks. Restores NoTask waypoint if all removed.
+   - `bombing_step.py`: Ported from `BombingStep.cs` (33 lines). Orbital bombardment of enemy planets. Calculates kill rate from bomber designs, applies defense coverage reduction.
+   - `post_bombing_step.py`: Ported from `PostBombingStep.cs` (118 lines). Colonization and invasion after bombing. Handles colonist transfer, cargo unloading, ownership changes. Invasion mechanics with 1.1:1 attacker advantage.
+   - `scan_step.py`: Ported from `ScanStep.cs` (230 lines). Intel generation from scanners. Updates star reports (owned/deep_scan/none levels). Fleet detection within scan range. Penetrating vs non-penetrating scan ranges.
+   - `star_update_step.py`: Ported from `StarUpdateStep.cs` (246 lines). Mining (concentration-based mineral extraction with decay). Resource generation (colonists + factories). Research contribution and tech level advancement. Manufacturing queue processing. Population growth with habitability and crowding factors.
+
+   **Waypoint System Enhancement** (`backend/core/waypoints/waypoint.py`):
+   Added dual representation system for task types:
+   - `WaypointTask` IntEnum for quick comparison (NO_TASK, TRANSFER_CARGO, COLONIZE, LAY_MINES, INVADE, SCRAP, SPLIT_MERGE)
+   - Task object classes (*Obj suffix) with `task_type` property returning corresponding enum
+   - `get_task_type()` helper function handling both enum values and task objects
+   - Backwards compatibility aliases (NoTask = NoTaskObj, etc.)
+
+   **TechLevel Enhancement** (`backend/core/data_structures/tech_level.py`):
+   Added `get_level(field: ResearchField)` and `set_level(field: ResearchField, value: int)` methods for cleaner access from turn steps.
+
+   **Test Suite** (`tests/unit/test_turn_generator.py`):
+   - TestServerData: 3 tests (initialization, fleet iteration, cleanup)
+   - TestFirstStep: 3 tests (decay, removal, mine laying)
+   - TestScrapFleetStep: 2 tests (starbase 75%, planet 33%)
+   - TestSplitFleetStep: 2 tests (waypoint removal, restoration)
+   - TestScanStep: 2 tests (owned stars, fleet detection)
+   - TestBombingStep: 1 test (colonist casualties)
+   - TestPostBombingStep: 1 test (colonization transfer)
+   - TestTurnGenerator: 3 tests (year increment, step execution, multiple empires)
+   - TestWaypointTaskHelpers: 5 tests (get_task_type with enums, objects, None)
+
+   **Verification**: All 177 unit tests pass (22 new for Phase 4). Turn generator executes complete sequence. Turn steps process game state modifications correctly. Waypoint task dual system enables both quick enum comparison and rich task objects.

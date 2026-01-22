@@ -69,6 +69,14 @@ class TechLevel:
         """Set tech level by research field enum."""
         self.levels[RESEARCH_KEYS[index.value]] = value
 
+    def get_level(self, field: ResearchField) -> int:
+        """Get tech level by research field enum."""
+        return self.levels[RESEARCH_KEYS[field.value]]
+
+    def set_level(self, field: ResearchField, value: int):
+        """Set tech level by research field enum."""
+        self.levels[RESEARCH_KEYS[field.value]] = value
+
     def __iter__(self) -> Iterator[int]:
         """Allow foreach iteration over tech levels."""
         for key in RESEARCH_KEYS:

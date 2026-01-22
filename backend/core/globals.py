@@ -86,6 +86,7 @@ UNSET = -10000
 
 # Minefield
 MINE_FIELD_SNAP_TO_GRID_SIZE = 5
+MINEFIELD_SNAP_TO_GRID_SIZE = 5  # Alias for consistency
 
 # Beam rating multiplier table [battlespeed_index][range]
 # From direct observation of Stars! 2.70j using Hyper Expansion Race
