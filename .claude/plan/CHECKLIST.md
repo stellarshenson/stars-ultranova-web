@@ -1,0 +1,231 @@
+# Stars Nova Web - Implementation Checklist
+
+Master checklist tracking progress through the 9-phase implementation plan.
+
+---
+
+## Phase 1: Core Data Structures ✅ COMPLETE
+
+- [x] Create project directory structure
+- [x] Create requirements.txt, Makefile, pyproject.toml
+- [x] **Data Structures**
+  - [x] `resources.py` - Resources class with operator overloading
+  - [x] `cargo.py` - Cargo class with colonists
+  - [x] `nova_point.py` - 2D point with distance calculations
+  - [x] `tech_level.py` - Technology level requirements
+- [x] **Game Objects**
+  - [x] `item.py` - Base Item with 64-bit key structure
+  - [x] `mappable.py` - Positioned object base
+  - [x] `star.py` - Planet with growth/mining/resources (805 lines C#)
+  - [x] `fleet.py` - Fleet with movement/fuel/waypoints (1106 lines C#)
+- [x] **Race System**
+  - [x] `race.py` - Race definition with habitability
+  - [x] `traits.py` - 10 PRTs + 14 LRTs, RaceRestriction
+- [x] **Support Modules**
+  - [x] `waypoint.py` - Waypoint and task classes
+  - [x] `production_queue.py` - Production queue/order
+  - [x] `globals.py` - Game constants
+- [x] **Components**
+  - [x] `component.py` - Component and ComponentProperty
+  - [x] `component_loader.py` - XML parser for components.xml
+  - [x] Copy components.xml from C# source
+- [x] **API Scaffold**
+  - [x] FastAPI main.py entry point
+  - [x] Routes: games, stars, fleets
+- [x] **Frontend Scaffold**
+  - [x] index.html structure
+  - [x] CSS with Stars! theme colors
+  - [x] JS: api client, game state, app.js
+- [x] **Tests**
+  - [x] test_resources.py (14 tests)
+  - [x] test_cargo.py (15 tests)
+  - [x] test_nova_point.py (16 tests)
+  - [x] test_star.py (18 tests)
+  - [x] test_component_loader.py (21 tests)
+- [x] All 90 tests passing
+- [x] Committed: `54078ec`
+
+---
+
+## Phase 2: Components and Designs ✅ COMPLETE
+
+Port ship building system from C# source.
+
+- [x] **Ship Design**
+  - [x] `ship_design.py` - Port from `ShipDesign.cs` (954 lines)
+  - [x] Hull slot system (HullModule class)
+  - [x] Component stacking and aggregation
+  - [x] Design validation (via update())
+- [x] **Component Enhancements**
+  - [x] `hull.py` - Hull component with module slots
+  - [x] `hull_module.py` - Individual slot definitions
+  - [x] `engine.py` - Engine with fuel consumption table
+  - [x] Weapon/Bomb/MineLayer in ship_design.py
+  - [x] ComponentLoader parses Hull/Engine from XML
+- [x] **Design Storage**
+  - [x] Design serialization (to_dict/from_dict)
+  - [x] API endpoints: /api/designs/hulls, /engines, /components, /stats
+- [x] **Tests**
+  - [x] test_ship_design.py (38 tests)
+  - [x] HullModule, Hull, Engine, ShipDesign, ComponentLoader tests
+- [x] All 128 tests passing
+- [x] Committed: `1b983dd`
+
+---
+
+## Phase 3: Commands and Waypoints ✅ COMPLETE
+
+Player action system.
+
+- [x] **Command Pattern**
+  - [x] `commands/base.py` - Command ABC, CommandMode enum, Message class
+  - [x] `commands/waypoint.py` - WaypointCommand (Add/Edit/Delete/Insert waypoints)
+  - [x] `commands/design.py` - DesignCommand (Add/Delete/Edit obsolete flag)
+  - [x] `commands/production.py` - ProductionCommand (Production queue management)
+  - [x] `commands/research.py` - ResearchCommand (Budget and topic priorities)
+- [x] **Data Structures**
+  - [x] `empire_data.py` - EmpireData class (central player state)
+- [x] **Waypoint Tasks**
+  - [x] Waypoint class already implemented in Phase 1
+  - [x] Task validation in command is_valid() methods
+- [x] **Tests**
+  - [x] test_commands.py (27 tests)
+- [x] All 155 tests passing
+- [x] Committed: `c5ca978`
+
+---
+
+## Phase 4: Turn Processing
+
+Server-side turn generation - critical for gameplay.
+
+- [ ] **Turn Generator**
+  - [ ] `turn_generator.py` - Port from `TurnGenerator.cs` (750 lines)
+  - [ ] Turn sequence (14 steps must match C# exactly)
+- [ ] **Turn Steps**
+  - [ ] `scan_step.py`
+  - [ ] `bombing_step.py`
+  - [ ] `colonise_step.py`
+  - [ ] `star_update_step.py`
+  - [ ] Movement step
+  - [ ] Mine laying/sweeping
+  - [ ] Fleet merge/split
+- [ ] **Server Data**
+  - [ ] `server_data.py` - Game state container
+  - [ ] `manufacture.py` - Production processing
+  - [ ] `bombing.py` - Orbital bombardment
+- [ ] **Tests**
+  - [ ] test_turn_generator.py
+  - [ ] test_turn_steps.py
+
+---
+
+## Phase 5: Battle Engines
+
+Combat resolution system.
+
+- [ ] **Standard Battle Engine**
+  - [ ] `battle_engine.py` - Port from `BattleEngine.cs` (1001 lines)
+  - [ ] Movement table (exact 9x8 array from C#)
+  - [ ] Target attractiveness
+  - [ ] Initiative order
+  - [ ] Weapon damage application
+- [ ] **Ron Battle Engine**
+  - [ ] `ron_battle_engine.py` - Port from `RonBattleEngine.cs`
+- [ ] **Battle Recording**
+  - [ ] Battle replay data structure
+- [ ] **Tests**
+  - [ ] test_battle_engine.py
+
+---
+
+## Phase 6: API Layer
+
+Complete REST/WebSocket endpoints.
+
+- [ ] **Game Endpoints**
+  - [ ] GET/POST /api/games
+  - [ ] GET/DELETE /api/games/{id}
+  - [ ] POST /api/games/{id}/turn/generate
+- [ ] **Fleet Endpoints**
+  - [ ] GET/PUT /api/games/{id}/fleets/{key}/waypoints
+  - [ ] Fleet orders submission
+- [ ] **Design Endpoints**
+  - [ ] GET/POST /api/games/{id}/designs
+- [ ] **WebSocket**
+  - [ ] Real-time turn notifications
+  - [ ] Chat support
+- [ ] **Persistence**
+  - [ ] SQLite database
+  - [ ] Game state serialization
+
+---
+
+## Phase 7: Frontend
+
+Web UI with original Stars! aesthetic.
+
+- [ ] **Galaxy Map**
+  - [ ] `galaxy-map.js` - Canvas star map rendering
+  - [ ] Star selection
+  - [ ] Fleet selection and movement
+  - [ ] Zoom/pan controls
+- [ ] **Panels**
+  - [ ] `star-panel.js` - Planet details + production queue
+  - [ ] `fleet-panel.js` - Fleet composition + waypoints
+  - [ ] `design-panel.js` - Ship designer UI
+- [ ] **Battle Viewer**
+  - [ ] `battle-viewer.js` - Combat replay
+- [ ] **Dialogs**
+  - [ ] New game dialog (replace prompt)
+  - [ ] Load game dialog
+  - [ ] Settings
+
+---
+
+## Phase 8: AI System
+
+Computer opponent.
+
+- [ ] **AI Framework**
+  - [ ] `default_ai.py` - Port from `DefaultAi.cs`
+  - [ ] `default_planet_ai.py` - Planet management
+  - [ ] `default_fleet_ai.py` - Fleet management
+- [ ] **AI Integration**
+  - [ ] AI turn generation
+  - [ ] Difficulty levels
+
+---
+
+## Phase 9: Testing and Polish
+
+Final verification and refinement.
+
+- [ ] **Regression Tests**
+  - [ ] C# parity tests (compare Python vs C# output)
+  - [ ] Saved game comparison
+- [ ] **Performance**
+  - [ ] Profiling
+  - [ ] Optimization
+- [ ] **Polish**
+  - [ ] Error handling
+  - [ ] Loading states
+  - [ ] Help/documentation
+
+---
+
+## Summary
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Core Data Structures | ✅ Complete |
+| 2 | Components and Designs | ✅ Complete |
+| 3 | Commands and Waypoints | ✅ Complete |
+| 4 | Turn Processing | ⬜ Pending |
+| 5 | Battle Engines | ⬜ Pending |
+| 6 | API Layer | ⬜ Pending |
+| 7 | Frontend | ⬜ Pending |
+| 8 | AI System | ⬜ Pending |
+| 9 | Testing and Polish | ⬜ Pending |
+
+**Current Focus**: Phase 4 - Turn Processing
