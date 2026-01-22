@@ -51,6 +51,9 @@ htmlcov/
 logs/
 *.log
 
+# Server
+.server.pid
+
 # Environment
 .env
 .env.local

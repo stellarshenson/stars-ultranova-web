@@ -31,11 +31,20 @@ cp project.env.example project.env
 # Run development server (default port: 9800)
 make run
 
+# Or use convenience scripts for background server
+./start.sh    # Start server in background, logs to server.log
+./stop.sh     # Stop background server
+
 # Run tests
 make test
 ```
 
 The server will start on `http://localhost:9800` by default. You can customize settings in `project.env`.
+
+**Server management:**
+- `./start.sh` - Start server in background with logging to `server.log`
+- `./stop.sh` - Stop the background server gracefully
+- `make run` - Run server in foreground (for development)
 
 ### Configuration
 
