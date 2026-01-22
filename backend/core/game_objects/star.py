@@ -70,6 +70,14 @@ class Star(Mappable):
     original_radiation: int = 0
     original_temperature: int = 0
 
+    # Star classification (for visual rendering)
+    # Spectral class: O, B, A, F, G, K, M (hottest to coolest)
+    # Luminosity class: I (supergiant), II, III (giant), IV (subgiant), V (main sequence)
+    spectral_class: str = "G"  # Default to Sun-like
+    luminosity_class: str = "V"  # Default to main sequence
+    star_temperature: int = 5778  # Kelvin (for color calculation)
+    star_radius: float = 1.0  # Solar radii (for size)
+
     # Reference to owning race (for server convenience)
     this_race: Optional[Race] = field(default=None, repr=False)
 

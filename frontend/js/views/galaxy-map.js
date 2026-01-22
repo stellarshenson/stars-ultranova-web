@@ -741,35 +741,105 @@ const GalaxyMap = {
         }
     },
 
+    // Spectral class colors (RGB values matching astronomical colors)
+    spectralColors: {
+        'O': { r: 155, g: 176, b: 255 },  // Blue
+        'B': { r: 170, g: 191, b: 255 },  // Blue-white
+        'A': { r: 202, g: 215, b: 255 },  // White
+        'F': { r: 248, g: 247, b: 255 },  // Yellow-white
+        'G': { r: 255, g: 244, b: 234 },  // Yellow
+        'K': { r: 255, g: 210, b: 161 },  // Orange
+        'M': { r: 255, g: 180, b: 100 },  // Red-orange
+    },
+
+    /**
+     * Get color for a star based on spectral class.
+     */
+    getSpectralColor(star) {
+        const spectralClass = star.spectral_class || 'G';
+        const colors = this.spectralColors[spectralClass] || this.spectralColors['G'];
+        return `rgb(${colors.r}, ${colors.g}, ${colors.b})`;
+    },
+
     /**
      * Render a star.
      */
     renderStar(star) {
         const ctx = this.ctx;
         const pos = this.worldToScreen(star.position_x, star.position_y);
-        const radius = this.starRadius * this.zoom;
+
+        // Base radius scaled by star_radius (normalized, 1.0 = Sun)
+        const starRadius = star.star_radius || 1.0;
+        const sizeMultiplier = Math.min(2.5, Math.max(0.5, 0.8 + Math.log10(starRadius + 0.1) * 0.5));
+        const radius = this.starRadius * this.zoom * sizeMultiplier;
 
         // Skip if off screen
-        if (pos.x < -radius || pos.x > this.canvas.width + radius ||
-            pos.y < -radius || pos.y > this.canvas.height + radius) {
+        if (pos.x < -radius * 3 || pos.x > this.canvas.width + radius * 3 ||
+            pos.y < -radius * 3 || pos.y > this.canvas.height + radius * 3) {
             return;
         }
 
-        // Determine color based on ownership
-        let color = this.colors.starUncolonized;
-        if (star.colonists > 0) {
-            if (star.owner === 1) {  // Player
-                color = this.colors.starFriendly;
-            } else if (star.owner > 1) {  // Enemy
-                color = this.colors.starEnemy;
-            }
+        // Get spectral color
+        const spectralClass = star.spectral_class || 'G';
+        const colors = this.spectralColors[spectralClass] || this.spectralColors['G'];
+
+        // Draw glow for larger/hotter stars
+        if (starRadius > 5 || spectralClass === 'O' || spectralClass === 'B') {
+            const glowRadius = radius * 2.5;
+            const gradient = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, glowRadius);
+            gradient.addColorStop(0, `rgba(${colors.r}, ${colors.g}, ${colors.b}, 0.4)`);
+            gradient.addColorStop(0.5, `rgba(${colors.r}, ${colors.g}, ${colors.b}, 0.15)`);
+            gradient.addColorStop(1, `rgba(${colors.r}, ${colors.g}, ${colors.b}, 0)`);
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, glowRadius, 0, Math.PI * 2);
+            ctx.fill();
         }
 
-        // Draw star
+        // Determine star color - spectral for uncolonized, ownership for colonized
+        let fillColor;
+        if (star.colonists > 0) {
+            if (star.owner === 1) {  // Player
+                fillColor = this.colors.starFriendly;
+            } else if (star.owner > 1) {  // Enemy
+                fillColor = this.colors.starEnemy;
+            } else {
+                fillColor = `rgb(${colors.r}, ${colors.g}, ${colors.b})`;
+            }
+        } else {
+            fillColor = `rgb(${colors.r}, ${colors.g}, ${colors.b})`;
+        }
+
+        // Draw star core
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color;
+        ctx.fillStyle = fillColor;
         ctx.fill();
+
+        // Add slight highlight for 3D effect
+        if (radius > 2) {
+            const highlight = ctx.createRadialGradient(
+                pos.x - radius * 0.3, pos.y - radius * 0.3, 0,
+                pos.x, pos.y, radius
+            );
+            highlight.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+            highlight.addColorStop(0.5, 'rgba(255, 255, 255, 0.1)');
+            highlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.fillStyle = highlight;
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Draw ownership ring for colonized stars
+        if (star.colonists > 0) {
+            const ringColor = star.owner === 1 ? this.colors.starFriendly : this.colors.starEnemy;
+            ctx.strokeStyle = ringColor;
+            ctx.lineWidth = Math.max(1, 2 * this.zoom);
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, radius + 2 * this.zoom, 0, Math.PI * 2);
+            ctx.stroke();
+        }
 
         // Draw name if enabled and zoomed in enough
         if (this.showNames && this.zoom >= 0.5) {

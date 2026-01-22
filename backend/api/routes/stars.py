@@ -25,6 +25,11 @@ class StarResponse(BaseModel):
     ironium_concentration: int = 0
     boranium_concentration: int = 0
     germanium_concentration: int = 0
+    # Star classification for visual rendering
+    spectral_class: str = "G"
+    luminosity_class: str = "V"
+    star_temperature: int = 5778
+    star_radius: float = 1.0
 
 
 class StarSummary(BaseModel):
@@ -34,6 +39,11 @@ class StarSummary(BaseModel):
     position_y: int
     owner: Optional[int] = None
     colonists: int = 0
+    # Star classification for visual rendering
+    spectral_class: str = "G"
+    luminosity_class: str = "V"
+    star_temperature: int = 5778
+    star_radius: float = 1.0
 
 
 @router.get("/", response_model=List[StarSummary])
@@ -49,7 +59,11 @@ async def list_stars(game_id: str) -> List[StarSummary]:
             position_x=s["position_x"],
             position_y=s["position_y"],
             owner=s.get("owner"),
-            colonists=s.get("colonists", 0)
+            colonists=s.get("colonists", 0),
+            spectral_class=s.get("spectral_class", "G"),
+            luminosity_class=s.get("luminosity_class", "V"),
+            star_temperature=s.get("star_temperature", 5778),
+            star_radius=s.get("star_radius", 1.0)
         )
         for s in stars
     ]
@@ -75,5 +89,9 @@ async def get_star(game_id: str, star_name: str) -> StarResponse:
         radiation=star.get("radiation", 50),
         ironium_concentration=star.get("ironium_concentration", 0),
         boranium_concentration=star.get("boranium_concentration", 0),
-        germanium_concentration=star.get("germanium_concentration", 0)
+        germanium_concentration=star.get("germanium_concentration", 0),
+        spectral_class=star.get("spectral_class", "G"),
+        luminosity_class=star.get("luminosity_class", "V"),
+        star_temperature=star.get("star_temperature", 5778),
+        star_radius=star.get("star_radius", 1.0)
     )

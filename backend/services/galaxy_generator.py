@@ -30,6 +30,38 @@ UNIVERSE_SIZES = {
 # Star density (average distance between stars)
 STAR_DENSITY = 25
 
+# Star spectral classes with astronomical distribution (approximated from IMF)
+# Format: (class, luminosity, temp_range, radius_range, weight)
+# Weights adjusted for visual variety while keeping general pattern
+SPECTRAL_CLASSES = [
+    # Main sequence stars (class V)
+    ("M", "V", (2400, 3700), (0.1, 0.6), 40),    # Red dwarfs - most common
+    ("K", "V", (3700, 5200), (0.7, 0.96), 20),   # Orange dwarfs
+    ("G", "V", (5200, 6000), (0.96, 1.15), 15),  # Yellow dwarfs (Sun-like)
+    ("F", "V", (6000, 7500), (1.15, 1.4), 10),   # Yellow-white
+    ("A", "V", (7500, 10000), (1.4, 1.8), 6),    # White
+    ("B", "V", (10000, 30000), (1.8, 6.6), 3),   # Blue-white
+    ("O", "V", (30000, 50000), (6.6, 15), 1),    # Blue - very rare
+
+    # Giants and supergiants (for visual interest)
+    ("K", "III", (3500, 5000), (10, 25), 2),     # Orange giant
+    ("M", "III", (2500, 3500), (40, 100), 1),    # Red giant
+    ("G", "III", (5000, 5500), (8, 15), 1),      # Yellow giant
+    ("B", "I", (10000, 30000), (30, 70), 0.5),   # Blue supergiant - rare
+    ("M", "I", (2500, 3500), (200, 1000), 0.3),  # Red supergiant - very rare
+]
+
+# Star colors by spectral class (RGB values)
+STAR_COLORS = {
+    "O": (155, 176, 255),    # Blue
+    "B": (170, 191, 255),    # Blue-white
+    "A": (202, 215, 255),    # White
+    "F": (248, 247, 255),    # Yellow-white
+    "G": (255, 244, 234),    # Yellow
+    "K": (255, 210, 161),    # Orange
+    "M": (255, 204, 111),    # Red-orange
+}
+
 # Star name pool (subset of original Stars! names)
 STAR_NAMES = [
     "Sol", "Alpha Centauri", "Barnard's Star", "Wolf 359", "Lalande 21185",
@@ -306,6 +338,9 @@ class GalaxyGenerator:
             star.boranium_concentration = self.rng.randint(1, 100)
             star.germanium_concentration = self.rng.randint(1, 100)
 
+            # Assign spectral class based on astronomical distribution
+            self._assign_spectral_class(star)
+
             # Starting surface minerals
             star.resource_rate = self.rng.randint(5, 15)
             star.mineral_concentration = (
@@ -319,6 +354,36 @@ class GalaxyGenerator:
             used_positions.add((x, y))
 
         return stars
+
+    def _assign_spectral_class(self, star: Star) -> None:
+        """
+        Assign spectral class to a star based on astronomical distribution.
+
+        Uses weighted random selection from SPECTRAL_CLASSES following
+        the Initial Mass Function (IMF) approximation.
+
+        Args:
+            star: Star object to modify.
+        """
+        # Calculate total weight
+        total_weight = sum(sc[4] for sc in SPECTRAL_CLASSES)
+
+        # Weighted random selection
+        r = self.rng.random() * total_weight
+        cumulative = 0
+
+        for spectral, luminosity, temp_range, radius_range, weight in SPECTRAL_CLASSES:
+            cumulative += weight
+            if r <= cumulative:
+                star.spectral_class = spectral
+                star.luminosity_class = luminosity
+
+                # Random temperature within range
+                star.star_temperature = self.rng.randint(temp_range[0], temp_range[1])
+
+                # Random radius within range
+                star.star_radius = radius_range[0] + self.rng.random() * (radius_range[1] - radius_range[0])
+                break
 
     def _sample_gmm(self, components: List[dict]) -> Tuple[float, float]:
         """

@@ -572,6 +572,11 @@ class GameManager:
             star.ironium_concentration = star_dict.get("ironium_concentration", 50)
             star.boranium_concentration = star_dict.get("boranium_concentration", 50)
             star.germanium_concentration = star_dict.get("germanium_concentration", 50)
+            # Star classification for visual rendering
+            star.spectral_class = star_dict.get("spectral_class", "G")
+            star.luminosity_class = star_dict.get("luminosity_class", "V")
+            star.star_temperature = star_dict.get("star_temperature", 5778)
+            star.star_radius = star_dict.get("star_radius", 1.0)
             server_data.all_stars[name] = star
 
         # Restore empires (simplified - full implementation would restore all fields)
@@ -613,6 +618,11 @@ class GameManager:
             "ironium_concentration": star.ironium_concentration,
             "boranium_concentration": star.boranium_concentration,
             "germanium_concentration": star.germanium_concentration,
+            # Star classification for visual rendering
+            "spectral_class": getattr(star, 'spectral_class', 'G'),
+            "luminosity_class": getattr(star, 'luminosity_class', 'V'),
+            "star_temperature": getattr(star, 'star_temperature', 5778),
+            "star_radius": getattr(star, 'star_radius', 1.0),
         }
 
     def _fleet_to_dict(self, fleet: Fleet) -> dict:
