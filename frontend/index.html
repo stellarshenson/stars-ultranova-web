@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stars Nova Web</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/stars-theme.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Stars Nova Web</h1>
+            <nav>
+                <button id="btn-new-game">New Game</button>
+                <button id="btn-load-game">Load Game</button>
+            </nav>
+        </header>
+
+        <main>
+            <div id="game-container" class="hidden">
+                <div id="galaxy-map-container">
+                    <canvas id="galaxy-map"></canvas>
+                </div>
+
+                <aside id="info-panel">
+                    <div id="star-panel" class="panel hidden">
+                        <h2>Star System</h2>
+                        <div id="star-info"></div>
+                    </div>
+
+                    <div id="fleet-panel" class="panel hidden">
+                        <h2>Fleet</h2>
+                        <div id="fleet-info"></div>
+                    </div>
+                </aside>
+            </div>
+
+            <div id="menu-container">
+                <div class="menu-card">
+                    <h2>Welcome to Stars Nova</h2>
+                    <p>A 4X strategy game in space</p>
+                    <div class="menu-buttons">
+                        <button id="menu-new-game" class="primary">New Game</button>
+                        <button id="menu-continue">Continue</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <span>Stars Nova Web v0.1.0</span>
+            <a href="/docs">API Documentation</a>
+        </footer>
+    </div>
+
+    <script src="/static/js/api/client.js"></script>
+    <script src="/static/js/state/game-state.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,98 @@
+/* Stars Nova Web - Original Stars! Theme Colors */
+
+:root {
+    /* Stars! original color palette */
+    --stars-bg-dark: #000020;
+    --stars-bg-medium: #101030;
+    --stars-bg-light: #202050;
+
+    --stars-text-primary: #c0c0c0;
+    --stars-text-secondary: #808080;
+    --stars-text-highlight: #ffff00;
+
+    --stars-panel-bg: #181840;
+    --stars-panel-border: #404080;
+
+    --stars-button-bg: #303060;
+    --stars-button-hover: #404080;
+    --stars-button-active: #505090;
+
+    /* Resource colors */
+    --stars-ironium: #0080ff;
+    --stars-boranium: #00ff00;
+    --stars-germanium: #ffff00;
+    --stars-colonists: #ff8000;
+
+    /* Planet habitability */
+    --stars-hab-green: #00ff00;
+    --stars-hab-yellow: #ffff00;
+    --stars-hab-red: #ff0000;
+
+    /* Fleet/ship colors */
+    --stars-friendly: #00ff00;
+    --stars-enemy: #ff0000;
+    --stars-neutral: #808080;
+    --stars-selected: #ffffff;
+}
+
+/* Galaxy map star colors */
+.star-uninhabited {
+    fill: #808080;
+}
+
+.star-friendly {
+    fill: var(--stars-friendly);
+}
+
+.star-enemy {
+    fill: var(--stars-enemy);
+}
+
+.star-selected {
+    stroke: var(--stars-selected);
+    stroke-width: 2;
+}
+
+/* Resource bars */
+.resource-bar {
+    height: 12px;
+    border-radius: 2px;
+    background-color: #202050;
+    overflow: hidden;
+}
+
+.resource-bar-fill {
+    height: 100%;
+}
+
+.resource-bar-fill.ironium {
+    background-color: var(--stars-ironium);
+}
+
+.resource-bar-fill.boranium {
+    background-color: var(--stars-boranium);
+}
+
+.resource-bar-fill.germanium {
+    background-color: var(--stars-germanium);
+}
+
+/* Habitability indicator */
+.hab-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.hab-indicator.good {
+    background-color: var(--stars-hab-green);
+}
+
+.hab-indicator.marginal {
+    background-color: var(--stars-hab-yellow);
+}
+
+.hab-indicator.hostile {
+    background-color: var(--stars-hab-red);
+}

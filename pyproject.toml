@@ -1,0 +1,9 @@
+[project]
+name = "stars-nova-web"
+version = "0.1.0"
+description = "Web port of Stars! Nova 4X strategy game"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
