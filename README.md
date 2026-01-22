@@ -18,16 +18,27 @@ A web-based implementation of the Stars! strategy game, ported directly from the
 ## Setup
 
 ```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# or: venv\Scripts\activate  # Windows
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies
-pip install -r requirements.txt
+# Create virtual environment and install dependencies
+uv sync
 
 # Run development server
-uvicorn src.main:app --reload
+uv run uvicorn backend.main:app --reload
+
+# Run tests
+uv run pytest
+```
+
+### Development dependencies
+
+```bash
+# Install with dev dependencies
+uv sync --all-extras
+
+# Install playwright browsers for screenshot tests
+uv run playwright install chromium
 ```
 
 ## Source

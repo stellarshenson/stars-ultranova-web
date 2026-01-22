@@ -1,22 +1,25 @@
-.PHONY: install run test test-unit test-integration clean
+.PHONY: install run test test-unit test-integration clean dev-install
 
 install:
-	python -m venv venv
-	venv/bin/pip install -r requirements.txt
+	uv sync
+
+dev-install:
+	uv sync --all-extras
+	uv run playwright install chromium
 
 run:
-	venv/bin/uvicorn backend.main:app --reload --port 8000
+	uv run uvicorn backend.main:app --reload --port 8000
 
 test:
-	venv/bin/pytest tests/
+	uv run pytest tests/
 
 test-unit:
-	venv/bin/pytest tests/unit/
+	uv run pytest tests/unit/
 
 test-integration:
-	venv/bin/pytest tests/integration/
+	uv run pytest tests/integration/
 
 clean:
-	rm -rf venv __pycache__ .pytest_cache
+	rm -rf .venv __pycache__ .pytest_cache
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true

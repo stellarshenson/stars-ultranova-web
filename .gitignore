@@ -29,6 +29,10 @@ venv/
 ENV/
 env/
 
+# uv
+uv.lock
+.python-version
+
 # IDE
 .idea/
 .vscode/
@@ -50,3 +54,10 @@ logs/
 # Environment
 .env
 .env.local
+
+# Database
+*.db
+*.sqlite
+
+# JupyterLab checkpoints
+.ipynb_checkpoints/
