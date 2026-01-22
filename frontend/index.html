@@ -9,62 +9,55 @@
 </head>
 <body>
     <div id="app">
-        <header>
-            <h1>Stars Nova Web</h1>
-            <nav>
-                <button id="btn-new-game">New Game</button>
-                <button id="btn-load-game">Load Game</button>
-                <button id="btn-ship-designer">Ship Designer</button>
-                <button id="btn-generate-turn">Generate Turn</button>
-                <button id="btn-settings">Settings</button>
-            </nav>
-        </header>
+        <!-- Menu Bar - Classic Stars! style -->
+        <div id="menu-bar"></div>
 
         <main>
             <!-- Game container - shown when game is active -->
             <div id="game-container" class="hidden">
-                <!-- Empire Summary - always visible -->
-                <div id="empire-summary">
-                    <div class="summary-section">
-                        <span class="summary-label">Planets</span>
-                        <span id="summary-planets" class="summary-value">0</span>
+                <!-- Left Column - 40% width panels -->
+                <div id="left-column">
+                    <!-- Empire Summary - compact info bar -->
+                    <div id="empire-summary">
+                        <div class="summary-section">
+                            <span class="summary-label">Planets</span>
+                            <span id="summary-planets" class="summary-value">0</span>
+                        </div>
+                        <div class="summary-section">
+                            <span class="summary-label">Fleets</span>
+                            <span id="summary-fleets" class="summary-value">0</span>
+                        </div>
+                        <div class="summary-section">
+                            <span class="summary-label">Pop</span>
+                            <span id="summary-population" class="summary-value">0</span>
+                        </div>
+                        <div class="summary-section resources">
+                            <span class="summary-label">Resources</span>
+                            <span id="summary-resources" class="summary-value">
+                                <span class="res-ir" title="Ironium">0</span>
+                                <span class="res-bo" title="Boranium">0</span>
+                                <span class="res-ge" title="Germanium">0</span>
+                            </span>
+                        </div>
                     </div>
-                    <div class="summary-section">
-                        <span class="summary-label">Fleets</span>
-                        <span id="summary-fleets" class="summary-value">0</span>
-                    </div>
-                    <div class="summary-section">
-                        <span class="summary-label">Population</span>
-                        <span id="summary-population" class="summary-value">0</span>
-                    </div>
-                    <div class="summary-section resources">
-                        <span class="summary-label">Resources</span>
-                        <span id="summary-resources" class="summary-value">
-                            <span class="res-ir" title="Ironium">0</span>
-                            <span class="res-bo" title="Boranium">0</span>
-                            <span class="res-ge" title="Germanium">0</span>
-                        </span>
-                    </div>
-                    <div class="summary-section">
-                        <span class="summary-label">Research</span>
-                        <span id="summary-research" class="summary-value">0%</span>
-                    </div>
-                </div>
 
-                <div id="galaxy-map-container">
-                    <svg id="nebula-layer" class="nebula-svg"></svg>
-                    <canvas id="galaxy-map"></canvas>
-                </div>
-
-                <aside id="info-panel">
-                    <!-- Star Panel -->
+                    <!-- Star/Planet Panel -->
                     <div id="star-panel" class="panel hidden"></div>
 
                     <!-- Fleet Panel -->
                     <div id="fleet-panel" class="panel hidden"></div>
-                </aside>
 
-                <!-- Message Panel - bottom of game area -->
+                    <!-- Production Queue Panel (optional, shown when planet selected) -->
+                    <div id="production-panel" class="panel hidden"></div>
+                </div>
+
+                <!-- Scanner Pane - 60% width galaxy map -->
+                <div id="scanner-pane">
+                    <svg id="nebula-layer" class="nebula-svg"></svg>
+                    <canvas id="galaxy-map"></canvas>
+                </div>
+
+                <!-- Message Panel - bottom of game area, full width -->
                 <div id="message-panel" class="message-panel hidden"></div>
             </div>
 
@@ -87,20 +80,24 @@
                 </div>
             </div>
 
-            <!-- Design Panel - floating window -->
+            <!-- Floating Panels -->
+            <!-- Design Panel -->
             <div id="design-panel" class="floating-panel hidden"></div>
 
-            <!-- Battle Viewer - floating window -->
+            <!-- Battle Viewer -->
             <div id="battle-viewer" class="floating-panel hidden"></div>
 
-            <!-- Race Designer Wizard - floating window -->
+            <!-- Race Designer Wizard -->
             <div id="race-wizard" class="floating-panel hidden"></div>
+
+            <!-- Reports Panel -->
+            <div id="reports-panel" class="floating-panel reports-panel hidden"></div>
         </main>
 
         <footer>
             <span id="status-bar">Ready</span>
+            <span id="turn-indicator"></span>
             <span>Stars Nova Web v0.1.0</span>
-            <a href="/docs">API Documentation</a>
         </footer>
     </div>
 
@@ -113,12 +110,15 @@
     <script src="/static/js/views/nebula-designer.js"></script>
     <script src="/static/js/views/nebula-svg.js"></script>
     <script src="/static/js/views/galaxy-map.js"></script>
+    <script src="/static/js/views/panel-manager.js"></script>
     <script src="/static/js/views/star-panel.js"></script>
     <script src="/static/js/views/fleet-panel.js"></script>
     <script src="/static/js/views/message-panel.js"></script>
     <script src="/static/js/views/design-panel.js"></script>
     <script src="/static/js/views/battle-viewer.js"></script>
     <script src="/static/js/views/race-wizard.js"></script>
+    <script src="/static/js/views/reports.js"></script>
+    <script src="/static/js/views/menu-bar.js"></script>
     <script src="/static/js/views/dialogs.js"></script>
     <script src="/static/js/app.js"></script>
 </body>

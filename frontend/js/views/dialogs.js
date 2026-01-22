@@ -471,6 +471,139 @@ const Dialogs = {
             return (num / 1000).toFixed(1) + 'K';
         }
         return num.toString();
+    },
+
+    /**
+     * Show a simple message dialog.
+     * @param {string} title - Dialog title
+     * @param {string} message - Message to display (supports newlines)
+     */
+    showMessage(title, message) {
+        const formattedMessage = message.replace(/\n/g, '<br>');
+
+        const html = `
+            <div class="dialog-header">
+                <h2>${title}</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+
+            <div class="dialog-body">
+                <p style="white-space: pre-wrap; font-family: monospace; font-size: 0.85rem;">${formattedMessage}</p>
+            </div>
+
+            <div class="dialog-footer">
+                <button class="btn-primary" onclick="Dialogs.close()">OK</button>
+            </div>
+        `;
+
+        this.show(html);
+    },
+
+    /**
+     * Show a select/dropdown dialog.
+     * @param {string} title - Dialog title
+     * @param {string} label - Label for the select field
+     * @param {Array} options - Array of {value, label} objects
+     * @param {Function} callback - Called with selected value
+     */
+    showSelectDialog(title, label, options, callback) {
+        const optionsHtml = options.map(opt =>
+            `<option value="${opt.value}">${opt.label}</option>`
+        ).join('');
+
+        const html = `
+            <div class="dialog-header">
+                <h2>${title}</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+
+            <div class="dialog-body">
+                <div class="form-group">
+                    <label for="select-dialog-value">${label}</label>
+                    <select id="select-dialog-value" class="form-select">
+                        ${optionsHtml}
+                    </select>
+                </div>
+            </div>
+
+            <div class="dialog-footer">
+                <button class="btn-primary" id="btn-select-confirm">OK</button>
+                <button class="btn-secondary" onclick="Dialogs.close()">Cancel</button>
+            </div>
+        `;
+
+        this.show(html);
+
+        document.getElementById('btn-select-confirm')?.addEventListener('click', () => {
+            const selected = document.getElementById('select-dialog-value')?.value;
+            this.close();
+            if (callback && selected) {
+                callback(selected);
+            }
+        });
+
+        // Also allow double-click on select to confirm
+        document.getElementById('select-dialog-value')?.addEventListener('dblclick', () => {
+            const selected = document.getElementById('select-dialog-value')?.value;
+            this.close();
+            if (callback && selected) {
+                callback(selected);
+            }
+        });
+    },
+
+    /**
+     * Show an input prompt dialog.
+     * @param {string} title - Dialog title
+     * @param {string} label - Label for the input field
+     * @param {string} defaultValue - Default value for input
+     * @param {Function} callback - Called with entered value
+     */
+    showPrompt(title, label, defaultValue, callback) {
+        const html = `
+            <div class="dialog-header">
+                <h2>${title}</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+
+            <div class="dialog-body">
+                <div class="form-group">
+                    <label for="prompt-dialog-value">${label}</label>
+                    <input type="text" id="prompt-dialog-value" class="form-input" value="${defaultValue || ''}">
+                </div>
+            </div>
+
+            <div class="dialog-footer">
+                <button class="btn-primary" id="btn-prompt-confirm">OK</button>
+                <button class="btn-secondary" onclick="Dialogs.close()">Cancel</button>
+            </div>
+        `;
+
+        this.show(html);
+
+        // Focus the input
+        const input = document.getElementById('prompt-dialog-value');
+        input?.focus();
+        input?.select();
+
+        document.getElementById('btn-prompt-confirm')?.addEventListener('click', () => {
+            const value = document.getElementById('prompt-dialog-value')?.value;
+            this.close();
+            if (callback) {
+                callback(value);
+            }
+        });
+
+        // Enter to confirm
+        input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const value = input.value;
+                this.close();
+                if (callback) {
+                    callback(value);
+                }
+            }
+        });
     }
 };
 

@@ -119,11 +119,7 @@ main {
     color: #ffcc00;  /* Germanium - yellow */
 }
 
-#galaxy-map-container {
-    flex: 1;
-    position: relative;
-    overflow: hidden;
-}
+/* Note: #galaxy-map-container replaced by #scanner-pane in new layout */
 
 #galaxy-map {
     width: 100%;
@@ -148,14 +144,7 @@ main {
     background-color: #050510;
 }
 
-/* Info panel (right sidebar) */
-#info-panel {
-    width: 320px;
-    background-color: #1a1a2e;
-    border-left: 1px solid #333;
-    padding: 1rem;
-    overflow-y: auto;
-}
+/* Note: #info-panel replaced by #left-column in new layout */
 
 .panel {
     background-color: #2a2a4e;
@@ -606,7 +595,18 @@ footer a:hover {
 /* Section headers */
 .star-section,
 .fleet-section {
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.star-section h3,
+.fleet-section h3 {
+    color: #9cc3ff;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid #333;
 }
 
 .star-panel-header {
@@ -1657,4 +1657,531 @@ footer a:hover {
 .wizard-buttons {
     display: flex;
     gap: 0.5rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MENU BAR - Classic Stars! 1995 Style
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#menu-bar {
+    background-color: #1a1a2e;
+    border-bottom: 1px solid #333;
+}
+
+.menu-bar {
+    display: flex;
+    align-items: center;
+    padding: 0;
+    height: 28px;
+}
+
+.menu-item {
+    position: relative;
+    cursor: pointer;
+}
+
+.menu-label {
+    display: block;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.85rem;
+    color: #e0e0e0;
+    user-select: none;
+}
+
+.menu-item:hover .menu-label,
+.menu-item.active .menu-label {
+    background-color: #3a3a5e;
+}
+
+.menu-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 200px;
+    background-color: #1a1a2e;
+    border: 1px solid #444;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+}
+
+.menu-action {
+    display: flex;
+    align-items: center;
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #e0e0e0;
+}
+
+.menu-action:hover {
+    background-color: #3a5a9e;
+}
+
+.menu-check {
+    width: 20px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: #7cb3ff;
+}
+
+.menu-action-label {
+    flex: 1;
+}
+
+.menu-shortcut {
+    margin-left: 2rem;
+    font-size: 0.75rem;
+    color: #888;
+}
+
+.menu-separator {
+    height: 1px;
+    background-color: #444;
+    margin: 0.25rem 0.5rem;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CLASSIC LAYOUT - 40% Left Column / 60% Scanner Pane
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#game-container {
+    display: flex;
+    flex: 1;
+    position: relative;
+    flex-direction: row;
+}
+
+/* Left Column - 40% width */
+#left-column {
+    width: 40%;
+    min-width: 320px;
+    max-width: 500px;
+    background-color: #1a1a2e;
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+/* Side-by-side layout option */
+#left-column.side-by-side {
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+#left-column.side-by-side > .panel {
+    width: calc(50% - 0.5rem);
+}
+
+/* Empire Summary in left column */
+#left-column #empire-summary {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: #2a2a4e;
+    border-bottom: 1px solid #333;
+    font-size: 0.85rem;
+}
+
+#left-column #empire-summary .summary-section {
+    min-width: 50px;
+    flex-direction: row;
+    gap: 0.35rem;
+}
+
+#left-column #empire-summary .summary-label {
+    font-size: 0.65rem;
+}
+
+#left-column #empire-summary .summary-value {
+    font-size: 0.85rem;
+}
+
+/* Scanner Pane - 60% width */
+#scanner-pane {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    min-width: 400px;
+}
+
+#scanner-pane #galaxy-map {
+    width: 100%;
+    height: 100%;
+    background-color: transparent;
+    cursor: grab;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+}
+
+#scanner-pane .nebula-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+    background-color: #050510;
+}
+
+/* Message Panel - full width at bottom */
+.message-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: #1a1a2e;
+    border-top: 1px solid #444;
+    z-index: 100;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PANEL CONTROLS - Pin and Collapse
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.panel {
+    background-color: #2a2a4e;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+    border-bottom: 1px solid #333;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.65rem 1rem;
+    background-color: #2a2a4e;
+    border-bottom: 1px solid #333;
+    cursor: pointer;
+}
+
+.panel-header h2,
+.panel-header h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #7cb3ff;
+}
+
+.panel-controls {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.pin-btn,
+.collapse-btn {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    padding: 0.15rem 0.35rem;
+    font-size: 0.75rem;
+    border-radius: 2px;
+}
+
+.pin-btn:hover,
+.collapse-btn:hover {
+    background-color: rgba(124, 179, 255, 0.2);
+    color: #7cb3ff;
+}
+
+.pin-btn.pinned {
+    color: #7cb3ff;
+    background-color: rgba(124, 179, 255, 0.2);
+}
+
+.panel-content {
+    padding: 1rem;
+}
+
+.panel.collapsed .panel-content {
+    display: none;
+}
+
+.panel.collapsed .collapse-btn {
+    transform: rotate(-90deg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REPORTS PANEL
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.reports-panel {
+    min-width: 700px;
+    max-width: 900px;
+    max-height: 85vh;
+}
+
+.reports-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #444;
+    background-color: #2a2a4e;
+}
+
+.reports-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #7cb3ff;
+}
+
+.reports-tabs {
+    display: flex;
+    background-color: #1a1a2e;
+    border-bottom: 1px solid #333;
+}
+
+.report-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: #888;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.report-tab:hover {
+    color: #ccc;
+    background-color: rgba(124, 179, 255, 0.1);
+}
+
+.report-tab.active {
+    color: #7cb3ff;
+    border-bottom-color: #7cb3ff;
+}
+
+.tab-icon {
+    font-size: 1rem;
+}
+
+.reports-content {
+    padding: 1rem;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.reports-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid #444;
+    background-color: #2a2a4e;
+}
+
+/* Report Tables */
+.report-table-container {
+    overflow-x: auto;
+}
+
+.report-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.report-table th {
+    text-align: left;
+    padding: 0.5rem;
+    background-color: #2a2a4e;
+    border-bottom: 1px solid #444;
+    color: #9cc3ff;
+    font-weight: normal;
+    white-space: nowrap;
+}
+
+.report-table th.sortable {
+    cursor: pointer;
+}
+
+.report-table th.sortable:hover {
+    background-color: #3a3a5e;
+}
+
+.sort-indicator {
+    margin-left: 0.25rem;
+    font-size: 0.7rem;
+    color: #666;
+}
+
+.sort-indicator.active {
+    color: #7cb3ff;
+}
+
+.report-table td {
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid #333;
+    color: #e0e0e0;
+}
+
+.report-table tr.report-row {
+    cursor: pointer;
+}
+
+.report-table tr.report-row:hover {
+    background-color: rgba(124, 179, 255, 0.1);
+}
+
+.report-table .number {
+    text-align: right;
+    font-family: monospace;
+}
+
+.report-table .planet-name,
+.report-table .fleet-name {
+    color: #7cb3ff;
+    font-weight: 500;
+}
+
+.report-table .resource-ir { color: #6699ff; }
+.report-table .resource-bo { color: #33cc33; }
+.report-table .resource-ge { color: #ffcc00; }
+
+.report-table tfoot tr.report-totals {
+    background-color: #2a2a4e;
+    font-weight: bold;
+}
+
+.report-table tfoot td {
+    border-top: 2px solid #444;
+    border-bottom: none;
+}
+
+/* Research Status */
+.research-status {
+    padding: 0.5rem;
+}
+
+.research-summary {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background-color: #2a2a4e;
+    border-radius: 4px;
+}
+
+.research-summary .label {
+    color: #888;
+    margin-right: 0.5rem;
+}
+
+.research-summary .value {
+    color: #7cb3ff;
+    font-weight: bold;
+}
+
+.research-fields {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.research-field {
+    padding: 0.75rem;
+    background-color: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.research-field:hover {
+    border-color: #555;
+}
+
+.research-field.active {
+    border-color: #7cb3ff;
+    background-color: rgba(124, 179, 255, 0.1);
+}
+
+.field-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.field-name {
+    color: #e0e0e0;
+    font-weight: 500;
+}
+
+.field-level {
+    color: #888;
+    font-size: 0.8rem;
+}
+
+.field-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.field-progress .progress-bar {
+    flex: 1;
+    height: 6px;
+}
+
+.progress-text {
+    font-size: 0.75rem;
+    color: #888;
+    width: 35px;
+    text-align: right;
+}
+
+.research-info {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background-color: #2a2a4e;
+    border-radius: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE ADJUSTMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1200px) {
+    #left-column {
+        width: 35%;
+        min-width: 280px;
+    }
+}
+
+@media (max-width: 900px) {
+    #game-container {
+        flex-direction: column;
+    }
+
+    #left-column {
+        width: 100%;
+        max-width: none;
+        height: 40%;
+        border-right: none;
+        border-bottom: 1px solid #333;
+    }
+
+    #scanner-pane {
+        min-width: auto;
+        height: 60%;
+    }
+
+    .reports-panel {
+        min-width: auto;
+        width: 95%;
+    }
 }

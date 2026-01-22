@@ -1151,6 +1151,73 @@ const GalaxyMap = {
     setZoom(level) {
         this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, level));
         this.render();
+    },
+
+    /**
+     * Toggle star names visibility.
+     */
+    toggleNames() {
+        this.showNames = !this.showNames;
+        this.render();
+    },
+
+    /**
+     * Toggle scanner range overlay.
+     */
+    toggleScannerRange() {
+        this.showScannerRange = !this.showScannerRange;
+        this.render();
+    },
+
+    /**
+     * Toggle grid visibility.
+     */
+    toggleGrid() {
+        this.showGrid = !this.showGrid;
+        this.render();
+    },
+
+    /**
+     * Zoom to fit all stars in view.
+     */
+    zoomToFit() {
+        const stars = GameState.stars || [];
+        if (stars.length === 0) return;
+
+        // Find bounds
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+
+        for (const star of stars) {
+            minX = Math.min(minX, star.x);
+            maxX = Math.max(maxX, star.x);
+            minY = Math.min(minY, star.y);
+            maxY = Math.max(maxY, star.y);
+        }
+
+        // Add padding
+        const padding = 50;
+        minX -= padding;
+        maxX += padding;
+        minY -= padding;
+        maxY += padding;
+
+        // Calculate zoom to fit
+        const worldWidth = maxX - minX;
+        const worldHeight = maxY - minY;
+        const screenWidth = this.canvas.width;
+        const screenHeight = this.canvas.height;
+
+        const zoomX = screenWidth / worldWidth;
+        const zoomY = screenHeight / worldHeight;
+        this.zoom = Math.min(zoomX, zoomY, this.maxZoom);
+        this.zoom = Math.max(this.zoom, this.minZoom);
+
+        // Center on midpoint
+        this.viewX = (minX + maxX) / 2;
+        this.viewY = (minY + maxY) / 2;
+
+        this.render();
     }
 };
 

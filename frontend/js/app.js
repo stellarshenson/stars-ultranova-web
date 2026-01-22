@@ -23,6 +23,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 Dialogs.init();
             }
 
+            // Initialize menu bar
+            if (window.MenuBar) {
+                MenuBar.init('menu-bar');
+            }
+
+            // Initialize panel manager
+            if (window.PanelManager) {
+                PanelManager.init();
+            }
+
             // Initialize galaxy map
             if (window.GalaxyMap) {
                 GalaxyMap.init('galaxy-map');
@@ -52,36 +62,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (window.RaceWizard) {
                 RaceWizard.init('race-wizard');
             }
+
+            // Initialize reports panel
+            if (window.Reports) {
+                Reports.init('reports-panel');
+            }
         },
 
         /**
          * Bind UI event handlers.
          */
         bindEvents() {
-            // Header buttons
-            document.getElementById('btn-new-game')?.addEventListener('click', () => {
-                Dialogs.showNewGame();
-            });
-
-            document.getElementById('btn-load-game')?.addEventListener('click', () => {
-                Dialogs.showLoadGame();
-            });
-
-            document.getElementById('btn-ship-designer')?.addEventListener('click', () => {
-                if (window.DesignPanel) {
-                    DesignPanel.toggle();
-                }
-            });
-
-            document.getElementById('btn-generate-turn')?.addEventListener('click', () => {
-                this.generateTurn();
-            });
-
-            document.getElementById('btn-settings')?.addEventListener('click', () => {
-                Dialogs.showSettings();
-            });
-
-            // Menu buttons
+            // Menu buttons (main menu screen)
             document.getElementById('menu-new-game')?.addEventListener('click', () => {
                 Dialogs.showNewGame();
             });
@@ -127,6 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             GameState.on('turnGenerated', (turn) => {
                 this.setStatus(`Turn ${turn} generated`);
+                this.updateTurnIndicator(turn);
                 // Show turn report if there are messages
                 if (GameState.game) {
                     this.showTurnReport();
@@ -141,6 +134,9 @@ document.addEventListener('DOMContentLoaded', () => {
             this.hideMenu();
             this.showGame();
 
+            // Update turn indicator
+            this.updateTurnIndicator(game.turn);
+
             // Resize and center galaxy map on homeworld
             // Must resize after showing the container so canvas has dimensions
             if (window.GalaxyMap) {
@@ -150,6 +146,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Update empire summary
             this.updateEmpireSummary();
+
+            // Sync menu bar toggle states with galaxy map
+            if (window.MenuBar && window.GalaxyMap) {
+                MenuBar.setToggleState('star-names', GalaxyMap.showNames);
+                MenuBar.setToggleState('scanner-ranges', GalaxyMap.showScannerRange);
+            }
+        },
+
+        /**
+         * Update the turn indicator in footer.
+         * @param {number} turn - Current turn number
+         */
+        updateTurnIndicator(turn) {
+            const indicator = document.getElementById('turn-indicator');
+            if (indicator) {
+                const year = 2400 + (turn || 0);
+                indicator.textContent = `Year ${year}`;
+            }
         },
 
         /**
@@ -171,12 +185,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const setPlanets = document.getElementById('summary-planets');
             const setFleets = document.getElementById('summary-fleets');
             const setPop = document.getElementById('summary-population');
-            const setResearch = document.getElementById('summary-research');
 
             if (setPlanets) setPlanets.textContent = playerStars.length;
             if (setFleets) setFleets.textContent = playerFleets.length;
             if (setPop) setPop.textContent = this.formatPopulation(totalPop);
-            if (setResearch) setResearch.textContent = '15%';  // Default research budget
 
             // Update resources
             const resContainer = document.getElementById('summary-resources');
@@ -328,5 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // Make App available globally for menu bar actions
+    window.App = App;
     App.init();
 });
