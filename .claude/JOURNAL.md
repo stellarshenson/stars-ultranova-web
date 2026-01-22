@@ -179,3 +179,47 @@ This journal tracks substantive work on documents, diagrams, and documentation c
    - TestWaypointTaskHelpers: 5 tests (get_task_type with enums, objects, None)
 
    **Verification**: All 177 unit tests pass (22 new for Phase 4). Turn generator executes complete sequence. Turn steps process game state modifications correctly. Waypoint task dual system enables both quick enum comparison and rich task objects.
+
+6. **Task - Phase 5 implementation**: Complete Phase 5 of Stars Nova Web - Battle Engines<br>
+   **Result**: Implemented the complete combat resolution system with both standard and alternative battle engines ported from C# source.
+
+   **Battle Data Structures** (`backend/server/battle/`):
+   - `battle_step.py`: Ported from `ServerState/NewGame/BattleStep.cs`. Event recording classes for battle replay: BattleStep (base), BattleStepMovement (position changes), BattleStepTarget (targeting), BattleStepWeapons (damage dealt), BattleStepDestroy (ship destruction). TokenDefence enum (SHIELDS, ARMOR) for damage targeting. WeaponTarget dataclass linking attacker/defender stacks with weapon details.
+   - `battle_report.py`: Ported from `Common/DataStructures/BattleReport.cs`. Container for combat results including all stacks involved, list of battle steps, start/end state snapshots.
+   - `battle_plan.py`: Ported from `Common/DataStructures/BattlePlan.cs`. Player-defined targeting priorities. Victims enum with 8 target categories: STARBASE, BOMBER, CAPITAL_SHIP (>700 armor), ESCORT, ARMED_SHIP, ANY_SHIP, SUPPORT_SHIP, NONE. BattlePlan stores dump_cargo flag and ordered list of Victims priorities.
+   - `stack.py`: Ported from `Common/GameObjects/Stack.cs` (259 lines). Battle-specific fleet containing single ShipToken. StackToken class bridges ShipToken (cached design values) with mutable battle state (shields, armor remaining). Stack has position, velocity_vector, target, target_list. Key computed as `(owner << 32) | stack_id`. Properties: defenses, is_destroyed, is_armed, mass, battle_speed (from token design).
+   - `weapon_details.py`: Ported from `ServerState/BattleEngine/WeaponDetails.cs`. Weapon configuration for combat including power, range, accuracy. TargetPercent dataclass for hit probability tracking per-target.
+   - `space_allocator.py`: Ported from `ServerState/BattleEngine/SpaceAllocator.cs`. Battle arena positioning with Rectangle class. Allocates non-overlapping spaces for fleets entering combat.
+
+   **Standard Battle Engine** (`backend/server/battle/battle_engine.py`):
+   Ported from `ServerState/BattleEngine/BattleEngine.cs` (1001 lines). Traditional Stars! combat model:
+   - 16 maximum battle rounds, 3 movement phases per round
+   - Movement table: exact 9x8 array from C# mapping battle speeds (0.5 to 2.5+) to moves per round (1-8)
+   - Target attractiveness formula: `cost / defenses` - prioritizes expensive/weak targets
+   - Initiative order based on ship design battle_initiative
+   - Weapon damage application with shield penetration before armor damage
+   - Shield regeneration between rounds
+   - Token defense tracking (shields vs armor)
+   - `resolve_battle()` main entry point, `_run_round()` for single round execution
+
+   **Ron Battle Engine** (`backend/server/battle/ron_battle_engine.py`):
+   Ported from `ServerState/BattleEngine/RonBattleEngine.cs` (1134 lines). Alternative engine with improved movement fidelity:
+   - 60 maximum battle rounds for longer engagements
+   - 1000-unit grid with 100 scale factor for finer positioning
+   - Velocity vectors for smooth movement (not discrete steps)
+   - `_battle_speed_vector()` calculates movement direction and magnitude
+   - More gradual damage application over extended combat
+   - Same target selection and damage formulas as standard engine
+
+   **Module Export** (`backend/server/battle/__init__.py`):
+   Exports all battle classes: BattleStep variants, BattleReport, BattlePlan, Victims, Stack, StackToken, WeaponDetails, TargetPercent, SpaceAllocator, BattleEngine, RonBattleEngine.
+
+   **Test Suite** (`tests/unit/test_battle_engine.py`):
+   38 tests covering: BattlePlan/Victims (4 tests), Stack/StackToken (8 tests), SpaceAllocator/Rectangle (6 tests), WeaponDetails/TargetPercent (4 tests), BattleStep variants (5 tests), BattleEngine movement table (5 tests), RonBattleEngine (4 tests), Integration (2 tests).
+
+   **Bug Fixes During Implementation**:
+   - Fixed `Cargo.colonists` -> `Cargo.colonists_in_kilotons` in Stack creation
+   - Fixed `Fleet.in_orbit` -> removed (Fleet has `in_orbit_name` string, Stack has `in_orbit` Star object - resolved by leaving None in Stack.from_fleet)
+   - Fixed test using `fleet.key` directly when it should use `fleet.id` (Item.key encodes owner in upper bits)
+
+   **Verification**: All 215 unit tests pass (38 new for Phase 5). Both battle engines functional. Movement table verified against C# source values. Stack creation from Fleet preserves all token properties.

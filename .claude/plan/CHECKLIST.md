@@ -121,22 +121,31 @@ Server-side turn generation - critical for gameplay.
 
 ---
 
-## Phase 5: Battle Engines
+## Phase 5: Battle Engines ✅ COMPLETE
 
 Combat resolution system.
 
-- [ ] **Standard Battle Engine**
-  - [ ] `battle_engine.py` - Port from `BattleEngine.cs` (1001 lines)
-  - [ ] Movement table (exact 9x8 array from C#)
-  - [ ] Target attractiveness
-  - [ ] Initiative order
-  - [ ] Weapon damage application
-- [ ] **Ron Battle Engine**
-  - [ ] `ron_battle_engine.py` - Port from `RonBattleEngine.cs`
-- [ ] **Battle Recording**
-  - [ ] Battle replay data structure
-- [ ] **Tests**
-  - [ ] test_battle_engine.py
+- [x] **Battle Data Structures**
+  - [x] `battle_step.py` - BattleStep, BattleStepMovement, BattleStepTarget, BattleStepWeapons, BattleStepDestroy, TokenDefence, WeaponTarget
+  - [x] `battle_report.py` - BattleReport class for combat recording
+  - [x] `battle_plan.py` - BattlePlan class + Victims enum (target priorities)
+  - [x] `stack.py` - Stack and StackToken (battle-specific fleet with mutable shields/armor)
+  - [x] `weapon_details.py` - WeaponDetails and TargetPercent classes
+  - [x] `space_allocator.py` - SpaceAllocator and Rectangle for battle positioning
+- [x] **Standard Battle Engine**
+  - [x] `battle_engine.py` - Port from `BattleEngine.cs` (1001 lines)
+  - [x] Movement table (exact 9x8 array from C#)
+  - [x] Target attractiveness (cost / defenses)
+  - [x] Initiative order
+  - [x] 16 max rounds, 3 movement phases per round
+  - [x] Weapon damage application with shield/armor tracking
+- [x] **Ron Battle Engine**
+  - [x] `ron_battle_engine.py` - Port from `RonBattleEngine.cs` (1134 lines)
+  - [x] 60 max rounds, 1000-unit grid with 100 scale factor
+  - [x] Improved movement with velocity vectors
+- [x] **Tests**
+  - [x] test_battle_engine.py (38 tests)
+- [x] All 215 tests passing
 
 ---
 
@@ -223,10 +232,10 @@ Final verification and refinement.
 | 2 | Components and Designs | ✅ Complete |
 | 3 | Commands and Waypoints | ✅ Complete |
 | 4 | Turn Processing | ✅ Complete |
-| 5 | Battle Engines | ⬜ Pending |
+| 5 | Battle Engines | ✅ Complete |
 | 6 | API Layer | ⬜ Pending |
 | 7 | Frontend | ⬜ Pending |
 | 8 | AI System | ⬜ Pending |
 | 9 | Testing and Polish | ⬜ Pending |
 
-**Current Focus**: Phase 5 - Battle Engines
+**Current Focus**: Phase 6 - API Layer
