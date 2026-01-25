@@ -1,10 +1,19 @@
 #!/bin/bash
-# Start Stars Nova Web server
+# Start Stars Nova Web server with gunicorn (proxy-aware)
 
 set -e
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
+
+# Load settings from project.env
+source project.env 2>/dev/null || true
+
+# Server configuration
+HOST=${HOST:-0.0.0.0}
+PORT=${PORT:-9800}
+WORKERS=${WORKERS:-1}
+FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-*}
 
 echo "Starting Stars Nova Web server..."
 
@@ -20,8 +29,18 @@ if [ -f ".server.pid" ]; then
     fi
 fi
 
-# Start server in background
-nohup uv run python -m backend.main >> server.log 2>&1 &
+# Start server in background with gunicorn
+# - uvicorn.workers.UvicornWorker for async support
+# - --forwarded-allow-ips to trust proxy headers from any IP
+# - --access-logfile for request logging
+export FORWARDED_ALLOW_IPS="$FORWARDED_ALLOW_IPS"
+nohup uv run gunicorn backend.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers $WORKERS \
+    --bind $HOST:$PORT \
+    --forwarded-allow-ips "$FORWARDED_ALLOW_IPS" \
+    --access-logfile - \
+    >> server.log 2>&1 &
 SERVER_PID=$!
 
 # Save PID
@@ -34,8 +53,9 @@ sleep 2
 if ps -p $SERVER_PID > /dev/null 2>&1; then
     echo "Server started successfully (PID: $SERVER_PID)"
     echo "Log file: server.log"
-    echo "URL: http://localhost:9800"
+    echo "URL: http://localhost:$PORT"
     echo ""
+    echo "Proxy support: enabled (auto-detects X-Forwarded-Prefix)"
     echo "To stop the server, run: ./stop.sh"
 else
     echo "Error: Server failed to start. Check server.log for details."

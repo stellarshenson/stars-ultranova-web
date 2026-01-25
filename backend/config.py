@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     port: int = 9800
     reload: bool = True
 
+    # Proxy/Base Path (for JupyterHub proxy support)
+    # Set to e.g. "/proxy/9800" when running behind JupyterHub proxy
+    root_path: str = ""
+
     # CORS
     cors_origins: list[str] = ["http://localhost:9800", "http://127.0.0.1:9800"]
     cors_allow_credentials: bool = True

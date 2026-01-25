@@ -6,7 +6,7 @@ A web port of the Stars! Nova 4X strategy game.
 import logging
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from typing import Optional
@@ -23,10 +23,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Create FastAPI application
+# root_path is used for proxy support (e.g., JupyterHub proxy at /proxy/9800)
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
-    description="Web port of Stars! Nova 4X strategy game"
+    description="Web port of Stars! Nova 4X strategy game",
+    root_path=settings.root_path
 )
 
 # CORS middleware for frontend
@@ -82,11 +84,30 @@ if settings.static_files and frontend_path.exists():
 
 
 @app.get("/")
-async def root():
+async def root(request: Request):
     """Serve the main page or API info."""
     index_path = frontend_path / "index.html"
     if index_path.exists():
-        return FileResponse(str(index_path))
+        # Read HTML and inject base tag for proxy support
+        html_content = index_path.read_text()
+
+        # Auto-detect root path from proxy headers or request scope
+        # Priority: X-Forwarded-Prefix header > request.scope['root_path'] > settings.root_path
+        root_path = (
+            request.headers.get("x-forwarded-prefix", "").rstrip("/") or
+            request.scope.get("root_path", "").rstrip("/") or
+            settings.root_path.rstrip("/")
+        )
+        base_url = root_path + "/" if root_path else "/"
+
+        # Inject <base> tag after <head> to handle proxy paths
+        if "<base " not in html_content:
+            html_content = html_content.replace(
+                "<head>",
+                f'<head>\n    <base href="{base_url}">'
+            )
+
+        return HTMLResponse(content=html_content)
     return {
         "name": settings.app_name,
         "version": settings.version,
@@ -120,5 +141,7 @@ if __name__ == "__main__":
         "backend.main:app",
         host=settings.host,
         port=settings.port,
-        reload=settings.reload
+        reload=settings.reload,
+        proxy_headers=True,
+        forwarded_allow_ips="*"
     )

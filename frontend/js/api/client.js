@@ -3,7 +3,8 @@
  * Handles all communication with the backend API.
  */
 
-const API_BASE = '/api';
+// Use relative path for proxy support (base tag handles prefixing)
+const API_BASE = 'api';
 
 const ApiClient = {
     // Loading state management
