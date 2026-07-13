@@ -136,6 +136,20 @@ class TestSpillover:
                          if m.message_type == "TechAdvance"]
         assert len(tech_advances) == 3
 
+    def test_tech_advance_message_names_field(self):
+        """The TechAdvance message names the research field, not the
+        ResearchField enum's integer value ("in the 0 field")."""
+        step = _step_with_state()
+        empire = self._empire()
+        empire.research_resources.set_level(ResearchField.ENERGY, 80)
+
+        step._check_tech_level_up(ResearchField.ENERGY, empire)
+
+        tech_advances = [m for m in step.server_state.all_messages
+                         if m.message_type == "TechAdvance"]
+        assert len(tech_advances) == 1
+        assert "Tech Level 1 in the Energy field" in tech_advances[0].text
+
     def test_leftover_contribution_all_stars(self):
         """Leftover energy contributes from EVERY owned star, not only
         only_leftover ones (StarUpdateStep.cs:83)."""

@@ -24,7 +24,9 @@ from ...core.globals import (
     ALCHEMY_MINERALS_PER_UNIT,
     ISB_STARBASE_CLOAK,
 )
-from ...core.data_structures.tech_level import ResearchField, TechLevel
+from ...core.data_structures.tech_level import (
+    RESEARCH_KEYS, ResearchField, TechLevel
+)
 from ...core.data_structures.resources import Resources
 from ...core.research import research_cost
 from ...core.production.production_queue import ProductionOrder, ProductionType
@@ -234,10 +236,12 @@ class StarUpdateStep(ITurnStep):
                 old_levels = empire.research_levels.clone()
                 empire.research_levels.set_level(area, next_level)
 
+                # Name the research field (ResearchField is an IntEnum,
+                # so area.value would print "0" - use the display keys)
                 self.server_state.all_messages.append(Message(
                     audience=empire.id,
                     text=f"Your scientists have completed research into Tech Level "
-                         f"{next_level} in the {area.value} field",
+                         f"{next_level} in the {RESEARCH_KEYS[area.value]} field",
                     message_type="TechAdvance"
                 ))
 

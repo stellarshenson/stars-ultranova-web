@@ -460,6 +460,126 @@ class TestCloaking:
         assert design2.tachyon_detectors == 2
 
 
+class TestElectronicsAggregation:
+    """Jammer/Computer/Capacitor/Beam Deflector design aggregation
+    (ProbabilityProperty.cs:111-133, Computer.cs:110-136,
+    Capacitor.cs:41,111-130, dispatched via ShipDesign.cs:613-701)."""
+
+    @pytest.fixture(scope="class")
+    def loader(self):
+        # ShipDesign.hull resolves allocated components through the
+        # module-level loader singleton, so load that one
+        from backend.core.components.component_loader import (
+            get_component_loader, load_components
+        )
+        loader = get_component_loader()
+        if not loader.is_loaded:
+            load_components("backend/data/components.xml")
+        return loader
+
+    def _design(self, loader, allocations):
+        """Design on a fabricated hull with catalog components
+        allocated by name: allocations = [(slot_type, name, count)]."""
+        c = Component()
+        c.name = "Electronics Test Hull"
+        c.item_type = ItemType.HULL
+        c.mass = 25
+        c.cost = Resources(4, 2, 4, 10)
+        hull_prop = ComponentProperty()
+        hull_prop.property_type = "Hull"
+        hull_prop.values = {
+            "fuel_capacity": 50,
+            "armor_strength": 20,
+            "modules": [
+                {"cell_number": i + 1, "component_maximum": 8,
+                 "component_type": slot_type,
+                 "allocated_component": name,
+                 "component_count": count}
+                for i, (slot_type, name, count) in enumerate(allocations)
+            ],
+        }
+        c.add_property(hull_prop)
+        design = ShipDesign(blueprint=c)
+        design.name = "Electronics Test"
+        design.update()
+        return design
+
+    def test_jammers_stack_in_one_slot(self, loader):
+        """2x Jammer 20 in one slot: (1 - 0.8^2) * 100 = 36."""
+        design = self._design(loader, [
+            ("Electrical", "Jammer 20", 2),
+        ])
+        assert design.jamming == pytest.approx(36.0)
+
+    def test_jammers_stack_across_slots(self, loader):
+        """Jammer 20 + Jammer 10: 100 - (80 * 90) / 100 = 28."""
+        design = self._design(loader, [
+            ("Electrical", "Jammer 20", 1),
+            ("Electrical", "Jammer 10", 1),
+        ])
+        assert design.jamming == pytest.approx(28.0)
+
+    def test_capacitors_stack_geometrically(self, loader):
+        """2x Energy Capacitor: (1.1^2 - 1) * 100 = 21."""
+        design = self._design(loader, [
+            ("Electrical", "Energy Capacitor", 2),
+        ])
+        assert design.capacitor == pytest.approx(21.0)
+
+    def test_capacitor_cap_at_250(self, loader):
+        """7x Flux Capacitor: raw (1.2^7 - 1) * 100 = 258.3 -> 250."""
+        design = self._design(loader, [
+            ("Electrical", "Flux Capacitor", 7),
+        ])
+        assert design.capacitor == 250.0
+
+    def test_beam_deflectors_match_canonical_power(self, loader):
+        """2x Beam Deflector: stacked 19% -> factor 0.81 = 0.9^2."""
+        design = self._design(loader, [
+            ("Mechanical", "Beam Deflector", 2),
+        ])
+        assert design.beam_deflector == pytest.approx(19.0)
+        assert 1.0 - design.beam_deflector / 100.0 == pytest.approx(0.9 ** 2)
+
+    def test_computers_stack_in_one_slot(self, loader):
+        """2x Battle Computer: accuracy (1 - 0.8^2) * 100 = 36,
+        initiative 1 * 2 = 2 (fabricated hull has initiative 0)."""
+        design = self._design(loader, [
+            ("Electrical", "Battle Computer", 2),
+        ])
+        assert design.battle_computer_accuracy == pytest.approx(36.0)
+        assert design.initiative == 2
+
+    def test_computers_stack_across_slots(self, loader):
+        """Battle Computer + Battle Nexus: 100 - (80 * 50) / 100 = 60,
+        initiative 1 + 3 = 4. Verifies the C# operator+ bug (returns
+        op1, Computer.cs:117) is NOT reproduced - the bug would keep
+        the first slot's 20/1."""
+        design = self._design(loader, [
+            ("Electrical", "Battle Computer", 1),
+            ("Electrical", "Battle Nexus", 1),
+        ])
+        assert design.battle_computer_accuracy == pytest.approx(60.0)
+        assert design.initiative == 4
+
+    def test_no_electronics_all_zero(self, loader):
+        """A bare design reports 0 for all four aggregates; a
+        SimpleDesign has no such fields so getattr defaults hold."""
+        from backend.services.ship_specs import SimpleDesign
+
+        design = self._design(loader, [])
+        assert design.jamming == 0.0
+        assert design.battle_computer_accuracy == 0.0
+        assert design.capacitor == 0.0
+        assert design.beam_deflector == 0.0
+
+        simple = SimpleDesign(key=1, name="Bare", mass=25)
+        assert getattr(simple, "jamming", 0.0) == 0.0
+        assert getattr(simple, "battle_computer_accuracy", 0.0) == 0.0
+        assert getattr(simple, "capacitor", 0.0) == 0.0
+        assert getattr(simple, "beam_deflector", 0.0) == 0.0
+
+
 class TestComponentLoaderHullEngine:
     """Tests for component loader Hull/Engine parsing."""
 

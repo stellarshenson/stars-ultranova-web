@@ -10,7 +10,9 @@ from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from ..game_objects.item import Item, ItemType
 from ..data_structures.resources import Resources
-from ..globals import BEAM_RATING_MULTIPLIER, MAX_CLOAK_PERCENT
+from ..globals import (
+    BEAM_RATING_MULTIPLIER, CAPACITOR_MAXIMUM, MAX_CLOAK_PERCENT
+)
 
 if TYPE_CHECKING:
     from ..race.race import Race
@@ -350,6 +352,42 @@ class ShipDesign(Item):
         return initiative
 
     @property
+    def jamming(self) -> float:
+        """Stacked Jammer percent (torpedo hit chance x (1 - this/100))."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Jammer")
+        if prop is None:
+            return 0.0
+        return float(prop.get("Value", 0))
+
+    @property
+    def battle_computer_accuracy(self) -> float:
+        """Stacked Computer accuracy percent (cuts torpedo miss chance)."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Computer")
+        if prop is None:
+            return 0.0
+        return float(prop.get("Accuracy", 0))
+
+    @property
+    def capacitor(self) -> float:
+        """Stacked Capacitor percent (beam damage x (1 + this/100))."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Capacitor")
+        if prop is None:
+            return 0.0
+        return float(prop.get("Value", 0))
+
+    @property
+    def beam_deflector(self) -> float:
+        """Stacked Beam Deflector percent (beam damage x (1 - this/100))."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Beam Deflector")
+        if prop is None:
+            return 0.0
+        return float(prop.get("Value", 0))
+
+    @property
     def can_colonize(self) -> bool:
         """Check if design can colonize planets."""
         self._ensure_updated()
@@ -539,17 +577,76 @@ class ShipDesign(Item):
                 }
 
         elif prop_type == "Computer":
+            # Battle computers (ShipDesign.cs:622 -> Computer.cs):
+            # Initiative sums; Accuracy stacks as independent
+            # probabilities - per-slot scale (1-(1-a)^n)*100
+            # (Computer.cs:129-136), cross-slot 100-(100-a1)(100-a2)/100
+            # (Computer.cs:110-118). Canonical rule: each computer
+            # multiplies the torpedo MISS chance by (1 - bonus). Note:
+            # the C# operator+ computes the stacked accuracy but
+            # returns op1 (Computer.cs:117 bug, keeping only the first
+            # slot's values); we port the INTENDED math, not the bug.
             initiative = values.get("Initiative", 0) * count
-            accuracy = values.get("Accuracy", 0)  # Accuracy doesn't stack
+            accuracy = values.get("Accuracy", 0)
+            scaled = (1.0 - (1.0 - accuracy / 100.0) ** count) * 100.0
             if "Computer" in self._summary_properties:
                 self._summary_properties["Computer"]["Initiative"] += initiative
-                self._summary_properties["Computer"]["Accuracy"] = max(
-                    self._summary_properties["Computer"]["Accuracy"], accuracy)
+                old = self._summary_properties["Computer"]["Accuracy"]
+                self._summary_properties["Computer"]["Accuracy"] = \
+                    100.0 - (100.0 - old) * (100.0 - scaled) / 100.0
             else:
                 self._summary_properties["Computer"] = {
                     "Initiative": initiative,
-                    "Accuracy": accuracy
+                    "Accuracy": scaled
                 }
+
+        elif prop_type == "Jammer":
+            # Jammers stack as independent probabilities
+            # (ShipDesign.cs:626 -> ProbabilityProperty.cs:111-133):
+            # per-slot (1-(1-v)^n)*100, cross-slot
+            # 100-(100-v1)(100-v2)/100. Torpedo hit chance is
+            # multiplied by (1 - this/100).
+            value = values.get("Value", 0)
+            scaled = (1.0 - (1.0 - value / 100.0) ** count) * 100.0
+            if "Jammer" in self._summary_properties:
+                old = self._summary_properties["Jammer"]["Value"]
+                self._summary_properties["Jammer"]["Value"] = \
+                    100.0 - (100.0 - old) * (100.0 - scaled) / 100.0
+            else:
+                self._summary_properties["Jammer"] = {"Value": scaled}
+
+        elif prop_type == "Capacitor":
+            # Capacitors stack geometrically (ShipDesign.cs:619 ->
+            # Capacitor.cs:111-130): per-slot ((1+v)^n - 1)*100,
+            # cross-slot ((100+v1)(100+v2))/100 - 100. Every C#
+            # constructor clamps to Maximum=250 (Capacitor.cs:41,58,67)
+            # so each step clamps - beam multiplier caps at x3.5.
+            value = values.get("Value", 0)
+            scaled = min(((1.0 + value / 100.0) ** count - 1.0) * 100.0,
+                         CAPACITOR_MAXIMUM)
+            if "Capacitor" in self._summary_properties:
+                old = self._summary_properties["Capacitor"]["Value"]
+                scaled = min((100.0 + old) * (100.0 + scaled) / 100.0 - 100.0,
+                             CAPACITOR_MAXIMUM)
+            self._summary_properties["Capacitor"] = {"Value": scaled}
+
+        elif prop_type == "Beam Deflector":
+            # Probability stacking like Jammer. DEVIATION from C#:
+            # SumProperty has no "Beam Deflector" case
+            # (ShipDesign.cs:613-701) and the BeamDeflectors getter
+            # reads the never-written key "Deflector"
+            # (ShipDesign.cs:334-346), so C# deflectors are doubly
+            # dead. Canonical Stars! rule is beam damage x (1-0.1)^n,
+            # which probability stacking of the catalog's 10% values
+            # reproduces exactly (2 deflectors -> 19% -> 0.81 = 0.9^2).
+            value = values.get("Value", 0)
+            scaled = (1.0 - (1.0 - value / 100.0) ** count) * 100.0
+            if "Beam Deflector" in self._summary_properties:
+                old = self._summary_properties["Beam Deflector"]["Value"]
+                self._summary_properties["Beam Deflector"]["Value"] = \
+                    100.0 - (100.0 - old) * (100.0 - scaled) / 100.0
+            else:
+                self._summary_properties["Beam Deflector"] = {"Value": scaled}
 
         elif prop_type == "Weapon":
             weapon = Weapon(

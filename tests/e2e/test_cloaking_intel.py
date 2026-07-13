@@ -6,16 +6,18 @@ inside the scout's 66 ly scanner, the observer's intel gains HULL-ONLY
 design records (port of ScanStep.cs:170-183) and the fleet reports
 carry composition. The same game then researches Electronics 5 and
 builds a cloaked scout (Scout hull + Stealth Cloak, 70 cloak units =
-35%). The cloaked scout and an uncloaked control are parked at 90% of
-the enemy homeworld's scanner range - inside the nominal range but
-outside the 35%-reduced one - and the enemy report shows the control
-while the cloaked scout stays invisible. Player 2 is AI-driven and its
-scouts roam, so the pair is placed by state surgery (the established
-harness pattern, see tests/e2e/test_repair_refuel.py) and the
-assertion runs on a turn where ground-truth geometry confirms no
-roaming enemy scanner could reach a 35%-cloaked fleet. Cloaking is a
-stub in the C# reference (ScanStep.cs:165); the detection math follows
-canonical Stars! rules.
+35%). The cloaked scout and an uncloaked control are parked in the
+"gray annulus" of one enemy planetary scanner - inside its nominal
+range but outside the 35%-reduced range of EVERY enemy scanner - and
+the enemy report shows the control while the cloaked scout stays
+invisible. Player 2 is AI-driven, expands, and its scouts roam, so
+the park point is searched each attempt from ground-truth scanner
+geometry (dust-dampened, mirroring ScanStep), the pair is placed by
+state surgery (the established harness pattern, see
+tests/e2e/test_repair_refuel.py), and the assertion runs on a turn
+where post-turn ground truth confirms the geometry held. Cloaking is
+a stub in the C# reference (ScanStep.cs:165); the detection math
+follows canonical Stars! rules.
 """
 
 import math
@@ -107,36 +109,88 @@ def _teleport(harness, fleet_keys, x, y):
     manager._save_game_state(harness.game_id, server_data)
 
 
-def _cloak_geometry_clean(harness, x, y, home_name):
-    """Ground-truth check of the scan geometry at (x, y): every player
-    2 scanner must be outside its 35%-cloak-reduced range (so a clean
-    turn proves the cloaked scout undetectable), while the enemy
-    homeworld's nominal range still covers the point (so the
-    uncloaked control is detected)."""
+# Roaming AI scouts cover tens of ly between the park decision and the
+# scan; candidates keep this much extra distance from every enemy fleet
+FLEET_MOVE_MARGIN = 30
+
+
+def _dampened(server_data, scan, x, y):
+    """Scanner range after dust dampening at the scanner's position,
+    mirroring ScanStep._scan_from_position."""
+    from backend.core.globals import NEBULA_SCAN_PENALTY
+
+    nebula = getattr(server_data, 'nebula_field', None)
+    if nebula is not None:
+        dust = nebula.get_dust_density_at(x, y)
+        if dust > 0.01:
+            scan = int(scan * (1.0 - NEBULA_SCAN_PENALTY * dust))
+    return scan
+
+
+def _scanner_map(harness):
+    """Player 2 scanner positions with dust-dampened ranges, from
+    ground truth: ([(x, y, range)] stars, [(x, y, range)] fleets)."""
     from backend.services.game_manager import get_game_manager
 
     manager = get_game_manager()
     server_data = manager._load_game_state(harness.game_id)
     empire2 = server_data.all_empires[2]
 
+    stars = []
+    for star in empire2.owned_stars.values():
+        scan = _dampened(server_data, getattr(star, 'scan_range', 0),
+                         star.position.x, star.position.y)
+        if scan > 0:
+            stars.append((star.position.x, star.position.y, scan))
+
+    fleets = []
     for fleet in empire2.owned_fleets.values():
         scan = max((getattr(t, 'scan_range_normal', 0)
                     for t in fleet.tokens.values()), default=0)
-        if scan <= 0:
-            continue
-        distance = math.hypot(fleet.position.x - x, fleet.position.y - y)
-        if distance <= scan * 0.65 + 1:
-            return False
+        scan = _dampened(server_data, scan,
+                         fleet.position.x, fleet.position.y)
+        if scan > 0:
+            fleets.append((fleet.position.x, fleet.position.y, scan))
 
-    for star in empire2.owned_stars.values():
-        scan = getattr(star, 'scan_range', 0)
-        distance = math.hypot(star.position.x - x, star.position.y - y)
-        if scan > 0 and distance <= scan * 0.65 + 1:
-            return False
-        if star.name == home_name and distance > scan - 1:
-            return False  # control would not be detected either
+    return stars, fleets
 
-    return True
+
+def _find_park(harness):
+    """Search the current ground-truth geometry for a park point inside
+    ONE player 2 star's nominal scanner range (the uncloaked control is
+    detected) but outside the 35%-reduced range of EVERY player 2
+    scanner (the cloaked scout is not), keeping a one-turn movement
+    margin from roaming fleets. None if no such point exists right
+    now."""
+    stars, fleets = _scanner_map(harness)
+    for ax, ay, ascan in stars:
+        for r_frac in (0.9, 0.95, 0.85):
+            r = ascan * r_frac
+            if r <= ascan * 0.65 + 2:
+                continue
+            for step in range(36):
+                angle = math.radians(step * 10)
+                x = ax + math.cos(angle) * r
+                y = ay + math.sin(angle) * r
+                if all(math.hypot(x - sx, y - sy) > sscan * 0.65 + 2
+                       for sx, sy, sscan in stars) and \
+                   all(math.hypot(x - fx, y - fy)
+                       > fscan * 0.65 + FLEET_MOVE_MARGIN
+                       for fx, fy, fscan in fleets):
+                    return (x, y)
+    return None
+
+
+def _geometry_held(harness, x, y):
+    """Post-turn ground truth: some player 2 star scanner still covers
+    (x, y) at nominal range (control detected) while no player 2
+    scanner covers it at the 35%-reduced range (cloaked hidden)."""
+    stars, fleets = _scanner_map(harness)
+    covered = any(math.hypot(x - sx, y - sy) <= sscan - 1
+                  for sx, sy, sscan in stars)
+    hidden = all(math.hypot(x - px, y - py) > pscan * 0.65 + 1
+                 for px, py, pscan in stars + fleets)
+    return covered and hidden
 
 
 def _run_scenario(harness):
@@ -205,26 +259,25 @@ def _run_scenario(harness):
         lambda s: any(f["name"].startswith("Shadow Scout")
                       for f in s["fleets"]))
 
-    # Park the cloaked scout and an uncloaked control at 90% of the
-    # enemy homeworld's scanner range: inside its nominal range (the
-    # control is detected) but outside the 35%-reduced range (0.65 *
-    # nominal - the cloaked scout is not). Enemy AI scouts roam with
-    # 66 ly scanners, so candidate angles around the homeworld are
-    # retried until a turn's ground-truth geometry is clean
+    # Park the cloaked scout and an uncloaked control inside one enemy
+    # planetary scanner's nominal range (the control is detected) but
+    # outside the 35%-reduced range (0.65 * nominal) of EVERY enemy
+    # scanner (the cloaked scout is not). The enemy AI expands and its
+    # scouts roam with 66 ly scanners, so the park point is searched
+    # from ground-truth geometry each attempt and verified again after
+    # the turn
     cloaked = _fleets_named(harness, "Shadow Scout")[0]
     control = _fleets_named(harness, "Long Range Scout")[1]
-    base_angle = math.atan2(p1_pos[1] - p2_pos[1], p1_pos[0] - p2_pos[0])
 
     verdict = None
-    for attempt in range(MAX_TURNS):
-        angle = base_angle + math.radians(((attempt % 11) - 5) * 15)
-        enemy_scan = harness.star_by_name(p2_home["name"], 2)["scan_range"]
-        park = (p2_pos[0] + math.cos(angle) * enemy_scan * 0.9,
-                p2_pos[1] + math.sin(angle) * enemy_scan * 0.9)
+    for _ in range(MAX_TURNS):
+        park = _find_park(harness)
+        if park is None:
+            harness.generate_turn()  # let roaming scanners move - retry
+            continue
         _teleport(harness, [cloaked["key"], control["key"]], *park)
         harness.generate_turn()
-        if not _cloak_geometry_clean(harness, park[0], park[1],
-                                     p2_home["name"]):
+        if not _geometry_held(harness, park[0], park[1]):
             continue  # a roaming enemy scanner got too close - retry
 
         p2_state = harness.state(2)

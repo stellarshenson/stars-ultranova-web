@@ -22,9 +22,14 @@ from .turn_steps import (
     ScrapFleetStep,
     RemoteMineStep
 )
+from .scores import Scores
+from .victory_check import VictoryCheck
 from ..core.commands.base import Message
 from ..core.globals import (
-    NOBODY, NEBULA_SPEED_PENALTY, NEBULA_MIN_SPEED_FACTOR, STORM_DAMAGE_PER_TURN
+    NOBODY, NEBULA_SPEED_PENALTY, NEBULA_MIN_SPEED_FACTOR,
+    STORM_DAMAGE_PER_TURN, STORM_SAFE_WARP, STORM_WARP_RISK_PER_WARP,
+    STORM_MISHAP_RISK_CAP, STORM_MISHAP_DAMAGE, STORM_COLONIST_DEATH,
+    COLONISTS_PER_KILOTON
 )
 from ..core.waypoints.waypoint import WaypointTask, get_task_type, Waypoint, NoTaskObj
 
@@ -83,6 +88,11 @@ class TurnGenerator:
         # the original random behaviour.
         self.rand = random.Random(random.getrandbits(64))
 
+        # Warp each fleet actually travelled at this turn (0 when it
+        # never moved), recorded by the movement loop for the storm
+        # warp-risk check
+        self._fleet_travel_warp: Dict[int, int] = {}
+
         # Turn steps ordered by priority
         self.turn_steps: Dict[int, ITurnStep] = OrderedDict()
         self.turn_steps[REMOTE_MINE_STEP] = RemoteMineStep()
@@ -128,12 +138,19 @@ class TurnGenerator:
                 continue
 
             start_x, start_y = fleet.position.x, fleet.position.y
+            ordered_warp = (fleet.waypoints[0].warp_factor
+                            if fleet.waypoints else 0)
             if self._process_fleet(fleet):
                 destroyed_fleets.append(fleet)
                 continue
 
             self._check_minefield(fleet, start_x, start_y)
             self._check_wormhole_transit(fleet)
+
+            # Record the travel warp for the storm warp-risk check
+            moved = (fleet.position.x != start_x
+                     or fleet.position.y != start_y)
+            self._fleet_travel_warp[fleet.key] = ordered_warp if moved else 0
 
         self.server_state.cleanup_fleets()
 
@@ -142,6 +159,10 @@ class TurnGenerator:
 
         # Wormhole endpoints drift
         self._process_wormholes()
+
+        # SD minefields flagged to detonate go off right after fleet
+        # movement, before battles (canonical order of events)
+        self._detonate_minefields()
 
         self.server_state.cleanup_fleets()
 
@@ -179,9 +200,19 @@ class TurnGenerator:
 
         self.server_state.cleanup_fleets()
 
+        # Beam-armed fleets sweep enemy minefields near the end of the
+        # turn (canonical order of events), before visibility so swept
+        # fields vanish from this turn's view
+        self._sweep_minefields()
+
         # Update minefield and wormhole visibility
         self._update_minefield_visibility()
         self._update_wormhole_visibility()
+
+        # Record this turn's scores into each empire's history (year
+        # already incremented, intel fresh - IntelWriter.cs:79-89
+        # snapshot timing)
+        self._record_score_history()
 
         # Return all generated messages
         return self.server_state.all_messages
@@ -534,10 +565,11 @@ class TurnGenerator:
         elif fleet.in_orbit_name:
             star = self.server_state.all_stars.get(fleet.in_orbit_name)
 
-        # Refuel if at friendly starbase with dock
+        # Refuel if at friendly starbase with dock: own star, or one
+        # whose owner has declared the fleet's empire a Friend
         starbase = self._get_starbase(star)
         if (star is not None and
-                star.owner == fleet.owner and
+                self._friendly_star(star, fleet) and
                 starbase is not None and
                 starbase.can_refuel):
             fleet.fuel_available = fleet.total_fuel_capacity
@@ -579,7 +611,7 @@ class TurnGenerator:
         0/1/2/3/5/8/20, "+repair% if stopped or orbiting").
         """
         if star is not None:
-            if star.owner == fleet.owner:
+            if self._friendly_star(star, fleet):
                 starbase = self._get_starbase(star)
                 if starbase is not None:
                     if starbase.can_refuel:
@@ -606,6 +638,23 @@ class TurnGenerator:
         # Canonical Stars!: Fuel Transport +5%/yr, Super-Fuel Xport
         # +10%/yr, encoded as HealsOthersPercent in components.xml.
         return rate + fleet.heals_others_percent
+
+    def _friendly_star(self, star, fleet: 'Fleet') -> bool:
+        """
+        Own star, or one whose owner has declared the fleet's empire
+        a Friend.
+
+        The C# RegenerateFleet (TurnGenerator.cs:308-379) only ever
+        checks own planets; canonical Stars! extends docking rights
+        (refuel and starbase repair rates) to fleets of players the
+        BASE OWNER has declared Friend.
+        """
+        if star.owner == fleet.owner:
+            return True
+        owner_empire = self.server_state.all_empires.get(star.owner)
+        return (owner_empire is not None
+                and owner_empire.empire_reports.get(
+                    fleet.owner, {}).get("relation", "Enemy") == "Friend")
 
     def _get_starbase(self, star) -> Optional['Fleet']:
         """Resolve the starbase fleet orbiting a star, if any."""
@@ -785,11 +834,15 @@ class TurnGenerator:
 
     def _process_storms(self):
         """
-        Drift galactic storms and damage fleets caught inside.
+        Drift galactic storms and apply their hazards to fleets inside.
 
-        Web extension - not in original Stars!. Each ship in a storm
-        accumulates hull damage scaled by storm intensity; ships whose
-        damage reaches 100% are destroyed.
+        Web extension - not in original Stars! (user directive
+        2026-07-13). Every effect scales with the LOCAL storm intensity
+        at the fleet's position (0 at the blob boundary, the storm's
+        intensity at the core): hull damage per turn, a warp mishap
+        risk for fleets moving above STORM_SAFE_WARP (the
+        minefield-strike analogue) and colonist attrition. Ships whose
+        damage reaches 100% are destroyed; starbases are immune.
         """
         storms = getattr(self.server_state, 'all_storms', None)
         if not storms:
@@ -809,19 +862,13 @@ class TurnGenerator:
                 continue
 
             for storm in storms.values():
-                if not storm.contains(fleet.position.x, fleet.position.y):
+                local = storm.get_intensity_at(
+                    fleet.position.x, fleet.position.y)
+                if local <= 0.0:
                     continue
 
-                damage = STORM_DAMAGE_PER_TURN * storm.intensity
-                ships_lost = 0
-                for token in list(fleet.tokens.values()):
-                    token.damage_percent += damage
-                    while token.damage_percent >= 100 and token.quantity > 0:
-                        token.quantity -= 1
-                        ships_lost += 1
-                        token.damage_percent -= 100
-                    if token.quantity <= 0:
-                        del fleet.tokens[token.design_key]
+                ships_lost = self._apply_storm_damage(
+                    fleet, STORM_DAMAGE_PER_TURN * local)
 
                 if ships_lost > 0:
                     text = (f"{fleet.name} was caught in a galactic storm - "
@@ -833,7 +880,95 @@ class TurnGenerator:
                     audience=fleet.owner, text=text,
                     message_type="Storm", fleet_key=fleet.key
                 ))
+
+                self._check_storm_mishap(fleet, local)
+                self._apply_storm_attrition(fleet, local)
                 break  # one storm hit per fleet per turn
+
+    def _apply_storm_damage(self, fleet: 'Fleet', damage: float) -> int:
+        """
+        Add hull damage percent to every token in the fleet; each
+        accumulated 100% destroys one ship.
+
+        Returns:
+            Number of ships destroyed.
+        """
+        ships_lost = 0
+        for token in list(fleet.tokens.values()):
+            token.damage_percent += damage
+            while token.damage_percent >= 100 and token.quantity > 0:
+                token.quantity -= 1
+                ships_lost += 1
+                token.damage_percent -= 100
+            if token.quantity <= 0:
+                del fleet.tokens[token.design_key]
+        return ships_lost
+
+    def _check_storm_mishap(self, fleet: 'Fleet', local: float):
+        """
+        Warp-risk check for a fleet that moved through a storm.
+
+        Moving above STORM_SAFE_WARP risks a mishap with chance
+        STORM_WARP_RISK_PER_WARP per warp above safe, scaled by the
+        local intensity and capped at STORM_MISHAP_RISK_CAP, rolled
+        once per turn on the seeded RNG. A mishap deals
+        STORM_MISHAP_DAMAGE * local extra damage to every token and
+        stops the fleet in the storm, waypoint preserved - the
+        minefield-strike analogue (user directive 2026-07-13).
+        """
+        warp = self._fleet_travel_warp.get(fleet.key)
+        if warp is None:
+            warp = (fleet.waypoints[0].warp_factor
+                    if fleet.waypoints else 0)
+        speeding = warp - STORM_SAFE_WARP
+        if speeding <= 0:
+            return
+
+        probability = min(STORM_MISHAP_RISK_CAP,
+                          STORM_WARP_RISK_PER_WARP * speeding * local)
+        if self.rand.random() >= probability:
+            return
+
+        ships_lost = self._apply_storm_damage(
+            fleet, STORM_MISHAP_DAMAGE * local)
+
+        # Fleet is stopped dead in the storm, as with a minefield strike
+        if fleet.waypoints:
+            fleet.waypoints[0].warp_factor = 0
+
+        if ships_lost > 0:
+            text = (f"{fleet.name} suffered a warp mishap in a galactic "
+                    f"storm - {ships_lost} ship(s) torn apart! The fleet "
+                    f"is stopped dead in space.")
+        else:
+            text = (f"{fleet.name} suffered a warp mishap in a galactic "
+                    f"storm and is stopped dead in space!")
+        self.server_state.all_messages.append(Message(
+            audience=fleet.owner, text=text,
+            message_type="Storm", fleet_key=fleet.key
+        ))
+
+    def _apply_storm_attrition(self, fleet: 'Fleet', local: float):
+        """
+        Colonists carried through a storm die off, scaled by the local
+        intensity (user directive 2026-07-13). Cargo stores colonists
+        in kilotons; the loss rounds up so any exposure costs at least
+        one kiloton.
+        """
+        col_kt = fleet.cargo.colonists_in_kilotons
+        if col_kt <= 0:
+            return
+
+        deaths_kt = min(col_kt, math.ceil(
+            col_kt * STORM_COLONIST_DEATH * local))
+        fleet.cargo.colonists_in_kilotons = col_kt - deaths_kt
+        self.server_state.all_messages.append(Message(
+            audience=fleet.owner,
+            text=(f"{fleet.name} lost "
+                  f"{deaths_kt * COLONISTS_PER_KILOTON} colonists to a "
+                  f"galactic storm!"),
+            message_type="Storm", fleet_key=fleet.key
+        ))
 
     # Mine stats per type, from the Mine Layer component properties in
     # the reference components.xml (Mine Dispenser / Heavy Dispenser /
@@ -865,6 +1000,19 @@ class TurnGenerator:
 
         for minefield in list(self.server_state.all_minefields.values()):
             if minefield.owner == fleet.owner:
+                continue
+
+            # Canonical Stars! rule (the C# CheckForMinefields.cs
+            # stub has no owner or relation check at all): a minefield
+            # never detonates against fleets of empires the FIELD
+            # OWNER has declared Friend; Neutral and Enemy are struck
+            # normally. Direction matters: it is the field owner's
+            # declared relation toward the traveling empire.
+            field_owner = self.server_state.all_empires.get(minefield.owner)
+            if (field_owner is not None
+                    and field_owner.empire_reports.get(
+                        fleet.owner, {}).get("relation", "Enemy")
+                    == "Friend"):
                 continue
 
             stats = self.MINE_STATS.get(minefield.mine_type, self.MINE_STATS[0])
@@ -912,16 +1060,18 @@ class TurnGenerator:
             return 0.0
         return (t2 - t1) * seg_len
 
-    def _strike_minefield(self, fleet: 'Fleet', minefield, stats: dict):
+    def _apply_mine_damage(self, fleet: 'Fleet', stats: dict) -> int:
         """
-        Apply a minefield strike: stop the fleet, damage ships,
-        expend detonated mines.
+        Spread the mine damage model over a fleet's tokens.
+
+        Shared by minefield strikes and SD detonations: total damage is
+        max(min_fleet_damage, damage_per_ship x ships), spread evenly
+        per ship; each 100% of a token's armor kills one ship.
+
+        Returns:
+            Number of ships destroyed.
         """
         ships = sum(t.quantity for t in fleet.tokens.values())
-
-        # Fleet is stopped dead, as in the original (fleet.Speed = 0)
-        if fleet.waypoints:
-            fleet.waypoints[0].warp_factor = 0
 
         ships_lost = 0
         if stats["damage_per_ship"] > 0 and ships > 0:
@@ -937,6 +1087,18 @@ class TurnGenerator:
                     token.damage_percent -= 100
                 if token.quantity <= 0:
                     del fleet.tokens[token.design_key]
+        return ships_lost
+
+    def _strike_minefield(self, fleet: 'Fleet', minefield, stats: dict):
+        """
+        Apply a minefield strike: stop the fleet, damage ships,
+        expend detonated mines.
+        """
+        # Fleet is stopped dead, as in the original (fleet.Speed = 0)
+        if fleet.waypoints:
+            fleet.waypoints[0].warp_factor = 0
+
+        ships_lost = self._apply_mine_damage(fleet, stats)
 
         # Detonated mines are expended
         minefield.number_of_mines = max(0, minefield.number_of_mines - 10)
@@ -965,6 +1127,166 @@ class TurnGenerator:
                      f"{int(minefield.position_y)})!",
                 message_type="Minefield Hit", fleet_key=fleet.key
             ))
+
+    def _detonate_minefields(self):
+        """
+        Detonate SD minefields flagged to detonate.
+
+        C# has no detonation code - the SD trait text is
+        PrimaryTraits.cs:58 ("you have the ability to remotely detonate
+        your own standard mine fields"); canonical Stars! rules per
+        project directive: standard fields only, a per-field yearly
+        toggle; while set, the field detonates each year damaging EVERY
+        fleet inside its radius - friend and foe, including the owner's
+        own ships - using the standard-mine damage model. Runs right
+        after fleet movement (fleets that just moved through are hit)
+        and before battles, per the canonical order of events. Unlike a
+        strike, detonation does not stop fleets.
+        """
+        for minefield in list(self.server_state.all_minefields.values()):
+            if not minefield.detonate or minefield.mine_type != 0:
+                continue
+
+            stats = self.MINE_STATS[0]
+            descriptor = minefield.mine_descriptor
+            caught_enemy = False
+            # The field detonates as a whole: containment uses the
+            # radius at detonation time, not the radius shrinking as
+            # mines are expended per fleet below
+            radius = minefield.radius
+
+            for fleet in list(self.server_state.iterate_all_fleets()):
+                if fleet.name == "Mineral Packet":
+                    continue
+                distance = math.hypot(
+                    fleet.position.x - minefield.position_x,
+                    fleet.position.y - minefield.position_y)
+                if distance > radius:
+                    continue
+
+                ships_lost = self._apply_mine_damage(fleet, stats)
+                # Detonated mines are expended per fleet damaged, as
+                # in a strike
+                minefield.number_of_mines = max(
+                    0, minefield.number_of_mines - 10)
+                if fleet.owner != minefield.owner:
+                    caught_enemy = True
+
+                if ships_lost > 0:
+                    text = (f"{fleet.name} has been caught in a "
+                            f"detonating {descriptor} minefield! "
+                            f"{ships_lost} ship(s) were destroyed.")
+                else:
+                    text = (f"{fleet.name} has been caught in a "
+                            f"detonating {descriptor} minefield and "
+                            f"taken damage!")
+                self.server_state.all_messages.append(Message(
+                    audience=fleet.owner, text=text,
+                    message_type="Minefield Detonation",
+                    fleet_key=fleet.key
+                ))
+
+            if caught_enemy and minefield.owner != NOBODY:
+                self.server_state.all_messages.append(Message(
+                    audience=minefield.owner,
+                    text=f"Enemy fleets have been caught in our "
+                         f"detonating {descriptor} minefield at "
+                         f"({int(minefield.position_x)}, "
+                         f"{int(minefield.position_y)})!",
+                    message_type="Minefield Detonation"
+                ))
+
+            if minefield.number_of_mines <= 10:
+                self.server_state.all_minefields.pop(minefield.key, None)
+
+    def _sweep_minefields(self):
+        """
+        Beam-armed fleets automatically sweep enemy minefields.
+
+        C# has no sweeping code (no .cs file mentions it); canonical
+        Stars! rules per project directive: fleets sweep only fields
+        of empires the SWEEPING player has declared Enemy, no order
+        needed, while inside of or orbiting within the field; mines
+        swept per year = sum over beam weapons of
+        (weapon power x range^2); gatling-type weapons sweep as if
+        range 16 (power x 256) regardless of actual range; torpedoes
+        and missiles sweep nothing. Runs near the end of the turn,
+        after battles and bombing, per the canonical order of events.
+        """
+        for fleet in list(self.server_state.iterate_all_fleets()):
+            if fleet.name == "Mineral Packet":
+                continue
+
+            empire = self.server_state.all_empires.get(fleet.owner)
+            if empire is None:
+                continue
+
+            capacity = 0
+            for token in fleet.tokens.values():
+                design = empire.designs.get(token.design_key)
+                if design is None:
+                    continue
+                # Mirror battle_engine.py stack setup: refresh stale
+                # aggregates; SimpleDesign has no _needs_update and its
+                # weapons list is static
+                if getattr(design, '_needs_update', False):
+                    design.update()
+                for weapon in design.weapons:
+                    if not weapon.is_beam:
+                        continue
+                    # Weapon.power is already multiplied by the slot's
+                    # component count (ship_design.py _sum_property)
+                    sweep_range = 16 if weapon.group == "gatlingGun" \
+                        else weapon.range
+                    capacity += (weapon.power * sweep_range * sweep_range
+                                 * token.quantity)
+
+            if capacity <= 0:
+                continue
+
+            for minefield in list(self.server_state.all_minefields.values()):
+                if minefield.owner == fleet.owner:
+                    continue
+                # Canonical Stars!: only fields of empires the SWEEPER
+                # has declared Enemy are swept (sweeper-side relation;
+                # sweeping is absent from the C# reference). Default
+                # relation is Enemy, so pre-relations behavior holds.
+                if empire.empire_reports.get(
+                        minefield.owner, {}).get("relation", "Enemy") \
+                        != "Enemy":
+                    continue
+                distance = math.hypot(
+                    fleet.position.x - minefield.position_x,
+                    fleet.position.y - minefield.position_y)
+                if distance > minefield.radius:
+                    continue
+
+                swept = min(minefield.number_of_mines, capacity)
+                if swept <= 0:
+                    continue
+                minefield.number_of_mines -= swept
+
+                descriptor = minefield.mine_descriptor
+                self.server_state.all_messages.append(Message(
+                    audience=fleet.owner,
+                    text=f"{fleet.name} has swept {swept} mines from "
+                         f"a {descriptor} minefield.",
+                    message_type="Minefield Swept", fleet_key=fleet.key
+                ))
+                if minefield.owner != NOBODY:
+                    self.server_state.all_messages.append(Message(
+                        audience=minefield.owner,
+                        text=f"An enemy fleet has swept {swept} mines "
+                             f"from our {descriptor} minefield at "
+                             f"({int(minefield.position_x)}, "
+                             f"{int(minefield.position_y)})!",
+                        message_type="Minefield Swept",
+                        fleet_key=fleet.key
+                    ))
+
+                if minefield.number_of_mines <= 10:
+                    self.server_state.all_minefields.pop(
+                        minefield.key, None)
 
     def _run_battle_engine(self):
         """Run standard battle engine."""
@@ -1012,41 +1334,35 @@ class TurnGenerator:
 
     def _victory_check(self):
         """
-        Check for victory conditions.
+        Check for a victor against the game's victory settings.
 
-        An empire wins by owning 60% of all stars, or by being the
-        last empire with any colonized planets.
+        Full port of ServerState/VictoryCheck.cs (see
+        backend/server/victory_check.py), invoked at the C# call site:
+        after battles and fleet cleanup, before the year increment
+        (TurnGenerator.cs:131-133).
         """
-        if getattr(self.server_state, 'victor', None):
+        if not self.server_state.all_stars:
             return
+        scores = Scores(self.server_state)
+        VictoryCheck(self.server_state, scores).victor()
 
-        total_stars = len(self.server_state.all_stars)
-        if total_stars == 0:
-            return
+    def _record_score_history(self):
+        """
+        Append this turn's ScoreRecord to each empire's score history.
 
-        active = [
-            e for e in self.server_state.all_empires.values()
-            if e.owned_stars
-        ]
-
-        winner = None
-        if len(active) == 1 and len(self.server_state.all_empires) > 1:
-            winner = active[0]
-        else:
-            for empire in active:
-                if len(empire.owned_stars) >= 0.6 * total_stars:
-                    winner = empire
-                    break
-
-        if winner is not None:
-            self.server_state.victor = winner.id
-            race_name = winner.race.name if winner.race else f"Empire {winner.id}"
-            self.server_state.all_messages.append(Message(
-                audience=0,
-                text=f"The {race_name} have achieved domination of the galaxy! "
-                     f"They control {len(winner.owned_stars)} of {total_stars} star systems.",
-                message_type="Victory"
-            ))
+        Snapshot timing mirrors IntelWriter.cs:79-89, which fills
+        Intel.AllScores at intel-writing time every generated turn
+        (never at game creation, when TurnYear == StartingYear). The
+        per-year history itself is a web extension (user directive,
+        wave 4); C# keeps only the current turn's records.
+        """
+        for record in Scores(self.server_state).get_scores():
+            empire = self.server_state.all_empires.get(record.empire_id)
+            if empire is None:
+                continue
+            empire.score_history.append(
+                {**record.to_dict(), "year": self.server_state.turn_year}
+            )
 
     def _move_mineral_packets(self):
         """Move mineral packets after they are created."""

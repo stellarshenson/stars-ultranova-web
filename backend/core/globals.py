@@ -43,6 +43,7 @@ POPULATION_FACTOR_ONLY_BASIC_REMOTE_MINING = 1.1
 # Combat
 MAX_WEAPON_RANGE = 7  # Doom/Armageddon on station
 MAX_DEFENSES = 100
+CAPACITOR_MAXIMUM = 250  # Capacitor.cs:41 - caps beam multiplier at x3.5
 
 # Environment
 GRAVITY_MINIMUM = 0.0
@@ -112,7 +113,21 @@ TACHYON_DETECTOR_FACTOR = 0.95   # 5% cloak-effectiveness cut per detector (cano
 NEBULA_SPEED_PENALTY = 0.4       # Max fractional speed loss in dense dust (density 1.0)
 NEBULA_MIN_SPEED_FACTOR = 0.6    # Speed never drops below this fraction
 NEBULA_SCAN_PENALTY = 0.5        # Max fractional scanner range loss in dense dust
-STORM_DAMAGE_PER_TURN = 20       # Armor damage percent per turn at intensity 1.0
+STORM_DAMAGE_PER_TURN = 20       # Armor damage percent per turn at LOCAL intensity 1.0
+
+# Galactic storm hazards and shape (user directive 2026-07-13). Storms
+# are irregular blobs with a radial intensity field: local intensity is
+# 0 at the blob boundary and rises smoothly to the storm's intensity at
+# the core; ALL storm effects scale with the local intensity at the
+# affected fleet's position.
+STORM_SAFE_WARP = 6              # Max warp with no storm mishap risk
+STORM_WARP_RISK_PER_WARP = 0.10  # Mishap chance per warp above safe, at local intensity 1.0
+STORM_MISHAP_RISK_CAP = 0.75     # Mishap chance never exceeds this
+STORM_MISHAP_DAMAGE = 25         # Extra damage percent per token on a mishap, at local intensity 1.0
+STORM_SCAN_PENALTY = 0.7         # Max fractional scanner range loss at a storm core (stronger than dust)
+STORM_COLONIST_DEATH = 0.10      # Fraction of carried colonists lost per turn at local intensity 1.0
+STORM_SHAPE_POINTS = 32          # Radial samples defining the storm blob perimeter
+STORM_SHAPE_AMPLITUDE = 0.35     # Max fractional radial deviation of the blob from its base radius
 
 # Beam rating multiplier table [battlespeed_index][range]
 # From direct observation of Stars! 2.70j using Hyper Expansion Race

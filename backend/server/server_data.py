@@ -6,10 +6,14 @@ Central game state container for server-side processing.
 Holds all persistent data across turn generation.
 """
 
+import math
+import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Iterator, TYPE_CHECKING
 
-from ..core.globals import STARTING_YEAR, NOBODY
+from ..core.globals import (
+    STARTING_YEAR, NOBODY, STORM_SHAPE_POINTS, STORM_SHAPE_AMPLITUDE
+)
 
 if TYPE_CHECKING:
     from ..core.data_structures import EmpireData
@@ -32,6 +36,88 @@ class PlayerSettings:
 
 
 @dataclass
+class EnabledValue:
+    """
+    Checkbox-plus-number pair used by the victory condition targets.
+
+    Ported from Common/DataStructures/EnabledValue.cs:43-47
+    (IsChecked / NumericValue).
+    """
+    enabled: bool = False
+    value: int = 0
+
+    def to_dict(self) -> dict:
+        return {"enabled": self.enabled, "value": self.value}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'EnabledValue':
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            value=int(data.get("value", 0))
+        )
+
+
+@dataclass
+class VictorySettings:
+    """
+    Victory condition settings for a game.
+
+    Ported from the victory-conditions block of GameSettings
+    (Common/Files/GameSettings.cs:49-58, the compiled copy;
+    Common/DataStructures/GameSettings.cs:62-71 is a stale duplicate
+    with identical defaults). Eight EnabledValue targets
+    (number_of_fields is a sub-option of tech_levels) plus two ints.
+    """
+    planets_owned: EnabledValue = field(
+        default_factory=lambda: EnabledValue(True, 60))
+    tech_levels: EnabledValue = field(
+        default_factory=lambda: EnabledValue(False, 22))
+    number_of_fields: EnabledValue = field(
+        default_factory=lambda: EnabledValue(False, 4))
+    total_score: EnabledValue = field(
+        default_factory=lambda: EnabledValue(False, 1000))
+    second_place_score: EnabledValue = field(
+        default_factory=lambda: EnabledValue(False, 0))
+    production_capacity: EnabledValue = field(
+        default_factory=lambda: EnabledValue(False, 1000))
+    capital_ships: EnabledValue = field(
+        default_factory=lambda: EnabledValue(False, 100))
+    highest_score: EnabledValue = field(
+        default_factory=lambda: EnabledValue(False, 100))
+    targets_to_meet: int = 1
+    minimum_game_time: int = 50
+
+    _TARGET_FIELDS = (
+        "planets_owned", "tech_levels", "number_of_fields",
+        "total_score", "second_place_score", "production_capacity",
+        "capital_ships", "highest_score"
+    )
+
+    def to_dict(self) -> dict:
+        result = {
+            name: getattr(self, name).to_dict()
+            for name in self._TARGET_FIELDS
+        }
+        result["targets_to_meet"] = self.targets_to_meet
+        result["minimum_game_time"] = self.minimum_game_time
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'VictorySettings':
+        """Build from a (possibly partial) dict; missing keys keep
+        the C# defaults."""
+        settings = cls()
+        for name in cls._TARGET_FIELDS:
+            if name in data:
+                setattr(settings, name, EnabledValue.from_dict(data[name]))
+        if "targets_to_meet" in data:
+            settings.targets_to_meet = int(data["targets_to_meet"])
+        if "minimum_game_time" in data:
+            settings.minimum_game_time = int(data["minimum_game_time"])
+        return settings
+
+
+@dataclass
 class Minefield:
     """
     Minefield data structure.
@@ -44,6 +130,11 @@ class Minefield:
     position_y: float = 0.0
     number_of_mines: int = 0
     mine_type: int = 0  # 0=standard, 1=heavy, 2=speed bump
+    # SD remote detonation toggle. C# has no detonation code - the SD
+    # trait text is PrimaryTraits.cs:58; canonical Stars! rule: while
+    # set, a standard field detonates each year (see TurnGenerator
+    # _detonate_minefields).
+    detonate: bool = False
 
     @property
     def radius(self) -> float:
@@ -129,24 +220,87 @@ class GalacticStorm:
     """
     A roaming galactic storm (web extension - not in original Stars!).
 
-    Storms drift across the universe each turn and damage ships
-    caught inside their radius.
+    Storms drift across the universe each turn. The perimeter is an
+    irregular blob r(theta) = radius * (1 + amp * low-order sine
+    harmonics), sampled at STORM_SHAPE_POINTS angles; the intensity is
+    a radial field ramping from 0 at the blob boundary to the storm's
+    intensity at the core (user directive 2026-07-13). Every gameplay
+    effect scales with the LOCAL intensity at the affected position.
     """
     key: int = 0
     x: float = 0.0
     y: float = 0.0
-    radius: float = 40.0
+    radius: float = 40.0      # base radius the blob deviates around
     velocity_x: float = 0.0   # ly per turn
     velocity_y: float = 0.0
-    intensity: float = 0.5    # 0.0 to 1.0, scales damage
+    intensity: float = 0.5    # 0.0 to 1.0, peak intensity at the core
+    # Blob boundary radii sampled at STORM_SHAPE_POINTS equal angles
+    # starting at theta=0; empty means a plain circle of `radius`
+    shape_radii: List[float] = field(default_factory=list)
+
+    def generate_shape(self, rng: random.Random) -> None:
+        """
+        Sample the irregular blob perimeter from an RNG.
+
+        r(theta) = radius * (1 + STORM_SHAPE_AMPLITUDE * mean of 2-4
+        low-order sine harmonics with per-storm random phases),
+        sampled at STORM_SHAPE_POINTS angles. Deterministic for a
+        given RNG state (galaxy generation seeds it from the game
+        seed; legacy loads from the storm key and radius).
+        """
+        harmonics = rng.randint(2, 4)
+        phases = [rng.random() * 2 * math.pi for _ in range(harmonics)]
+        self.shape_radii = []
+        for i in range(STORM_SHAPE_POINTS):
+            theta = 2 * math.pi * i / STORM_SHAPE_POINTS
+            wave = sum(math.sin((k + 1) * theta + phases[k])
+                       for k in range(harmonics)) / harmonics
+            self.shape_radii.append(
+                self.radius * (1.0 + STORM_SHAPE_AMPLITUDE * wave))
+
+    def boundary_radius(self, theta: float) -> float:
+        """Blob boundary radius along a bearing, linearly interpolating
+        the sampled perimeter; circular fallback when no shape is
+        set."""
+        if not self.shape_radii:
+            return self.radius
+        n = len(self.shape_radii)
+        t = (theta % (2 * math.pi)) / (2 * math.pi) * n
+        i = int(t) % n
+        frac = t - int(t)
+        return (self.shape_radii[i] * (1.0 - frac)
+                + self.shape_radii[(i + 1) % n] * frac)
 
     def contains(self, px: float, py: float) -> bool:
-        """Check whether a position lies inside the storm."""
-        import math
-        return math.hypot(px - self.x, py - self.y) <= self.radius
+        """Check whether a position lies inside the storm blob."""
+        dx, dy = px - self.x, py - self.y
+        return math.hypot(dx, dy) <= self.boundary_radius(
+            math.atan2(dy, dx))
+
+    def get_intensity_at(self, px: float, py: float) -> float:
+        """
+        Local storm intensity at a position.
+
+        The radial distance from the core is normalized by the blob
+        boundary radius along that bearing (0 at core, 1 at boundary,
+        >1 outside -> 0) and eased with a smoothstep ramp, so the
+        intensity rises from 0 at the boundary to the storm's full
+        intensity at the core (user directive 2026-07-13).
+        """
+        dx, dy = px - self.x, py - self.y
+        boundary = self.boundary_radius(math.atan2(dy, dx))
+        if boundary <= 0:
+            return 0.0
+        d = math.hypot(dx, dy) / boundary
+        if d >= 1.0:
+            return 0.0
+        ease = 1.0 - d
+        ramp = ease * ease * (3.0 - 2.0 * ease)  # smoothstep
+        return self.intensity * ramp
 
     def drift(self, universe_width: int, universe_height: int) -> None:
-        """Move the storm one turn, bouncing off universe edges."""
+        """Move the storm one turn, bouncing off universe edges. The
+        blob polygon rides along with the center."""
         self.x += self.velocity_x
         self.y += self.velocity_y
         if self.x < 0 or self.x > universe_width:
@@ -162,11 +316,12 @@ class GalacticStorm:
             'radius': self.radius,
             'velocity_x': self.velocity_x, 'velocity_y': self.velocity_y,
             'intensity': self.intensity,
+            'shape_radii': list(self.shape_radii),
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> 'GalacticStorm':
-        return cls(
+        storm = cls(
             key=data.get('key', 0),
             x=data.get('x', 0.0), y=data.get('y', 0.0),
             radius=data.get('radius', 40.0),
@@ -174,6 +329,15 @@ class GalacticStorm:
             velocity_y=data.get('velocity_y', 0.0),
             intensity=data.get('intensity', 0.5),
         )
+        radii = data.get('shape_radii')
+        if radii:
+            storm.shape_radii = [float(r) for r in radii]
+        else:
+            # Legacy save without a shape: regenerate one
+            # deterministically from the stored key and radius
+            storm.generate_shape(
+                random.Random(storm.key * 1000003 + int(storm.radius)))
+        return storm
 
 
 @dataclass
@@ -422,6 +586,15 @@ class ServerData:
     game_in_progress: bool = False
     use_ron_battle_engine: bool = True
 
+    # Victory condition settings (GameSettings.cs:49-58)
+    victory_settings: VictorySettings = field(default_factory=VictorySettings)
+
+    # Winning empire id once victory has been declared (None = no
+    # victor yet). Persisted so a declared victory survives a server
+    # restart; the game stays playable (VictoryCheck.cs "doesn't mean
+    # the end of a game")
+    victor: Optional[int] = None
+
     # Current turn year
     turn_year: int = STARTING_YEAR
 
@@ -600,6 +773,8 @@ class ServerData:
         self.game_folder = None
         self.game_in_progress = False
         self.use_ron_battle_engine = True
+        self.victory_settings = VictorySettings()
+        self.victor = None
         self.turn_year = STARTING_YEAR
         self.state_path_name = None
         self._star_position_cache = None
@@ -609,6 +784,8 @@ class ServerData:
         return {
             "game_in_progress": self.game_in_progress,
             "use_ron_battle_engine": self.use_ron_battle_engine,
+            "victory_settings": self.victory_settings.to_dict(),
+            "victor": self.victor,
             "turn_year": self.turn_year,
             "game_seed": self.game_seed,
             "game_folder": self.game_folder,
@@ -629,7 +806,8 @@ class ServerData:
                     "position_x": v.position_x,
                     "position_y": v.position_y,
                     "number_of_mines": v.number_of_mines,
-                    "mine_type": v.mine_type
+                    "mine_type": v.mine_type,
+                    "detonate": v.detonate
                 }
                 for k, v in self.all_minefields.items()
             },
@@ -647,6 +825,9 @@ class ServerData:
         server = cls(
             game_in_progress=data.get("game_in_progress", False),
             use_ron_battle_engine=data.get("use_ron_battle_engine", True),
+            victory_settings=VictorySettings.from_dict(
+                data.get("victory_settings", {})),
+            victor=data.get("victor"),
             turn_year=data.get("turn_year", STARTING_YEAR),
             game_seed=data.get("game_seed"),
             game_folder=data.get("game_folder"),
@@ -669,7 +850,8 @@ class ServerData:
                 position_x=v.get("position_x", 0.0),
                 position_y=v.get("position_y", 0.0),
                 number_of_mines=v.get("number_of_mines", 0),
-                mine_type=v.get("mine_type", 0)
+                mine_type=v.get("mine_type", 0),
+                detonate=v.get("detonate", False)
             )
 
         for k, v in data.get("all_storms", {}).items():

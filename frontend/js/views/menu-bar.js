@@ -61,6 +61,9 @@ const MenuBar = {
                 { type: 'separator' },
                 { id: 'transfer-cargo', label: 'Transfer Cargo...', action: 'transferCargo' },
                 { type: 'separator' },
+                { id: 'player-relations', label: 'Player Relations...', shortcut: 'F7', action: 'playerRelations' },
+                { id: 'battle-plans', label: 'Battle Plans...', action: 'battlePlans' },
+                { type: 'separator' },
                 { id: 'design-ship', label: 'Design Ship...', shortcut: 'F4', action: 'designShip' },
                 { type: 'separator' },
                 { id: 'research', label: 'Research...', action: 'research' },
@@ -84,6 +87,7 @@ const MenuBar = {
             label: 'Help',
             items: [
                 { id: 'game-manual', label: 'Game Manual', shortcut: 'F1', action: 'gameManual' },
+                { id: 'encyclopedia', label: 'Encyclopedia', action: 'encyclopedia' },
                 { id: 'keyboard-shortcuts', label: 'Keyboard Shortcuts', action: 'keyboardShortcuts' },
                 { type: 'separator' },
                 { id: 'about', label: 'About Stars Nova', action: 'about' }
@@ -241,6 +245,9 @@ const MenuBar = {
             } else if (e.key === 'F4') {
                 e.preventDefault();
                 this.executeAction('designShip');
+            } else if (e.key === 'F7') {
+                e.preventDefault();
+                this.executeAction('playerRelations');
             } else if (e.key === 'F9') {
                 e.preventDefault();
                 this.executeAction('generateTurn');
@@ -427,14 +434,13 @@ const MenuBar = {
                 break;
             case 'zoomIn':
                 if (window.GalaxyMap) {
-                    GalaxyMap.zoom *= 1.2;
-                    GalaxyMap.render();
+                    GalaxyMap.setZoom(GalaxyMap.zoom * 1.2);
                 }
                 break;
             case 'zoomOut':
+                // setZoom clamps to the best-fit zoom-out limit
                 if (window.GalaxyMap) {
-                    GalaxyMap.zoom *= 0.8;
-                    GalaxyMap.render();
+                    GalaxyMap.setZoom(GalaxyMap.zoom * 0.8);
                 }
                 break;
             case 'zoomFit':
@@ -489,6 +495,14 @@ const MenuBar = {
             case 'research':
                 this.showResearchDialog();
                 break;
+            case 'playerRelations':
+                this.showPlayerRelationsDialog();
+                break;
+            case 'battlePlans':
+                // C# parity: Commands menu opens the BattlePlans
+                // dialog (NovaGUI.cs:228-231)
+                if (window.Dialogs) Dialogs.showBattlePlans();
+                break;
             case 'production':
                 if (window.StarPanel && GameState.selectedStar &&
                         GameState.selectedStar.intel === 'owned') {
@@ -530,6 +544,11 @@ const MenuBar = {
             case 'gameManual':
                 // Open game manual
                 this.showHelp();
+                break;
+            case 'encyclopedia':
+                if (window.Encyclopedia) {
+                    Encyclopedia.open();
+                }
                 break;
             case 'keyboardShortcuts':
                 this.showKeyboardShortcuts();
@@ -679,6 +698,97 @@ const MenuBar = {
     },
 
     /**
+     * Player Relations dialog - per-opponent Enemy/Neutral/Friend.
+     * Web port of the WinForms dialog (PlayerRelations.cs): empire
+     * list on the left, "Relation" radio group on the right; a radio
+     * change applies immediately, mirroring RelationChanged
+     * (PlayerRelations.cs:104-120). The C# display bug at
+     * PlayerRelations.cs:89 (Neutral shown as Friend) is not ported.
+     */
+    showPlayerRelationsDialog() {
+        const relations = GameState.relations || [];
+        if (relations.length === 0) {
+            ApiClient.showStatus('No other empires known', 'error');
+            return;
+        }
+
+        const listHtml = relations.map((r, i) =>
+            `<option value="${i}">${r.race_name || 'Empire ' + r.id}</option>`
+        ).join('');
+
+        const html = `
+            <div class="dialog-header">
+                <h2>Player Relations</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+            <div class="dialog-body">
+                <div style="display: flex; gap: 16px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label for="relations-empire-list">Empires</label>
+                        <select id="relations-empire-list" class="form-select"
+                                size="${Math.min(Math.max(relations.length, 4), 12)}">
+                            ${listHtml}
+                        </select>
+                    </div>
+                    <fieldset style="flex: 1;">
+                        <legend>Relation</legend>
+                        <div class="form-group">
+                            <label><input type="radio" name="relation-choice" value="Enemy"> Enemy</label>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="radio" name="relation-choice" value="Neutral"> Neutral</label>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="radio" name="relation-choice" value="Friend"> Friend</label>
+                        </div>
+                    </fieldset>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn-primary" onclick="Dialogs.close()">Done</button>
+            </div>
+        `;
+
+        Dialogs.show(html);
+
+        const list = document.getElementById('relations-empire-list');
+        if (list) list.value = '0';
+        const radios = document.querySelectorAll('input[name="relation-choice"]');
+
+        // Show the selected empire's CURRENT relation (fixes the C#
+        // display bug where Neutral rendered as Friend)
+        const syncRadios = () => {
+            const entry = relations[parseInt(list.value)];
+            radios.forEach(radio => {
+                radio.checked = radio.value === (entry ? entry.relation : 'Enemy');
+            });
+        };
+        syncRadios();
+
+        list?.addEventListener('change', syncRadios);
+        radios.forEach(radio => {
+            radio.addEventListener('change', async () => {
+                const entry = relations[parseInt(list.value)];
+                if (!entry || !radio.checked) return;
+                try {
+                    await GameState.submitCommand('relation', {
+                        target_empire_id: entry.id,
+                        relation: radio.value
+                    });
+                    entry.relation = radio.value;
+                    await GameState.refreshState();
+                    ApiClient.showStatus(
+                        `${entry.race_name || 'Empire ' + entry.id}: ${radio.value}`, 'info'
+                    );
+                } catch (error) {
+                    ApiClient.showStatus('Failed to set relation: ' + error.message, 'error');
+                    syncRadios();
+                }
+            });
+        });
+    },
+
+    /**
      * Show help/manual.
      */
     showHelp() {
@@ -709,6 +819,7 @@ const MenuBar = {
                 'Game:\n' +
                 '  F3 - Planet report\n' +
                 '  F4 - Ship designer\n' +
+                '  F7 - Player relations\n' +
                 '  F9 - Generate turn\n' +
                 '  Ctrl+N - New game\n' +
                 '  Ctrl+O - Open game\n' +
@@ -726,6 +837,9 @@ const MenuBar = {
         if (window.Dialogs) {
             Dialogs.showMessage('About Stars Nova',
                 'Stars Nova Web v0.1.0\n\n' +
+                'For my beloved son Henry,\n' +
+                'alienated from his father for so long...\n\n' +
+                'with thanks to my beloved wife Ewa\n\n' +
                 'A web-based port of Stars! Nova,\n' +
                 'the open-source clone of Stars!\n\n' +
                 'Original Stars! by Jeff Johnson and Jeff McBride (1995)\n' +

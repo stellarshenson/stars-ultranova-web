@@ -29,6 +29,10 @@ const GalaxyMap = {
     hoverStar: null,
     hoverFleet: null,
 
+    // Phenomena tooltip (storms, wormholes, minefields, dust)
+    tooltip: null,
+    tooltipTarget: null,
+
     // Visual settings
     starRadius: 6,
     fleetRadius: 4,
@@ -88,6 +92,9 @@ const GalaxyMap = {
         if (window.NebulaSVG) {
             NebulaSVG.init('nebula-layer');
         }
+
+        // Phenomena hover tooltip
+        this.initTooltip();
 
         // Bind events
         this.bindEvents();
@@ -172,6 +179,8 @@ const GalaxyMap = {
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
+        this.hideTooltip();
+
         if (e.button === 0) {  // Left click
             const worldPos = this.screenToWorld(x, y);
 
@@ -248,8 +257,16 @@ const GalaxyMap = {
                     this.hoverFleet = hovered.object;
                     this.canvas.style.cursor = 'pointer';
                 }
+                this.hideTooltip();
             } else {
                 this.canvas.style.cursor = 'grab';
+                // Phenomena tooltip (storm, wormhole, minefield, dust)
+                const phenomenon = this.findPhenomenonAt(worldPos.x, worldPos.y);
+                if (phenomenon) {
+                    this.showTooltip(phenomenon, e.clientX, e.clientY);
+                } else {
+                    this.hideTooltip();
+                }
             }
 
             // Re-render if hover changed
@@ -281,6 +298,12 @@ const GalaxyMap = {
         this.hoverStar = null;
         this.hoverFleet = null;
         this.canvas.style.cursor = 'grab';
+        // Keep the tooltip while the cursor moves onto it, so its
+        // Encyclopedia link stays clickable
+        if (!(e && e.relatedTarget && this.tooltip
+                && this.tooltip.contains(e.relatedTarget))) {
+            this.hideTooltip();
+        }
         this.render();
     },
 
@@ -289,6 +312,8 @@ const GalaxyMap = {
      */
     onWheel(e) {
         e.preventDefault();
+
+        this.hideTooltip();
 
         const rect = this.canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
@@ -299,7 +324,7 @@ const GalaxyMap = {
 
         // Adjust zoom
         const zoomDelta = e.deltaY > 0 ? 0.9 : 1.1;
-        this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom * zoomDelta));
+        this.zoom = Math.max(this.minAllowedZoom(), Math.min(this.maxZoom, this.zoom * zoomDelta));
 
         // Get world position under mouse after zoom
         const worldAfter = this.screenToWorld(mouseX, mouseY);
@@ -387,7 +412,7 @@ const GalaxyMap = {
                 this.render();
                 break;
             case '-':
-                this.zoom = Math.max(this.minZoom, this.zoom / 1.2);
+                this.zoom = Math.max(this.minAllowedZoom(), this.zoom / 1.2);
                 this.render();
                 break;
             case 'Home':
@@ -480,6 +505,9 @@ const GalaxyMap = {
             const seed = GameState.game ? (GameState.game.id.charCodeAt(0) || 1) : Date.now();
             NebulaSVG.generate(GameState.stars, size, size, seed);
         }
+
+        // Start within the zoom-out clamp for this board
+        this.zoom = Math.max(this.zoom, this.minAllowedZoom());
 
         this.centerOnHomeworld();
     },
@@ -599,14 +627,19 @@ const GalaxyMap = {
             if (radius < 2) continue;
 
             const own = field.owner === GameState.empireId;
-            const color = own ? '0, 255, 0' : '255, 60, 60';
+            const detonating = own && field.detonate;
+            const color = detonating ? '255, 150, 40'
+                : (own ? '0, 255, 0' : '255, 60, 60');
+            // Detonating fields pulse like storms
+            const pulse = detonating
+                ? 0.75 + 0.25 * Math.sin(Date.now() / 400) : 1;
 
             ctx.save();
             ctx.beginPath();
             ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(${color}, 0.07)`;
+            ctx.fillStyle = `rgba(${color}, ${0.07 * pulse})`;
             ctx.fill();
-            ctx.strokeStyle = `rgba(${color}, 0.45)`;
+            ctx.strokeStyle = `rgba(${color}, ${0.45 * pulse})`;
             ctx.setLineDash([4, 4]);
             ctx.lineWidth = 1;
             ctx.stroke();
@@ -616,14 +649,19 @@ const GalaxyMap = {
                 ctx.fillStyle = `rgba(${color}, 0.7)`;
                 ctx.font = '9px monospace';
                 ctx.textAlign = 'center';
-                ctx.fillText(`${field.mine_descriptor || ''} mines`, sx, sy);
+                const label = `${field.mine_descriptor || ''} mines`
+                    + (detonating ? ' DETONATING' : '');
+                ctx.fillText(label, sx, sy);
             }
             ctx.restore();
         }
     },
 
     /**
-     * Render galactic storms as pulsing hazard swirls.
+     * Render galactic storms as pulsing irregular blobs: a dashed red
+     * boundary along the server-sampled perimeter polygon, filled
+     * with a radial gradient whose alpha follows the intensity ramp
+     * (strongest at the core, zero at the boundary).
      */
     renderStorms() {
         const storms = GameState.storms || [];
@@ -636,22 +674,42 @@ const GalaxyMap = {
             const radius = storm.radius * this.zoom;
             if (radius < 2) continue;
 
-            ctx.save();
-            const grad = ctx.createRadialGradient(sx, sy, radius * 0.1, sx, sy, radius);
-            grad.addColorStop(0, `rgba(255, 120, 40, ${0.30 * pulse})`);
-            grad.addColorStop(0.7, `rgba(200, 60, 160, ${0.16 * pulse})`);
-            grad.addColorStop(1, 'rgba(120, 40, 160, 0)');
-            ctx.beginPath();
-            ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-            ctx.fillStyle = grad;
-            ctx.fill();
+            // Blob perimeter polygon from the server-sampled radii
+            // (circular fallback for storms without a shape)
+            let radii = storm.shape_radii;
+            if (!radii || !radii.length) radii = new Array(32).fill(storm.radius);
+            const n = radii.length;
+            let maxR = 0;
+            const blob = new Path2D();
+            for (let i = 0; i < n; i++) {
+                const theta = (i / n) * Math.PI * 2;
+                const r = radii[i] * this.zoom;
+                if (r > maxR) maxR = r;
+                const px = sx + Math.cos(theta) * r;
+                const py = sy + Math.sin(theta) * r;
+                if (i === 0) blob.moveTo(px, py);
+                else blob.lineTo(px, py);
+            }
+            blob.closePath();
 
-            ctx.strokeStyle = `rgba(255, 140, 60, ${0.5 * pulse})`;
+            ctx.save();
+            // Interior gradient alpha approximates the smoothstep
+            // intensity ramp: full at the core, zero at the boundary,
+            // scaled by the storm's peak intensity
+            const peak = storm.intensity;
+            const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, maxR);
+            grad.addColorStop(0, `rgba(255, 120, 40, ${0.45 * peak * pulse})`);
+            grad.addColorStop(0.5, `rgba(220, 70, 120, ${0.23 * peak * pulse})`);
+            grad.addColorStop(0.8, `rgba(160, 50, 140, ${0.05 * peak * pulse})`);
+            grad.addColorStop(1, 'rgba(120, 40, 160, 0)');
+            ctx.fillStyle = grad;
+            ctx.fill(blob);
+
+            // Dashed red boundary along the blob perimeter
+            ctx.strokeStyle = `rgba(255, 60, 60, ${0.6 * pulse})`;
             ctx.setLineDash([6, 6]);
             ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.stroke(blob);
             ctx.setLineDash([]);
 
             if (this.zoom >= 0.4) {
@@ -1280,7 +1338,7 @@ const GalaxyMap = {
      * Set zoom level.
      */
     setZoom(level) {
-        this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, level));
+        this.zoom = Math.max(this.minAllowedZoom(), Math.min(this.maxZoom, level));
         this.render();
     },
 
@@ -1309,46 +1367,256 @@ const GalaxyMap = {
     },
 
     /**
-     * Zoom to fit all stars in view.
+     * Game board bounds (all stars plus padding), or null when no
+     * stars are loaded.
      */
-    zoomToFit() {
+    boardBounds() {
         const stars = GameState.stars || [];
-        if (stars.length === 0) return;
+        if (stars.length === 0) return null;
 
-        // Find bounds
         let minX = Infinity, maxX = -Infinity;
         let minY = Infinity, maxY = -Infinity;
 
         for (const star of stars) {
-            minX = Math.min(minX, star.x);
-            maxX = Math.max(maxX, star.x);
-            minY = Math.min(minY, star.y);
-            maxY = Math.max(maxY, star.y);
+            minX = Math.min(minX, star.position_x);
+            maxX = Math.max(maxX, star.position_x);
+            minY = Math.min(minY, star.position_y);
+            maxY = Math.max(maxY, star.position_y);
         }
 
-        // Add padding
         const padding = 50;
-        minX -= padding;
-        maxX += padding;
-        minY -= padding;
-        maxY += padding;
+        return {
+            minX: minX - padding, maxX: maxX + padding,
+            minY: minY - padding, maxY: maxY + padding
+        };
+    },
 
-        // Calculate zoom to fit
-        const worldWidth = maxX - minX;
-        const worldHeight = maxY - minY;
-        const screenWidth = this.canvas.width;
-        const screenHeight = this.canvas.height;
+    /**
+     * Best-fit zoom for the whole game board, or null when no stars
+     * are loaded.
+     */
+    computeFitZoom() {
+        const bounds = this.boardBounds();
+        if (!bounds) return null;
 
-        const zoomX = screenWidth / worldWidth;
-        const zoomY = screenHeight / worldHeight;
-        this.zoom = Math.min(zoomX, zoomY, this.maxZoom);
-        this.zoom = Math.max(this.zoom, this.minZoom);
+        const zoomX = this.canvas.width / (bounds.maxX - bounds.minX);
+        const zoomY = this.canvas.height / (bounds.maxY - bounds.minY);
+        return Math.min(zoomX, zoomY, this.maxZoom);
+    },
+
+    /**
+     * Minimum allowed zoom: ~20% wider than the board best fit
+     * (fitZoom / 1.2, user directive 2026-07-13). Falls back to the
+     * static minZoom when no game is loaded.
+     */
+    minAllowedZoom() {
+        const fit = this.computeFitZoom();
+        return fit ? fit / 1.2 : this.minZoom;
+    },
+
+    /**
+     * Zoom to fit all stars in view.
+     */
+    zoomToFit() {
+        const bounds = this.boardBounds();
+        if (!bounds) return;
+
+        this.zoom = Math.max(this.computeFitZoom(), this.minZoom);
 
         // Center on midpoint
-        this.viewX = (minX + maxX) / 2;
-        this.viewY = (minY + maxY) / 2;
+        this.viewX = (bounds.minX + bounds.maxX) / 2;
+        this.viewY = (bounds.minY + bounds.maxY) / 2;
 
         this.render();
+    },
+
+    // =========================================================================
+    // Phenomena tooltip
+    // =========================================================================
+
+    /**
+     * Create the phenomena tooltip element (hidden until a phenomenon
+     * is hovered on the map).
+     */
+    initTooltip() {
+        this.tooltip = document.getElementById('map-tooltip');
+        if (!this.tooltip) {
+            this.tooltip = document.createElement('div');
+            this.tooltip.id = 'map-tooltip';
+            this.tooltip.className = 'map-tooltip hidden';
+            document.body.appendChild(this.tooltip);
+        }
+        this.tooltip.addEventListener('mouseleave', () => this.hideTooltip());
+    },
+
+    /**
+     * Show the tooltip for a phenomenon. The position freezes while
+     * the same phenomenon stays hovered so the Encyclopedia link can
+     * be reached with the cursor.
+     */
+    showTooltip(phenomenon, clientX, clientY) {
+        if (!this.tooltip) return;
+        if (this.tooltipTarget === phenomenon.id) return;
+
+        this.tooltipTarget = phenomenon.id;
+        this.tooltip.innerHTML = `
+            <div class="map-tooltip-title">${phenomenon.title}</div>
+            <div class="map-tooltip-summary">${phenomenon.summary}</div>
+            <a class="map-tooltip-link" href="#">Encyclopedia</a>
+        `;
+        this.tooltip.querySelector('.map-tooltip-link')
+            .addEventListener('click', (ev) => {
+                ev.preventDefault();
+                this.hideTooltip();
+                if (window.Encyclopedia) {
+                    Encyclopedia.open(phenomenon.entryId);
+                }
+            });
+        this.tooltip.style.left = `${clientX + 14}px`;
+        this.tooltip.style.top = `${clientY + 14}px`;
+        this.tooltip.classList.remove('hidden');
+    },
+
+    /**
+     * Hide the phenomena tooltip.
+     */
+    hideTooltip() {
+        if (!this.tooltip) return;
+        this.tooltip.classList.add('hidden');
+        this.tooltipTarget = null;
+    },
+
+    /**
+     * Local storm intensity at a world position - port of
+     * GalacticStorm.boundary_radius/get_intensity_at
+     * (backend/server/server_data.py:179-217): distance normalized by
+     * the interpolated blob boundary radius along the bearing, eased
+     * with a smoothstep ramp.
+     */
+    stormIntensityAt(storm, x, y) {
+        const dx = x - storm.x;
+        const dy = y - storm.y;
+
+        let boundary = storm.radius;
+        const radii = storm.shape_radii;
+        if (radii && radii.length) {
+            const n = radii.length;
+            const tau = Math.PI * 2;
+            const theta = ((Math.atan2(dy, dx) % tau) + tau) % tau;
+            const t = theta / tau * n;
+            const i = Math.floor(t) % n;
+            const frac = t - Math.floor(t);
+            boundary = radii[i] * (1 - frac) + radii[(i + 1) % n] * frac;
+        }
+        if (boundary <= 0) return 0;
+
+        const d = Math.hypot(dx, dy) / boundary;
+        if (d >= 1) return 0;
+        const ease = 1 - d;
+        return storm.intensity * ease * ease * (3 - 2 * ease);  // smoothstep
+    },
+
+    /**
+     * Dust density at a world position from the client's nebula field
+     * data - region analogue of NebulaField._build_grid
+     * (backend/server/server_data.py:367-417): gaussian falloff per
+     * dark region, additive, clamped to 1.
+     */
+    dustDensityAt(x, y) {
+        const regions = GameState.nebulae?.regions;
+        if (!regions) return 0;
+
+        let density = 0;
+        for (const region of regions) {
+            if (region.nebula_type !== 'dark') continue;
+            if (!(region.radius_x > 0 && region.radius_y > 0)) continue;
+
+            const cosR = Math.cos(-(region.rotation || 0));
+            const sinR = Math.sin(-(region.rotation || 0));
+            const dx = x - region.x;
+            const dy = y - region.y;
+            const localX = dx * cosR - dy * sinR;
+            const localY = dx * sinR + dy * cosR;
+
+            const normDist = Math.sqrt(
+                (localX / region.radius_x) ** 2 +
+                (localY / region.radius_y) ** 2
+            );
+            if (normDist < 2.0) {
+                density = Math.min(
+                    1, density + region.density * Math.exp(-normDist * normDist)
+                );
+            }
+        }
+        return density;
+    },
+
+    /**
+     * Hit-test spatial phenomena at a world position for the hover
+     * tooltip. Checked most-specific first: storms, wormhole
+     * endpoints, minefields, then the (large) dust nebula regions.
+     * Numbers in the summaries mirror backend/core/globals.py and
+     * turn_generator.py MINE_STATS.
+     */
+    findPhenomenonAt(worldX, worldY) {
+        for (const storm of GameState.storms || []) {
+            const local = this.stormIntensityAt(storm, worldX, worldY);
+            if (local > 0) {
+                return {
+                    id: `storm-${storm.key}`,
+                    entryId: 'storms',
+                    title: 'Galactic Storm',
+                    summary: `Local intensity ${Math.round(local * 100)}% - `
+                        + 'hull damage, warp mishaps above warp 6, '
+                        + 'scanner loss, colonist attrition'
+                };
+            }
+        }
+
+        for (const w of GameState.wormholes || []) {
+            const ends = [[w.x1, w.y1, 'A'], [w.x2, w.y2, 'B']];
+            for (const [ex, ey, end] of ends) {
+                const catchRadius = Math.max(8, 10 / this.zoom);
+                if (Math.hypot(worldX - ex, worldY - ey) <= catchRadius) {
+                    return {
+                        id: `wormhole-${w.key}-${end}`,
+                        entryId: 'wormholes',
+                        title: `${w.name} (${end})`,
+                        summary: 'Instant fuel-free transit to the far end; '
+                            + 'endpoints drift each year'
+                    };
+                }
+            }
+        }
+
+        const mineSafeWarp = { 0: 4, 1: 6, 2: 5 };
+        for (const field of GameState.minefields || []) {
+            if (Math.hypot(worldX - field.x, worldY - field.y)
+                    <= field.radius) {
+                const safe = mineSafeWarp[field.mine_type] || 4;
+                return {
+                    id: `minefield-${field.key}`,
+                    entryId: 'minefields',
+                    title: `${field.mine_descriptor || 'Standard'} Minefield`,
+                    summary: `Safe at warp ${safe} or below; faster fleets `
+                        + 'risk a strike that stops them dead'
+                };
+            }
+        }
+
+        const dust = this.dustDensityAt(worldX, worldY);
+        if (dust >= 0.05) {
+            return {
+                id: 'dust-nebula',
+                entryId: 'dust-nebulae',
+                title: 'Dust Nebula',
+                summary: `Dust density ${Math.round(dust * 100)}% - ships `
+                    + `slowed ${Math.round(40 * dust)}%, scanners dampened `
+                    + `${Math.round(50 * dust)}%`
+            };
+        }
+
+        return null;
     }
 };
 

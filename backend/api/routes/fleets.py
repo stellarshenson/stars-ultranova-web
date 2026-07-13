@@ -100,6 +100,24 @@ async def rename_fleet(game_id: str, fleet_key: int, rename: FleetRename) -> dic
     return result
 
 
+class FleetBattlePlan(BaseModel):
+    """Request model for fleet battle plan assignment."""
+    empire_id: int
+    plan: str
+
+
+@router.post("/{fleet_key}/battle-plan")
+async def set_fleet_battle_plan(game_id: str, fleet_key: int,
+                                assignment: FleetBattlePlan) -> dict:
+    """Assign a named battle plan to an owned fleet (Fleet.cs:60)."""
+    manager = get_game_manager()
+    result = manager.set_fleet_battle_plan(
+        game_id, assignment.empire_id, fleet_key, assignment.plan)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 class FleetSplit(BaseModel):
     """Request model for fleet split."""
     empire_id: int

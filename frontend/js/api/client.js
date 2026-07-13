@@ -115,7 +115,7 @@ const ApiClient = {
     },
 
     // Games
-    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null, race = null, acceleratedStart = false) {
+    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null, race = null, acceleratedStart = false, victory = null) {
         return this.request('POST', '/games/', {
             name,
             player_count: playerCount,
@@ -123,7 +123,8 @@ const ApiClient = {
             density,
             seed,
             race,
-            accelerated_start: acceleratedStart
+            accelerated_start: acceleratedStart,
+            victory
         }, { showLoading: true, loadingMessage: 'Creating game...' });
     },
 
@@ -198,6 +199,13 @@ const ApiClient = {
 
     async getBattles(gameId, empireId) {
         return this.request('GET', `/games/${gameId}/empires/${empireId}/battles`);
+    },
+
+    async setFleetBattlePlan(gameId, fleetKey, empireId, plan) {
+        return this.request('POST', `/games/${gameId}/fleets/${fleetKey}/battle-plan`, {
+            empire_id: empireId,
+            plan
+        });
     },
 
     async transferCargo(gameId, fleetKey, empireId, delta) {

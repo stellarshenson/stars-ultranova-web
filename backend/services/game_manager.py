@@ -11,7 +11,9 @@ from typing import Dict, List, Optional, Any
 
 from ..persistence.database import Database, get_database
 from ..persistence.game_repository import GameRepository
-from ..server.server_data import ServerData
+from ..server.server_data import ServerData, VictorySettings
+from ..server.scores import Scores
+from ..server.victory_check import VictoryCheck
 from ..server.turn_generator import TurnGenerator
 from ..core.data_structures.empire_data import EmpireData
 from ..core.data_structures.tech_level import RESEARCH_KEYS, ResearchField
@@ -25,6 +27,7 @@ from ..core.commands.waypoint import WaypointCommand
 from ..core.commands.design import DesignCommand
 from ..core.commands.production import ProductionCommand
 from ..core.commands.research import ResearchCommand
+from ..core.commands.relation import RelationCommand
 from ..core.globals import NOBODY, NEBULA_SCAN_PENALTY
 from .galaxy_generator import GalaxyGenerator
 from .race_points import calculate_advantage_points
@@ -39,6 +42,7 @@ COMMAND_TYPES = {
     "design": DesignCommand,
     "production": ProductionCommand,
     "research": ResearchCommand,
+    "relation": RelationCommand,
 }
 
 
@@ -169,7 +173,8 @@ class GameManager:
         universe_size: str = "medium",
         seed: Optional[int] = None,
         race: Optional[dict] = None,
-        accelerated_start: bool = False
+        accelerated_start: bool = False,
+        victory: Optional[dict] = None
     ) -> dict:
         """
         Create a new game.
@@ -182,6 +187,8 @@ class GameManager:
             race: Optional custom race definition from the race wizard
                 (used for the human player, empire 1).
             accelerated_start: Accelerated BBS play (GameSettings.cs:63).
+            victory: Optional victory-settings dict (partial allowed);
+                None keeps the C# defaults (GameSettings.cs:49-58).
 
         Returns:
             Game metadata dict.
@@ -212,6 +219,11 @@ class GameManager:
         server_data = generator.generate(player_count, universe_size,
                                          player_race=player_race,
                                          accelerated_start=accelerated_start)
+
+        # Victory condition settings, C# defaults unless overridden
+        server_data.victory_settings = (
+            VictorySettings.from_dict(victory) if victory
+            else VictorySettings())
 
         # Initial scan so empires start with intel about their surroundings
         TurnGenerator(server_data).assemble_empire_data()
@@ -656,6 +668,17 @@ class GameManager:
             for record in report.get("designs", {}).values()
         ]
 
+        # Player relations: every opponent's id/race name is known
+        # from turn 0 via EmpireReports (GameInitialiser.cs:132-143)
+        relations = [
+            {
+                "id": eid,
+                "race_name": rep.get("race_name", ""),
+                "relation": rep.get("relation", "Enemy"),
+            }
+            for eid, rep in empire.empire_reports.items()
+        ]
+
         # Messages from the last generated turn, audience-filtered
         messages = [
             m.to_dict()
@@ -711,11 +734,14 @@ class GameManager:
             if w.key in known_wormholes
         ]
 
-        # Galactic storms are visible to everyone (natural phenomena)
+        # Galactic storms are visible to everyone (natural phenomena);
+        # shape_radii carries the blob polygon so the client renders
+        # the true boundary (user directive 2026-07-13)
         storms = [
             {
                 "key": s.key, "x": s.x, "y": s.y,
                 "radius": s.radius, "intensity": s.intensity,
+                "shape_radii": list(s.shape_radii),
             }
             for s in getattr(server_data, 'all_storms', {}).values()
         ]
@@ -728,14 +754,36 @@ class GameManager:
                 "radius": mf.radius,
                 "mine_type": mf.mine_type,
                 "mine_descriptor": mf.mine_descriptor,
+                # The detonation toggle is owner-only intel
+                "detonate": mf.detonate if mf.owner == empire_id else False,
             }
             for mf in getattr(empire, 'visible_minefields', {}).values()
         ]
+
+        # Score records are public to all players (Intel.cs:67
+        # AllScores carries every empire's record), computed live per
+        # IntelWriter.cs:79-89; the per-year history is the web
+        # extension stored on each empire
+        scores = [
+            {
+                **record.to_dict(),
+                "race_name": getattr(
+                    server_data.all_empires.get(record.empire_id),
+                    'race_name', ''),
+            }
+            for record in Scores(server_data).get_scores()
+        ]
+        score_history = {
+            str(eid): list(getattr(e, 'score_history', []))
+            for eid, e in server_data.all_empires.items()
+        }
 
         return {
             "game_id": game_id,
             "turn_year": server_data.turn_year,
             "victor": getattr(server_data, 'victor', None),
+            "scores": scores,
+            "score_history": score_history,
             "empire": {
                 "id": empire_id,
                 "race_name": empire.race_name,
@@ -745,6 +793,11 @@ class GameManager:
             "fleets": fleets,
             "foreign_fleets": foreign_fleets,
             "enemy_designs": enemy_designs,
+            "relations": relations,
+            "battle_plans": {
+                name: (plan.to_dict() if hasattr(plan, 'to_dict') else plan)
+                for name, plan in empire.battle_plans.items()
+            },
             "messages": messages,
             "research": research,
             "designs": designs,
@@ -823,6 +876,46 @@ class GameManager:
             return {"error": "Empire not found"}
 
         ctype = (command_type or "").strip().lower()
+        if ctype == "battle_plan":
+            # Battle plan CRUD. No C# command exists (the Nova dialog's
+            # newPlan/modifyPlan buttons are disabled,
+            # BattlePlans.Designer.cs:94,104); plans live per empire
+            # keyed by name (EmpireData.cs:91) and fleets reference
+            # them by name (Fleet.cs:60). Handled inline like
+            # "detonate_minefield" below.
+            result = self._apply_battle_plan_command(empire, command_data)
+            if "error" in result:
+                return result
+            self._save_game_state(game_id, server_data)
+            return {
+                "turn_year": server_data.turn_year,
+                "status": "applied"
+            }
+        if ctype == "detonate_minefield":
+            # SD per-field detonation toggle (canonical Stars! rule;
+            # the C# reference only carries the SD trait text,
+            # PrimaryTraits.cs:58). Commands' apply_to_state only sees
+            # the empire, so the server-wide minefield is toggled
+            # inline here, like the "design" special case below.
+            minefield = server_data.all_minefields.get(
+                command_data.get("key"))
+            if minefield is None:
+                return {"error": "Minefield not found"}
+            if minefield.owner != empire_id:
+                return {"error": "Not your minefield"}
+            race = empire.race
+            if race is None or not race.has_trait("SD"):
+                return {"error": "Only Space Demolition races can "
+                                 "detonate minefields"}
+            if minefield.mine_type != 0:
+                return {"error": "Only standard minefields can be "
+                                 "detonated"}
+            minefield.detonate = bool(command_data.get("detonate", False))
+            self._save_game_state(game_id, server_data)
+            return {
+                "turn_year": server_data.turn_year,
+                "status": "applied"
+            }
         if ctype == "design":
             # Design commands need the empire: the design is built and
             # validated server-side from the light client payload
@@ -857,6 +950,60 @@ class GameManager:
             "turn_year": server_data.turn_year,
             "status": "applied"
         }
+
+    def _apply_battle_plan_command(self, empire, data: dict) -> dict:
+        """
+        Apply a battle_plan command to the empire.
+
+        Payloads: {mode: "set", plan: {...}} adds or replaces a plan;
+        {mode: "delete", name: str} removes one (never "Default",
+        EmpireData.cs:160 always seeds it) and reassigns fleets that
+        referenced it back to "Default" (canonical safety, C# absent).
+        """
+        from ..server.battle.battle_plan import (
+            BattlePlan, Victims, TACTICS, ATTACK_OPTIONS, MAX_BATTLE_PLANS)
+
+        mode = (data.get("mode") or "").strip().lower()
+        if mode == "set":
+            plan_data = dict(data.get("plan") or {})
+            name = (plan_data.get("name") or "").strip()
+            if not name:
+                return {"error": "Battle plan name cannot be empty"}
+            if plan_data.get("tactic", "Maximise Damage") not in TACTICS:
+                return {"error": f"Unknown tactic "
+                                 f"'{plan_data.get('tactic')}'"}
+            if plan_data.get("attack", "Enemies") not in ATTACK_OPTIONS:
+                return {"error": f"Unknown attack option "
+                                 f"'{plan_data.get('attack')}'"}
+            valid_targets = {int(v) for v in Victims}
+            for tier in ("primary_target", "secondary_target",
+                         "tertiary_target", "quaternary_target",
+                         "quinary_target"):
+                value = plan_data.get(tier, 0)
+                if not isinstance(value, int) or value not in valid_targets:
+                    return {"error": f"Invalid {tier} '{value}'"}
+            if (name not in empire.battle_plans
+                    and len(empire.battle_plans) >= MAX_BATTLE_PLANS):
+                return {"error": f"At most {MAX_BATTLE_PLANS} battle "
+                                 f"plans per player"}
+            plan_data["name"] = name
+            empire.battle_plans[name] = BattlePlan.from_dict(plan_data)
+            return {"status": "applied"}
+
+        if mode == "delete":
+            name = (data.get("name") or "").strip()
+            if name == "Default":
+                return {"error": "The Default battle plan cannot be "
+                                 "deleted"}
+            if name not in empire.battle_plans:
+                return {"error": f"Unknown battle plan '{name}'"}
+            del empire.battle_plans[name]
+            for fleet in empire.owned_fleets.values():
+                if fleet.battle_plan == name:
+                    fleet.battle_plan = "Default"
+            return {"status": "applied"}
+
+        return {"error": f"Unknown battle_plan mode '{data.get('mode')}'"}
 
     def get_battle_reports(self, game_id: str,
                            empire_id: int) -> Optional[List[dict]]:
@@ -1082,6 +1229,35 @@ class GameManager:
         fleet.name = name
         self._save_game_state(game_id, server_data)
         return {"status": "ok", "name": name}
+
+    def set_fleet_battle_plan(self, game_id: str, empire_id: int,
+                              fleet_key: int, plan_name: str) -> dict:
+        """
+        Assign a named battle plan to an owned fleet.
+
+        Fleets reference plans by name (Fleet.cs:60, default
+        "Default"); the plan must exist in the empire's plan dict
+        (EmpireData.cs:91).
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return {"error": "Game not found"}
+
+        empire = server_data.all_empires.get(empire_id)
+        if empire is None:
+            return {"error": "Empire not found"}
+
+        fleet = empire.owned_fleets.get(fleet_key)
+        if fleet is None:
+            return {"error": "Fleet not found or not owned"}
+
+        plan_name = (plan_name or "").strip()
+        if plan_name not in empire.battle_plans:
+            return {"error": f"Unknown battle plan '{plan_name}'"}
+
+        fleet.battle_plan = plan_name
+        self._save_game_state(game_id, server_data)
+        return {"status": "ok", "battle_plan": plan_name}
 
     def transfer_cargo(
         self,
@@ -1472,7 +1648,10 @@ class GameManager:
                 for name, plan in empire_dict.get("battle_plans", {}).items()
             }
             if "Default" not in empire.battle_plans:
-                empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+                # C# default Attack="Enemies" (BattlePlan.cs:44);
+                # pre-relations saves lack relation keys, which default
+                # to Enemy - identical net behavior
+                empire.battle_plans["Default"] = BattlePlan(attack="Enemies")
 
             empire.battle_reports = list(
                 empire_dict.get("battle_reports", []))
@@ -1550,6 +1729,7 @@ class GameManager:
             "key": fleet.key,
             "name": fleet.name,
             "owner": fleet.owner,
+            "battle_plan": fleet.battle_plan,
             "position_x": fleet.position.x,
             "position_y": fleet.position.y,
             "fuel_available": fleet.fuel_available,

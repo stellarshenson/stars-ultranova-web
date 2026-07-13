@@ -24,6 +24,51 @@ class Victims(IntEnum):
     SUPPORT_SHIP = 6
 
 
+# Tactic strings, exactly as in the C# BattlePlans dialog
+# (BattlePlans.Designer.cs:168-174). BattleEngine.cs never consumes
+# Tactic (its line 603 TODO admits fleeing is unimplemented); the Ron
+# engine honors these per canonical Stars! rules.
+TACTICS = [
+    "Disengage",
+    "Disengage if Challenged",
+    "Maximise Damage",
+    "Maximise Damage Ratio",
+    "Maximise Net Damage",
+    "Minimise Damage to Self",
+]
+
+# Attack-who strings, exactly as in the C# dialog
+# (BattlePlans.Designer.cs:147-150). "Enemies and Neutrals" exists in
+# the dialog but BattleEngine.cs:479-493 never checks it - honored here
+# per canonical Stars! rules.
+ATTACK_OPTIONS = [
+    "Enemies",
+    "Enemies and Neutrals",
+    "Everyone",
+]
+
+# Display labels for the web dialog's five target tiers. The C# dialog
+# offers a different 7-string list ("Any", "Armed Ships", "Bombers",
+# "Freighters", "None", "Starbase", "Unarmed Ships",
+# BattlePlans.Designer.cs:131-138) tied to the 2-tier string model
+# (BattlePlan.cs:37-45); the web port keeps the later stars-nova trunk
+# 5-tier Victims model the Ron engine consumes.
+VICTIMS_LABELS = {
+    Victims.STARBASE: "Starbase",
+    Victims.BOMBER: "Bomber",
+    Victims.CAPITAL_SHIP: "Capital Ship",
+    Victims.ESCORT: "Escort",
+    Victims.ARMED_SHIP: "Armed Ship",
+    Victims.ANY_SHIP: "Any Ship",
+    Victims.SUPPORT_SHIP: "Support Ship",
+}
+
+# Canonical Stars! cap of 14 battle plans per player (C# absent - the
+# Nova dialog never implemented plan editing, BattlePlans.Designer.cs
+# newPlan/modifyPlan buttons are disabled)
+MAX_BATTLE_PLANS = 14
+
+
 @dataclass
 class BattlePlan:
     """

@@ -12,7 +12,7 @@ from .base import ITurnStep
 from ...core.commands.base import Message
 from ...core.components.ship_design import cloak_percent_from_units
 from ...core.globals import (
-    NOBODY, NEBULA_SCAN_PENALTY,
+    NOBODY, NEBULA_SCAN_PENALTY, STORM_SCAN_PENALTY,
     SS_BUILT_IN_CLOAK_UNITS, TACHYON_DETECTOR_FACTOR,
 )
 
@@ -171,6 +171,19 @@ class ScanStep(ITurnStep):
             dust = nebula.get_dust_density_at(x, y)
             if dust > 0.01:
                 factor = 1.0 - NEBULA_SCAN_PENALTY * dust
+                scan_range = int(scan_range * factor)
+                pen_scan_range = int(pen_scan_range * factor)
+
+        # Galactic storms dampen sensors more strongly than dust,
+        # scaled by the local storm intensity at the scanner's
+        # position and composed with the dust penalty (web extension -
+        # user directive 2026-07-13)
+        storms = getattr(server_state, 'all_storms', None)
+        if storms:
+            local = max((s.get_intensity_at(x, y)
+                         for s in storms.values()), default=0.0)
+            if local > 0.0:
+                factor = 1.0 - STORM_SCAN_PENALTY * local
                 scan_range = int(scan_range * factor)
                 pen_scan_range = int(pen_scan_range * factor)
 

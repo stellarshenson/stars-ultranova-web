@@ -71,6 +71,13 @@ class EmpireData:
     star_reports: Dict[str, dict] = field(default_factory=dict)
     fleet_reports: Dict[int, dict] = field(default_factory=dict)
 
+    # Per-year score history: one ScoreRecord dict plus "year" per
+    # generated turn. Web extension per user directive (wave 4): the
+    # C# reference keeps no history - Intel.AllScores (Intel.cs:67)
+    # carries only the current turn's records - while canonical Stars!
+    # shows a score-history graph in its Score report.
+    score_history: List[dict] = field(default_factory=list)
+
     # Counters for key generation
     _fleet_counter: int = field(default=0, repr=False)
     _design_counter: int = field(default=0, repr=False)
@@ -130,6 +137,7 @@ class EmpireData:
             "gravity_mod_capability": self.gravity_mod_capability,
             "radiation_mod_capability": self.radiation_mod_capability,
             "temperature_mod_capability": self.temperature_mod_capability,
+            "score_history": list(self.score_history),
             "_fleet_counter": self._fleet_counter,
             "_design_counter": self._design_counter
         }
@@ -149,6 +157,7 @@ class EmpireData:
         )
         empire._fleet_counter = data.get("_fleet_counter", 0)
         empire._design_counter = data.get("_design_counter", 0)
+        empire.score_history = list(data.get("score_history", []))
 
         if "research_levels" in data:
             empire.research_levels = TechLevel.from_dict(data["research_levels"])

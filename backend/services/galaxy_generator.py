@@ -156,7 +156,8 @@ class GalaxyGenerator:
         server_data.nebula_field = self._generate_nebulae(stars, width, height)
 
         # Generate roaming galactic storms (web extension)
-        for storm in self._generate_storms(width, height):
+        for storm in self._generate_storms(width, height,
+                                           server_data.nebula_field):
             server_data.all_storms[storm.key] = storm
 
         # Generate wormhole pairs
@@ -260,6 +261,23 @@ class GalaxyGenerator:
             starbase = self._create_starbase(empire, home_star)
             empire.owned_fleets[starbase.key] = starbase
             home_star.starbase_key = starbase.key
+
+        # Pre-register every opponent with an Enemy relation
+        # (GameInitialiser.cs:132-143). EmpireIntel copies id/race name
+        # (EmpireIntel.cs:46-51); Relation defaults to enum member 0 =
+        # Enemy (EmpireData.cs:34-39) and is set explicitly at init
+        # (GameInitialiser.cs:140). Because all empires are registered
+        # here, there is no "newly met" case - as in C#.
+        for wolf in server_data.all_empires.values():
+            for lamb in server_data.all_empires.values():
+                if wolf.id == lamb.id:
+                    continue
+                wolf.empire_reports[lamb.id] = {
+                    "id": lamb.id,
+                    "race_name": lamb.race_name,
+                    "relation": "Enemy",
+                    "designs": {},
+                }
 
         return server_data
 
@@ -513,28 +531,50 @@ class GalaxyGenerator:
 
         return x, y
 
-    def _generate_storms(self, width: int, height: int) -> List[GalacticStorm]:
+    def _generate_storms(self, width: int, height: int,
+                         nebula_field=None) -> List[GalacticStorm]:
         """
         Generate roaming galactic storms scaled to universe size.
 
         Web extension - not in original Stars!. Storms drift each turn
-        and damage ships caught inside them.
+        and hazard ships caught inside them. Roughly 70% of storms
+        spawn inside nebulae (capped rejection sampling against the
+        nebula density field) and each storm gets an irregular blob
+        perimeter sampled deterministically from the game seed (user
+        directive 2026-07-13).
         """
         area = width * height
         count = max(1, area // 160000)  # tiny/small 1, medium 2, large 4, huge 6
+        # Blob shapes and nebula-bias placement draw on a dedicated
+        # seed-derived stream so self.rng consumption stays identical
+        # to the pre-blob generator (star placement, homeworlds and
+        # wormholes keep their seeded geometry)
+        storm_rng = random.Random(self.seed)
         storms = []
         for i in range(count):
             angle = self.rng.random() * math.pi * 2
             speed = 4.0 + self.rng.random() * 6.0  # 4-10 ly per turn
-            storms.append(GalacticStorm(
+            x = self.rng.random() * width
+            y = self.rng.random() * height
+            if nebula_field is not None and storm_rng.random() < 0.7:
+                # Prefer a center inside a nebula; the last sample
+                # stands if none qualifies within the cap
+                for _ in range(30):
+                    if nebula_field.get_density_at(x, y) > 0.0:
+                        break
+                    x = storm_rng.random() * width
+                    y = storm_rng.random() * height
+            storm = GalacticStorm(
                 key=i + 1,
-                x=self.rng.random() * width,
-                y=self.rng.random() * height,
+                x=x,
+                y=y,
                 radius=25.0 + self.rng.random() * 30.0,
                 velocity_x=math.cos(angle) * speed,
                 velocity_y=math.sin(angle) * speed,
                 intensity=0.3 + self.rng.random() * 0.7,
-            ))
+            )
+            storm.generate_shape(storm_rng)
+            storms.append(storm)
         return storms
 
     WORMHOLE_NAMES = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"]
@@ -865,9 +905,12 @@ class GalaxyGenerator:
         # Starting ship designs
         make_starting_designs(empire)
 
-        # Default battle plan - all empires are hostile in a skirmish
+        # Default battle plan: Attack="Enemies" (BattlePlan.cs:44);
+        # combined with the all-Enemy relation init
+        # (GameInitialiser.cs:140) fresh games behave as before, and
+        # player relation changes now govern battle eligibility
         from ..server.battle.battle_plan import BattlePlan
-        empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+        empire.battle_plans["Default"] = BattlePlan(attack="Enemies")
 
         return empire
 

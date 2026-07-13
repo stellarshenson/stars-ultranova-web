@@ -61,37 +61,68 @@ class WeaponDetails:
 
     def missile_accuracy(
         self,
-        source: 'ShipDesign',
-        target: 'ShipDesign',
-        missile_base_accuracy: float
+        source_design: 'ShipDesign',
+        target_design: 'ShipDesign',
+        base_accuracy: float
     ) -> float:
         """
-        Calculate missile accuracy considering computers and jammers.
+        Torpedo/missile accuracy from computers vs jammers (0-1 scale).
+
+        Canonical Stars! rule per project directive (C# consumption is
+        a stub: BattleEngine.cs:920-929 TODO, :788 FIXME): the
+        attacker's stacked battle computer accuracy cuts the MISS
+        chance multiplicatively, the target's stacked jamming cuts the
+        HIT chance multiplicatively. Because the design aggregates are
+        probability-stacked this equals applying each computer as
+        miss *= (1 - bonus) and each jammer as hit *= (1 - jam).
 
         Args:
-            source: Attacking ship design
-            target: Target ship design
-            missile_base_accuracy: Base accuracy (0.0 to 1.0)
+            source_design: Attacking ship design (may be None)
+            target_design: Target ship design (may be None)
+            base_accuracy: Weapon base accuracy (0.0 to 1.0)
 
         Returns:
-            Modified accuracy value
+            Modified accuracy (0.0 to 1.0)
         """
-        increase = 1.0
-        decrease = 1.0
+        computer = getattr(source_design, 'battle_computer_accuracy', 0.0) \
+            if source_design else 0.0
+        jamming = getattr(target_design, 'jamming', 0.0) \
+            if target_design else 0.0
 
-        # Check for computer bonus on source
-        if source.summary and "Computer" in source.summary.properties:
-            computer = source.summary.properties["Computer"]
-            if hasattr(computer, 'accuracy'):
-                increase = 1.0 + (computer.accuracy / 100.0)
+        accuracy = 1.0 - (1.0 - base_accuracy) * (1.0 - computer / 100.0)
+        accuracy = accuracy * (1.0 - jamming / 100.0)
+        return accuracy
 
-        # Check for jammer penalty on target
-        if target.summary and "Jammer" in target.summary.properties:
-            jammer = target.summary.properties["Jammer"]
-            if hasattr(jammer, 'value'):
-                decrease = 1.0 - (jammer.value / 100.0)
+    def beam_power_modifier(
+        self,
+        source_design: 'ShipDesign',
+        target_design: 'ShipDesign'
+    ) -> float:
+        """
+        Beam damage multiplier from capacitors vs deflectors.
 
-        return missile_base_accuracy * increase * decrease
+        damage = power * (1 + capacitor/100) * (1 - deflector/100).
+        Canonical Stars! rule per project directive: C# consumption is
+        a stub (BattleEngine.cs:880-908 returns weapon.Power; the
+        commented intent at :888 subtracts instead of multiplying and
+        is not ported). The capacitor aggregate is geometric-stacked
+        and capped at 250; the deflector factor equals (0.9)^n for n
+        catalog 10% Beam Deflectors because the design aggregate is
+        probability-stacked.
+
+        Args:
+            source_design: Attacking ship design (may be None)
+            target_design: Target ship design (may be None)
+
+        Returns:
+            Multiplier to apply to beam hit power
+        """
+        capacitor = getattr(source_design, 'capacitor', 0.0) \
+            if source_design else 0.0
+        deflector = getattr(target_design, 'beam_deflector', 0.0) \
+            if target_design else 0.0
+
+        return (1.0 + capacitor / 100.0) * (1.0 - deflector / 100.0)
 
     def __lt__(self, other: 'WeaponDetails') -> bool:
         """Compare by weapon initiative for sorting."""

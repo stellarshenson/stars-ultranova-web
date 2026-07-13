@@ -722,6 +722,168 @@ const Dialogs = {
             document.getElementById('btn-prompt-cancel')?.addEventListener('click', () => finish(null));
             document.getElementById('btn-prompt-cancel-x')?.addEventListener('click', () => finish(null));
         });
+    },
+
+    // Battle plan option lists. Tactic and attack strings match the
+    // C# dialog exactly (BattlePlans.Designer.cs:168-174, 147-150);
+    // the five target tiers use the stars-nova trunk Victims model
+    // consumed by the Ron engine (backend battle_plan.Victims), not
+    // the C# 2-tier string list.
+    BATTLE_PLAN_TACTICS: [
+        'Disengage', 'Disengage if Challenged', 'Maximise Damage',
+        'Maximise Damage Ratio', 'Maximise Net Damage',
+        'Minimise Damage to Self'
+    ],
+    BATTLE_PLAN_ATTACK: ['Enemies', 'Enemies and Neutrals', 'Everyone'],
+    BATTLE_PLAN_TARGETS: [
+        { value: 0, label: 'Starbase' },
+        { value: 1, label: 'Bomber' },
+        { value: 2, label: 'Capital Ship' },
+        { value: 3, label: 'Escort' },
+        { value: 4, label: 'Armed Ship' },
+        { value: 5, label: 'Any Ship' },
+        { value: 6, label: 'Support Ship' }
+    ],
+
+    /**
+     * Battle Plans dialog - two-pane layout after the C# BattlePlans
+     * dialog (BattlePlans.Designer.cs): plan list on the left, plan
+     * details on the right. Unlike C# Nova, New/Save/Delete work (the
+     * C# buttons exist but are disabled, Designer.cs:94,104 - plan
+     * editing was never implemented there).
+     */
+    showBattlePlans(selectedName = null) {
+        const plans = GameState.battlePlans || {};
+        const names = Object.keys(plans);
+        if (!names.length) {
+            ApiClient.showStatus('No battle plans available', 'error');
+            return;
+        }
+        if (!selectedName || !plans[selectedName]) {
+            selectedName = names.includes('Default') ? 'Default' : names[0];
+        }
+
+        const listHtml = names.map(n =>
+            `<option value="${n}" ${n === selectedName ? 'selected' : ''}>${n}</option>`
+        ).join('');
+        const targetOptions = (selected) => this.BATTLE_PLAN_TARGETS.map(t =>
+            `<option value="${t.value}" ${t.value === selected ? 'selected' : ''}>${t.label}</option>`
+        ).join('');
+        const tiers = [
+            ['primary_target', 'Primary Target'],
+            ['secondary_target', 'Secondary Target'],
+            ['tertiary_target', 'Tertiary Target'],
+            ['quaternary_target', 'Quaternary Target'],
+            ['quinary_target', 'Quinary Target']
+        ];
+        const plan = plans[selectedName];
+
+        const html = `
+            <div class="dialog-header">
+                <h2>Battle Plans</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+            <div class="dialog-body">
+                <div style="display: flex; gap: 16px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label for="battle-plan-list">Available Plans</label>
+                        <select id="battle-plan-list" class="form-select"
+                                size="${Math.min(Math.max(names.length, 6), 14)}">
+                            ${listHtml}
+                        </select>
+                    </div>
+                    <fieldset style="flex: 2;">
+                        <legend>Plan Details</legend>
+                        <div class="form-group">
+                            <label for="battle-plan-name">Plan Name</label>
+                            <input type="text" id="battle-plan-name" class="form-input"
+                                   value="${plan.name}">
+                        </div>
+                        ${tiers.map(([key, label]) => `
+                        <div class="form-group">
+                            <label for="battle-plan-${key}">${label}</label>
+                            <select id="battle-plan-${key}" class="form-select">
+                                ${targetOptions(plan[key])}
+                            </select>
+                        </div>`).join('')}
+                        <div class="form-group">
+                            <label for="battle-plan-tactic">Tactic</label>
+                            <select id="battle-plan-tactic" class="form-select">
+                                ${this.BATTLE_PLAN_TACTICS.map(t =>
+                                    `<option ${t === plan.tactic ? 'selected' : ''}>${t}</option>`
+                                ).join('')}
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="battle-plan-attack">Attack</label>
+                            <select id="battle-plan-attack" class="form-select">
+                                ${this.BATTLE_PLAN_ATTACK.map(a =>
+                                    `<option ${a === plan.attack ? 'selected' : ''}>${a}</option>`
+                                ).join('')}
+                            </select>
+                        </div>
+                    </fieldset>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn-small" id="btn-battle-plan-new">New</button>
+                <button class="btn-primary" id="btn-battle-plan-save">Save</button>
+                <button class="btn-small btn-danger" id="btn-battle-plan-delete"
+                        ${selectedName === 'Default' ? 'disabled' : ''}>Delete</button>
+                <button class="btn-secondary" onclick="Dialogs.close()">Done</button>
+            </div>
+        `;
+
+        this.show(html);
+
+        const list = document.getElementById('battle-plan-list');
+        list?.addEventListener('change', () => {
+            this.showBattlePlans(list.value);
+        });
+
+        document.getElementById('btn-battle-plan-new')?.addEventListener('click', () => {
+            const nameInput = document.getElementById('battle-plan-name');
+            if (nameInput) {
+                nameInput.value = '';
+                nameInput.focus();
+            }
+        });
+
+        document.getElementById('btn-battle-plan-save')?.addEventListener('click', async () => {
+            const name = (document.getElementById('battle-plan-name')?.value || '').trim();
+            if (!name) {
+                ApiClient.showStatus('Plan name cannot be empty', 'error');
+                return;
+            }
+            const payload = {
+                name: name,
+                tactic: document.getElementById('battle-plan-tactic')?.value,
+                attack: document.getElementById('battle-plan-attack')?.value
+            };
+            for (const [key] of tiers) {
+                payload[key] = parseInt(document.getElementById(`battle-plan-${key}`)?.value) || 0;
+            }
+            try {
+                await GameState.submitCommand('battle_plan', { mode: 'set', plan: payload });
+                await GameState.refreshState();
+                ApiClient.showStatus(`Battle plan '${name}' saved`, 'success');
+                this.showBattlePlans(name);
+            } catch (error) {
+                ApiClient.showStatus('Failed to save plan: ' + error.message, 'error');
+            }
+        });
+
+        document.getElementById('btn-battle-plan-delete')?.addEventListener('click', async () => {
+            if (selectedName === 'Default') return;
+            try {
+                await GameState.submitCommand('battle_plan', { mode: 'delete', name: selectedName });
+                await GameState.refreshState();
+                ApiClient.showStatus(`Battle plan '${selectedName}' deleted`, 'info');
+                this.showBattlePlans();
+            } catch (error) {
+                ApiClient.showStatus('Failed to delete plan: ' + error.message, 'error');
+            }
+        });
     }
 };
 

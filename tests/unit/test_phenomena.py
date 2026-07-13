@@ -239,3 +239,241 @@ class TestMinefieldStrikes:
             pytest.approx(100)
         # Missing the circle entirely
         assert gen._chord_length(0, 0, 200, 0, 100, 100, 50) == 0.0
+
+
+class TestStormShape:
+    """Irregular blob perimeter and local intensity field
+    (user directive 2026-07-13)."""
+
+    def _blob(self, intensity: float = 1.0, radius: float = 50.0,
+              seed: int = 7) -> GalacticStorm:
+        import random
+        storm = GalacticStorm(key=1, x=300, y=300, radius=radius,
+                              velocity_x=0, velocity_y=0,
+                              intensity=intensity)
+        storm.generate_shape(random.Random(seed))
+        return storm
+
+    def test_shape_deterministic_and_bounded(self):
+        import random
+        from backend.core.globals import (
+            STORM_SHAPE_POINTS, STORM_SHAPE_AMPLITUDE)
+        a = self._blob(seed=7)
+        b = self._blob(seed=7)
+        assert a.shape_radii == b.shape_radii
+        assert len(a.shape_radii) == STORM_SHAPE_POINTS
+        for r in a.shape_radii:
+            assert 50.0 * (1 - STORM_SHAPE_AMPLITUDE) <= r
+            assert r <= 50.0 * (1 + STORM_SHAPE_AMPLITUDE)
+        # The blob is irregular, not a circle
+        assert max(a.shape_radii) - min(a.shape_radii) > 1.0
+
+    def test_contains_follows_blob_boundary(self):
+        import math
+        storm = self._blob()
+        # Along each sampled bearing the boundary is exactly the
+        # sampled radius: just inside is in, just outside is out
+        for i, r in enumerate(storm.shape_radii):
+            theta = 2 * math.pi * i / len(storm.shape_radii)
+            inside = (storm.x + math.cos(theta) * (r - 0.5),
+                      storm.y + math.sin(theta) * (r - 0.5))
+            outside = (storm.x + math.cos(theta) * (r + 0.5),
+                       storm.y + math.sin(theta) * (r + 0.5))
+            assert storm.contains(*inside)
+            assert not storm.contains(*outside)
+
+    def test_intensity_ramp_profile(self):
+        import math
+        storm = self._blob(intensity=0.8)
+        # Core carries the full storm intensity
+        assert storm.get_intensity_at(300, 300) == pytest.approx(0.8)
+        theta = 0.0
+        boundary = storm.boundary_radius(theta)
+        # Halfway out the smoothstep ramp gives exactly half intensity
+        halfway = storm.get_intensity_at(300 + boundary * 0.5, 300)
+        assert halfway == pytest.approx(0.4, abs=1e-9)
+        # Near the boundary the intensity falls towards zero
+        near_edge = storm.get_intensity_at(300 + boundary * 0.97, 300)
+        assert 0 < near_edge < 0.01
+        # On and beyond the boundary there is no storm effect
+        assert storm.get_intensity_at(300 + boundary, 300) == 0.0
+        assert storm.get_intensity_at(300 + boundary * 2, 300) == 0.0
+        # The ramp decreases monotonically from core to boundary
+        samples = [storm.get_intensity_at(300 + boundary * d / 10, 300)
+                   for d in range(10)]
+        assert samples == sorted(samples, reverse=True)
+
+    def test_serialization_round_trip_with_shape(self):
+        storm = self._blob(intensity=0.6)
+        restored = GalacticStorm.from_dict(storm.to_dict())
+        assert restored.shape_radii == storm.shape_radii
+        assert restored.intensity == 0.6
+        assert restored.radius == 50.0
+
+    def test_legacy_load_regenerates_shape_deterministically(self):
+        # Legacy save: no shape_radii field
+        legacy = {'key': 3, 'x': 10, 'y': 20, 'radius': 40.0,
+                  'velocity_x': 1, 'velocity_y': 2, 'intensity': 0.7}
+        a = GalacticStorm.from_dict(dict(legacy))
+        b = GalacticStorm.from_dict(dict(legacy))
+        from backend.core.globals import STORM_SHAPE_POINTS
+        assert len(a.shape_radii) == STORM_SHAPE_POINTS
+        assert a.shape_radii == b.shape_radii
+        assert a.x == 10 and a.intensity == 0.7
+
+
+class TestStormHazards:
+    """Locally-scaled storm damage, warp mishaps and colonist
+    attrition (user directive 2026-07-13)."""
+
+    def _storm_state(self, fleet, intensity: float = 1.0):
+        state = make_state(fleet)
+        state.all_storms[1] = GalacticStorm(
+            key=1, x=300, y=300, radius=50,
+            velocity_x=0, velocity_y=0, intensity=intensity)
+        return state
+
+    def test_damage_scales_with_local_intensity(self):
+        from backend.core.globals import STORM_DAMAGE_PER_TURN
+        core = make_fleet(1, 1, 300, 300, armor=100)
+        # Halfway to the boundary: smoothstep gives local = 0.5
+        edge = make_fleet(2, 1, 325, 300, armor=100)
+        state = self._storm_state(core)
+        state.all_empires[1].owned_fleets[edge.key] = edge
+        TurnGenerator(state)._process_storms()
+        assert core.tokens[1].damage_percent == \
+            pytest.approx(STORM_DAMAGE_PER_TURN)
+        assert edge.tokens[1].damage_percent == \
+            pytest.approx(STORM_DAMAGE_PER_TURN * 0.5)
+
+    def test_safe_warp_never_mishaps(self):
+        for trial in range(50):
+            fleet = make_fleet(1, 1, 300, 300, armor=1000)
+            fleet.waypoints.append(Waypoint(
+                position_x=300, position_y=300, warp_factor=6,
+                destination="Core"))
+            state = self._storm_state(fleet)
+            gen = TurnGenerator(state)
+            gen.rand.seed(trial)
+            gen._process_storms()
+            assert not any("warp mishap" in m.text
+                           for m in state.all_messages)
+
+    def test_mishap_odds_match_seeded_rng(self):
+        from backend.core.globals import (
+            STORM_DAMAGE_PER_TURN, STORM_MISHAP_DAMAGE)
+        # Warp 9 at the core of an intensity-1.0 storm:
+        # chance = 0.10 * (9 - 6) * 1.0 = 0.30
+        hits = 0
+        trials = 400
+        mishap_damage_seen = None
+        for trial in range(trials):
+            fleet = make_fleet(1, 1, 300, 300, armor=1000)
+            fleet.waypoints.append(Waypoint(
+                position_x=300, position_y=300, warp_factor=9,
+                destination="Core"))
+            state = self._storm_state(fleet)
+            gen = TurnGenerator(state)
+            gen.rand.seed(trial)
+            gen._process_storms()
+            if any("warp mishap" in m.text for m in state.all_messages):
+                hits += 1
+                # Mishap stops the fleet and adds extra damage
+                assert fleet.waypoints[0].warp_factor == 0
+                mishap_damage_seen = fleet.tokens[1].damage_percent
+        assert 0.24 <= hits / trials <= 0.36
+        assert mishap_damage_seen == pytest.approx(
+            STORM_DAMAGE_PER_TURN + STORM_MISHAP_DAMAGE)
+
+    def test_mishap_chance_capped(self):
+        # Warp 20 gives raw chance 0.10 * 14 = 1.4, capped at 0.75
+        hits = 0
+        trials = 400
+        for trial in range(trials):
+            fleet = make_fleet(1, 1, 300, 300, armor=1000)
+            fleet.waypoints.append(Waypoint(
+                position_x=300, position_y=300, warp_factor=20,
+                destination="Core"))
+            state = self._storm_state(fleet)
+            gen = TurnGenerator(state)
+            gen.rand.seed(trial)
+            gen._process_storms()
+            if any("warp mishap" in m.text for m in state.all_messages):
+                hits += 1
+        assert 0.69 <= hits / trials <= 0.81
+
+    def test_colonist_attrition_scales_with_local_intensity(self):
+        from backend.core.globals import COLONISTS_PER_KILOTON
+        fleet = make_fleet(1, 1, 300, 300, armor=1000)
+        fleet.cargo.colonists_in_kilotons = 100
+        state = self._storm_state(fleet)
+        TurnGenerator(state)._process_storms()
+        # ceil(100 kT * 0.10 * 1.0) = 10 kT lost
+        assert fleet.cargo.colonists_in_kilotons == 90
+        assert any("colonists" in m.text and m.message_type == "Storm"
+                   for m in state.all_messages)
+        # Halfway out (local 0.5): ceil(100 * 0.10 * 0.5) = 5 kT
+        fleet2 = make_fleet(2, 1, 325, 300, armor=1000)
+        fleet2.cargo.colonists_in_kilotons = 100
+        state2 = self._storm_state(fleet2)
+        TurnGenerator(state2)._process_storms()
+        assert fleet2.cargo.colonists_in_kilotons == 95
+
+    def test_no_attrition_without_colonists(self):
+        fleet = make_fleet(1, 1, 300, 300, armor=1000)
+        state = self._storm_state(fleet)
+        TurnGenerator(state)._process_storms()
+        assert not any("colonists" in m.text
+                       for m in state.all_messages)
+
+    def test_scan_range_reduced_inside_storm(self):
+        from backend.server.turn_steps.scan_step import ScanStep
+
+        scanner = make_fleet(1, 1, 100, 100)
+        scanner.tokens[1].scan_range_normal = 100
+        target = make_fleet(2, 2, 160, 100)
+        state = make_state(scanner, target)
+        state.nebula_field = NebulaField(regions=[])
+        # Without a storm the 60 ly target is seen
+        ScanStep().process(state)
+        assert target.key in state.all_empires[1].fleet_reports
+        # Scanner at the core of an intensity-1.0 storm: range drops
+        # to 100 * (1 - 0.7) = 30 ly and the target vanishes
+        state.all_storms[1] = GalacticStorm(
+            key=1, x=100, y=100, radius=40,
+            velocity_x=0, velocity_y=0, intensity=1.0)
+        ScanStep().process(state)
+        assert target.key not in state.all_empires[1].fleet_reports
+
+
+class TestStormSpawning:
+    """Storms preferentially spawn inside nebulae
+    (user directive 2026-07-13)."""
+
+    def test_storms_prefer_nebulae(self):
+        from backend.services.galaxy_generator import GalaxyGenerator
+
+        # One nebula covering roughly an eighth of the map: unbiased
+        # sampling would land ~13% of storms inside it
+        nebula = NebulaField(regions=[
+            NebulaRegion(x=100, y=100, radius_x=60, radius_y=60,
+                         density=1.0, nebula_type='emission'),
+        ], universe_width=600, universe_height=600)
+        inside = total = 0
+        for seed in range(40):
+            gen = GalaxyGenerator(seed=seed)
+            for storm in gen._generate_storms(600, 600, nebula):
+                total += 1
+                if nebula.get_density_at(storm.x, storm.y) > 0.0:
+                    inside += 1
+        assert inside / total >= 0.5
+
+    def test_generated_storms_carry_shapes(self):
+        from backend.services.galaxy_generator import GalaxyGenerator
+        from backend.core.globals import STORM_SHAPE_POINTS
+
+        gen = GalaxyGenerator(seed=99)
+        storms = gen._generate_storms(600, 600, None)
+        assert storms
+        for storm in storms:
+            assert len(storm.shape_radii) == STORM_SHAPE_POINTS

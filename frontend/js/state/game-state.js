@@ -13,6 +13,8 @@ const GameState = {
     stars: [],             // Player-visible view of every star
     fleets: [],            // Own fleets, full detail
     foreignFleets: [],     // Scanned foreign fleet contacts
+    relations: [],         // Per-opponent relation (Enemy/Neutral/Friend)
+    battlePlans: {},       // Own battle plans keyed by name
     nebulae: null,         // Nebula field data from backend
     messages: [],          // Last turn's messages for this empire
     research: null,        // Research budget/levels/progress
@@ -21,6 +23,9 @@ const GameState = {
     storms: [],            // Galactic storms (visible to all)
     minefields: [],        // Minefields known to this empire
     wormholes: [],         // Wormholes discovered by this empire
+    scores: [],            // Public score records for all empires
+    scoreHistory: {},      // Per-empire score history (empire id -> entries)
+    victor: null,          // Winning empire id once victory declared
 
     // Selection state
     selectedStar: null,
@@ -47,9 +52,9 @@ const GameState = {
     /**
      * Create a new game.
      */
-    async createGame(name, playerCount, universeSize, density, seed, race = null, acceleratedStart = false) {
+    async createGame(name, playerCount, universeSize, density, seed, race = null, acceleratedStart = false, victory = null) {
         try {
-            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart);
+            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart, victory);
             await this.refreshState();
             this.nebulae = await ApiClient.getNebulae(this.game.id);
             this.emit('gameCreated', this.game);
@@ -69,6 +74,8 @@ const GameState = {
         this.stars = state.stars;
         this.fleets = state.fleets;
         this.foreignFleets = state.foreign_fleets || [];
+        this.relations = state.relations || [];
+        this.battlePlans = state.battle_plans || {};
         this.messages = state.messages || [];
         this.research = state.research;
         this.designs = state.designs || [];
@@ -76,6 +83,15 @@ const GameState = {
         this.storms = state.storms || [];
         this.minefields = state.minefields || [];
         this.wormholes = state.wormholes || [];
+        this.scores = state.scores || [];
+        this.scoreHistory = state.score_history || {};
+
+        // Announce a newly declared victor once per session
+        const previousVictor = this.victor;
+        this.victor = state.victor ?? null;
+        if (previousVictor === null && this.victor !== null) {
+            this.emit('victory', this.victor);
+        }
 
         // Keep selection pointing at fresh objects
         if (this.selectedStar) {

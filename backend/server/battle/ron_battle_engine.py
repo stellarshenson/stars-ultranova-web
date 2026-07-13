@@ -59,6 +59,10 @@ class RonBattleEngine:
     GRID_SCALE = 100  # Must be GRID_SIZE / 10
     GRID_SCALE_SQUARED = 10000
     SALVAGE_NAME = "S A L V A G E"
+    # Canonical Stars!: a disengaging token needs 7 squares of battle
+    # board movement to leave the battle (C# absent - BattleEngine.cs
+    # line 603 TODO admits fleeing is unimplemented)
+    DISENGAGE_MOVES = 7
 
     def __init__(self, server_state: 'ServerData', battle_reports: List[BattleReport]):
         """
@@ -308,18 +312,35 @@ class RonBattleEngine:
                 continue
 
             wolf.target = None
+            wolf.target_list = []
+
+            # A disengaged stack has left the battle: it neither picks
+            # targets nor fires (canonical Stars! disengage;
+            # simplification: it stops firing while fleeing)
+            if wolf.disengaged:
+                continue
+
             selected_targets: List[TargetRow] = []
-            have_incremented = False
 
             for lamb in battling_stacks:
                 if lamb.token is None or lamb.token.quantity <= 0:
                     continue
-                if lamb.token is None or lamb.token.armor <= 0:
+                if lamb.token.armor <= 0:
+                    continue
+                if lamb.disengaged:
+                    # Left the board - no longer targetable
                     continue
 
                 if self._are_enemies(wolf, lamb):
                     priority = self._get_priority(lamb, wolf)
                     if wolf.is_armed:
+                        # Target types define what an armed stack may
+                        # shoot at: a lamb matching none of the plan's
+                        # five tiers (priority 0) is not engaged
+                        # (canonical Stars! rule; BattleEngine.cs never
+                        # consumed the tiers)
+                        if priority == 0:
+                            continue
                         attractiveness = self._get_attractiveness(lamb)
                     else:
                         # Unarmed ships move away from closest armed
@@ -328,20 +349,18 @@ class RonBattleEngine:
 
                     selected_targets.append(TargetRow(lamb, priority, attractiveness))
 
-                    if not have_incremented:
-                        have_incremented = True
-                        number_of_targets += 1
-
-            wolf.target = None
-            wolf.target_list = []
-
             if selected_targets:
+                number_of_targets += 1
                 # Sort by priority then attractiveness
                 selected_targets.sort(
                     key=lambda t: (t.priority, t.attractiveness)
                 )
                 wolf.target = selected_targets[-1].fleet
-                wolf.target_list = [t.fleet for t in selected_targets]
+                # Fire allocation (_generate_attacks) consumes the list
+                # from the front: highest priority tier first, spilling
+                # leftover percent onto lower tiers
+                wolf.target_list = [t.fleet
+                                    for t in reversed(selected_targets)]
 
         return number_of_targets
 
@@ -439,6 +458,14 @@ class RonBattleEngine:
                 lamb.owner, {}).get("relation", "Enemy")
             if relation == "Enemy":
                 return True
+        elif plan.attack == "Enemies and Neutrals":
+            # Option exists in the C# dialog (BattlePlans.Designer.cs
+            # line 149) but BattleEngine.cs:479-493 never consumed it -
+            # canonical Stars! rule
+            relation = wolf_data.empire_reports.get(
+                lamb.owner, {}).get("relation", "Enemy")
+            if relation in ("Enemy", "Neutral"):
+                return True
 
         return False
 
@@ -467,6 +494,12 @@ class RonBattleEngine:
                 stack.battle_speed * self.GRID_SCALE
             )
 
+            # Plan tactic for this round (canonical Stars! rules; the
+            # C# reference never consumed Tactic - BattleEngine.cs:603
+            # TODO). The round<5 random flip keeps precedence: it
+            # models the initial maneuvering of every stack.
+            tactic = self._effective_tactic(stack)
+
             # Unarmed ships have special behavior
             if not stack.is_armed or battle_round < 5:
                 if battle_round < 5:
@@ -474,11 +507,40 @@ class RonBattleEngine:
                     choice = self._random.randint(1, 3)
                     if choice == 2:
                         new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                elif tactic == "Disengage":
+                    # Unarmed disengaging stack flees the board instead
+                    # of merely keeping out of weapon range
+                    new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                    self._count_flee_move(stack)
                 elif stack.distance_to(stack.target) / self.GRID_SCALE < MAX_WEAPON_RANGE:
                     # Run away from armed enemy
                     new_heading = NovaPoint(-new_heading.x, -new_heading.y)
                 else:
                     new_heading = NovaPoint(0, 0)
+            elif tactic == "Disengage":
+                # Armed disengaging stack flees its target
+                new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                self._count_flee_move(stack)
+            elif tactic in ("Minimise Damage to Self", "Maximise Damage Ratio",
+                            "Maximise Net Damage"):
+                # Stand-off tactics: close only until the target is
+                # inside our own longest weapon range, then hold;
+                # "Minimise Damage to Self" additionally falls back
+                # while its shields are down. Canonical-approx
+                # heuristics - the exact Stars! math is unpublished and
+                # the C# reference has no implementation.
+                weapon_range = 0
+                if stack.token.design is not None:
+                    weapon_range = max(
+                        (w.range for w in stack.token.design.weapons),
+                        default=0)
+                if (tactic == "Minimise Damage to Self"
+                        and stack.token.shields <= 0):
+                    new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                elif (stack.distance_to(stack.target)
+                        <= weapon_range * self.GRID_SCALE):
+                    new_heading = NovaPoint(0, 0)
+            # "Maximise Damage" (default) keeps the closing heading
 
             # Initialize velocity if needed
             if stack.velocity_vector is None:
@@ -496,6 +558,37 @@ class RonBattleEngine:
                 report.stack_key = stack.key
                 report.position = NovaPoint(stack.position.x, stack.position.y)
                 battle.steps.append(report)
+
+    def _effective_tactic(self, stack: Stack) -> str:
+        """
+        Resolve the stack's plan tactic for this round.
+
+        "Disengage if Challenged" behaves as Maximise Damage until the
+        stack has taken damage, then switches to Disengage (canonical
+        Stars! rule; C# absent).
+        """
+        if stack.owner not in self.server_state.all_empires:
+            return "Maximise Damage"
+        empire = self.server_state.all_empires[stack.owner]
+        plan = empire.battle_plans.get(stack.battle_plan)
+        if plan is None:
+            return "Maximise Damage"
+        if plan.tactic == "Disengage if Challenged":
+            return "Disengage" if stack.damage_taken else "Maximise Damage"
+        return plan.tactic
+
+    def _count_flee_move(self, stack: Stack) -> None:
+        """
+        Count a flee move; after DISENGAGE_MOVES the stack has left.
+
+        Canonical Stars!: 7 squares of battle board movement to leave
+        the battle; one flee move per round at battle speed
+        approximates one square per round (canonical-approx). While
+        still present the stack can be fired upon.
+        """
+        stack.flee_rounds += 1
+        if stack.flee_rounds >= self.DISENGAGE_MOVES:
+            stack.disengaged = True
 
     def _battle_speed_vector(
         self, direction: NovaPoint, speed: float
@@ -518,6 +611,9 @@ class RonBattleEngine:
         for stack in battling_stacks:
             if stack.is_destroyed:
                 continue
+            # A disengaged stack has left the battle and fires nothing
+            if stack.disengaged:
+                continue
             if not stack.token or not stack.token.design:
                 continue
 
@@ -527,6 +623,12 @@ class RonBattleEngine:
 
                 while percent_fired < 100 and target_index < len(stack.target_list):
                     target = stack.target_list[target_index]
+                    # A target that completed its disengage this round
+                    # is gone (canonical: fleeing tokens can be fired
+                    # upon only while still present)
+                    if target.disengaged:
+                        target_index += 1
+                        continue
                     dist_sq = stack.position.distance_to_squared(target.position)
                     range_sq = weapon.range ** 2 * self.GRID_SCALE_SQUARED
 
@@ -590,10 +692,24 @@ class RonBattleEngine:
         percent = attack.target_stack.percent_to_fire / 100.0
         hit_power = attack.weapon.power * attacker.token.quantity * percent
 
+        # Electronics modifiers read per-design aggregates, never
+        # multiplied by token quantity (C# passes Token.Design to both
+        # Calculate* functions, BattleEngine.cs:698-699)
+        source_design = attacker.token.design if attacker.token else None
+        target_design = target.token.design if target.token else None
+
         if attack.weapon.is_missile:
-            accuracy = attack.weapon.accuracy / 100.0
+            # Computers vs jammers modify torpedo accuracy (canonical
+            # Stars! rule; C# stub at BattleEngine.cs:920-929)
+            accuracy = attack.missile_accuracy(
+                source_design, target_design,
+                attack.weapon.accuracy / 100.0)
             self._fire_missile(attacker, target, hit_power, accuracy, battle)
         else:
+            # Capacitors boost / deflectors cut beam damage (canonical
+            # Stars! rule; C# stub at BattleEngine.cs:880-908)
+            hit_power *= attack.beam_power_modifier(
+                source_design, target_design)
             self._fire_beam(attacker, target, hit_power, battle)
 
         if target.token and target.token.armor <= 0:
@@ -660,6 +776,9 @@ class RonBattleEngine:
             target.token.shields = 0
 
         damage_done = initial - target.token.shields
+        if damage_done > 0:
+            # Drives "Disengage if Challenged" (canonical Stars! rule)
+            target.damage_taken = True
 
         step = BattleStepWeapons()
         step.damage = damage_done
@@ -681,6 +800,9 @@ class RonBattleEngine:
             return
 
         target.token.armor -= hit_power
+        if hit_power > 0:
+            # Drives "Disengage if Challenged" (canonical Stars! rule)
+            target.damage_taken = True
 
         step = BattleStepWeapons()
         step.damage = hit_power

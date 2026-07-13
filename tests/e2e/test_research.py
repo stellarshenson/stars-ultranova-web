@@ -78,10 +78,16 @@ class TestResearchFidelity:
                 "research bank must be cumulative - never reset"
             )
             last_bank = bank
-            if any("Tech Level" in m.get("text", "")
-                   for m in result["messages"]
-                   if m.get("audience") in (1, 0, -1)):
-                tech_advance_seen = True
+            for m in result["messages"]:
+                if (m.get("audience") in (1, 0, -1)
+                        and "Tech Level" in m.get("text", "")):
+                    tech_advance_seen = True
+                    # The message names the research field (not the
+                    # ResearchField enum's integer value)
+                    assert any(f"in the {field} field" in m["text"]
+                               for field in ("Energy", "Weapons",
+                                             "Propulsion", "Construction",
+                                             "Electronics", "Biotechnology"))
 
         assert research["levels"]["Energy"] > start_level
         # (d) Level-up turns announce the advance

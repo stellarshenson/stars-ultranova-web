@@ -351,6 +351,15 @@ class BattleEngine:
                 lamb.owner, {}).get("relation", "Enemy")
             if relation == "Enemy":
                 return True
+        elif plan.attack == "Enemies and Neutrals":
+            # Option exists in the C# dialog (BattlePlans.Designer.cs
+            # line 149) but BattleEngine.cs:479-493 never consumed it -
+            # canonical Stars! rule. The engine otherwise stays
+            # C#-exact (no target tiers, no tactics).
+            relation = wolf_data.empire_reports.get(
+                lamb.owner, {}).get("relation", "Enemy")
+            if relation in ("Enemy", "Neutral"):
+                return True
 
         return False
 
@@ -516,16 +525,49 @@ class BattleEngine:
             self._destroy_stack(attacker, target, battle)
 
     def _calculate_weapon_power(self, attack: WeaponDetails) -> float:
-        """Calculate weapon damage output."""
+        """
+        Calculate weapon damage output.
+
+        C# is a stub returning weapon.Power (BattleEngine.cs:880-908,
+        TODO priority 5). Beams additionally apply the canonical Stars!
+        capacitor/deflector modifier per project directive (the
+        commented C# intent at :888 subtracts instead of multiplying
+        and is not ported). Range dissipation stays out of scope.
+        """
         if attack.weapon is None:
             return 0.0
-        return float(attack.weapon.power)
+        power = float(attack.weapon.power)
+        if attack.weapon.is_beam:
+            source_design, target_design = self._attack_designs(attack)
+            power *= attack.beam_power_modifier(source_design, target_design)
+        return power
 
     def _calculate_weapon_accuracy(self, attack: WeaponDetails) -> float:
-        """Calculate weapon accuracy (missiles)."""
+        """
+        Calculate weapon accuracy (missiles), 0-100 scale.
+
+        C# is a stub returning weapon.Accuracy (BattleEngine.cs:920-929,
+        TODO priority 6; FIXME at :788). Missiles apply the canonical
+        Stars! computers-vs-jammers rule per project directive.
+        """
         if attack.weapon is None:
             return 100.0
-        return float(attack.weapon.accuracy)
+        accuracy = float(attack.weapon.accuracy)
+        if attack.weapon.is_missile:
+            source_design, target_design = self._attack_designs(attack)
+            accuracy = attack.missile_accuracy(
+                source_design, target_design, accuracy / 100.0) * 100.0
+        return accuracy
+
+    def _attack_designs(self, attack: WeaponDetails):
+        """Source and target ship designs of an attack (None-safe)."""
+        source = attack.source_stack
+        target = attack.target_stack.target if attack.target_stack else None
+        source_design = source.token.design \
+            if source and source.token else None
+        target_design = target.token.design \
+            if target and target.token else None
+        return source_design, target_design
 
     def _fire_beam(
         self,

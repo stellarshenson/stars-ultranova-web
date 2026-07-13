@@ -20,6 +20,9 @@ class GameCreate(BaseModel):
     # Accelerated BBS play (GameSettings.cs:63): starting population
     # 100000 instead of 25000
     accelerated_start: bool = False
+    # Victory condition settings (GameSettings.cs:49-58); partial dict
+    # in the VictorySettings shape - missing keys keep the C# defaults
+    victory: Optional[dict] = None
 
 
 class GameResponse(BaseModel):
@@ -71,7 +74,8 @@ async def create_game(game: GameCreate) -> GameResponse:
             universe_size=game.universe_size,
             seed=game.seed,
             race=game.race,
-            accelerated_start=game.accelerated_start
+            accelerated_start=game.accelerated_start,
+            victory=game.victory
         )
     except ValueError as e:
         # Over-budget race rejected (the web equivalent of the C# race

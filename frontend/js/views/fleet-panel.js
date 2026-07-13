@@ -338,9 +338,24 @@ const FleetPanel = {
      * Render fleet actions.
      */
     renderFleetActions(fleet) {
+        // Per-fleet battle plan selector (Fleet.cs:60; the C# fleet
+        // summary shows the plan, FleetReport.cs:130)
+        const planNames = Object.keys(GameState.battlePlans || {});
+        const planOptions = planNames.map(name =>
+            `<option value="${name}" ${name === (fleet.battle_plan || 'Default') ? 'selected' : ''}>${name}</option>`
+        ).join('');
+        const battlePlanRow = planNames.length ? `
+                <div class="stat-row">
+                    <span>Battle Plan:</span>
+                    <select class="form-select" id="fleet-battle-plan">
+                        ${planOptions}
+                    </select>
+                </div>` : '';
+
         return `
             <div class="fleet-section">
                 <h3>Actions</h3>
+                ${battlePlanRow}
                 <div class="action-buttons">
                     <button class="btn-small" id="btn-transfer-cargo">Cargo</button>
                     <button class="btn-small" id="btn-transfer-fleet">Xfer Fleet</button>
@@ -407,6 +422,30 @@ const FleetPanel = {
         const mergeBtn = document.getElementById('btn-merge-fleet');
         if (mergeBtn) {
             mergeBtn.addEventListener('click', () => this.showMergeDialog());
+        }
+
+        const planSelect = document.getElementById('fleet-battle-plan');
+        if (planSelect) {
+            planSelect.addEventListener('change', () => this.setBattlePlan(planSelect.value));
+        }
+    },
+
+    /**
+     * Assign a battle plan to the current fleet.
+     */
+    async setBattlePlan(planName) {
+        if (!this.currentFleet || !GameState.game) return;
+
+        try {
+            await ApiClient.setFleetBattlePlan(
+                GameState.game.id, this.currentFleet.key,
+                GameState.empireId, planName);
+            await GameState.refreshState();
+            this.refresh();
+            ApiClient.showStatus(`Battle plan: ${planName}`, 'info');
+        } catch (error) {
+            ApiClient.showStatus('Failed to set battle plan: ' + error.message, 'error');
+            this.refresh();
         }
     },
 

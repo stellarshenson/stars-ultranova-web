@@ -1,6 +1,28 @@
 # Recovery State
 
-## BRACE 2026-07-13 ~16:50 UTC - usage limits
+## BRACE 2026-07-13 ~23:37 CEST - usage limit hit mid-wave-4 (limit reset 23:00, resuming)
+
+**HORIZON: SESSION-ONLY.** Wave 4 workflow `wf_761e6d66-939` COMPLETED PARTIALLY - its last 5 agents died on the session limit (resets 23:00 Europe/Warsaw). Not paused - the workflow task finished; recovery = RESUME by run id.
+
+### State on disk (all verified green before the limit)
+
+- Suite: **713 passed** (baseline 682 + relations' 31). Waves 1-3 fully verified; wave 3 evidence in `walkthrough/final/wave3/` (12 frames incl. About-dialog dedication, storm blob, tooltip, encyclopedia + 6 painterly artworks)
+- Wave 4 landed so far: **impl:relations done** (Enemy/Neutral/Friend map, C# all-Enemy init, honored by battle targeting/minefields/sweeping/invasion/bombing/friendly refuel-repair, relation command API + relations dialog F7)
+- Wave 4 FAILED on limit (to re-run): impl:battle-plans, impl:electronics-battle, impl:score-victory, impl:storm-protection, verify:wave4
+- **RESUME COMMAND** (first action): `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/wave4-combat-score-victory.js", resumeFromRunId: "wf_761e6d66-939"})` - 4 specs + relations replay from cache, the 5 failed agents run live
+- Dev server: gunicorn port 9800 detached via `./start.sh`, health at `/health` (NOT /api/health). If down: `./start.sh`
+- Journal entries 33 (wave 3) + 34 (encyclopedia artwork) validated, 0 errors
+- Acceptance doc `docs/acc-crit-stars-ultranova-web.md` carries ALL user directives through 23:00: Mystery Trader canonical (wave 5), Correspondence Play (task #23), stargate rework (small/medium only, star-fuelled range, no minerals - wave 5), emission nebula glare (wave 5), wormhole stabiliser as station tech, Extensions: Exterminatus/Wrath of Milena, deep space station + packet relay, trade agreements, LLM narrator, officers + storylines, boarding/imprisonment, Henry's Hope, Jump wear, The Hunt (declared chase, growing stake, Vengeance Drive / Trophy of the Hunt prizes, rare confluence triggers)
+- Credits dedication (menu-bar.js showAbout): "For my beloved son Henry, alienated from his father for so long..." + "with thanks to my beloved wife Ewa" - PERMANENT, browser-verified, task #22 done
+- Tasks: #18 done, #19 in progress (wave 4), #20 wave 5 (updated scope), #21 wave 6 gate, #23 correspondence play
+- Commits: NONE pending authorization - working tree carries waves 3-4 uncommitted per policy
+
+### FIRST ACTION next session
+
+1. Read this section + TaskList
+2. Resume wave 4 via the command above; on completion: review verify, screenshot pass to walkthrough/final/wave4/, close #19, launch wave 5 (author script from wave-4 pattern + task #20 scope)
+
+## BRACE 2026-07-13 ~16:50 UTC - usage limits (RESOLVED - wave 3 recovered and completed)
 
 **HORIZON: SESSION-ONLY** - session dying on usage limits. Detached jobs survive; session-owned jobs (the running workflow) die and must be RESUMED, not relaunched from scratch.
 

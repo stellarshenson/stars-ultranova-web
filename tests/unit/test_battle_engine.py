@@ -47,6 +47,11 @@ class MockDesign:
     bombs: List = field(default_factory=list)
     power_rating: int = 1000
     summary: Optional[dict] = None
+    # Electronics aggregates (percent scale, as on ShipDesign)
+    jamming: float = 0.0
+    battle_computer_accuracy: float = 0.0
+    capacitor: float = 0.0
+    beam_deflector: float = 0.0
 
     def update(self):
         pass
@@ -213,6 +218,46 @@ class TestBattlePlan:
         assert restored.name == "Aggressive"
         assert restored.attack == "Everyone"
 
+    def test_tactic_strings_match_csharp_dialog(self):
+        # Exact strings from BattlePlans.Designer.cs:168-174
+        from backend.server.battle.battle_plan import TACTICS
+        assert TACTICS == [
+            "Disengage",
+            "Disengage if Challenged",
+            "Maximise Damage",
+            "Maximise Damage Ratio",
+            "Maximise Net Damage",
+            "Minimise Damage to Self",
+        ]
+
+    def test_attack_strings_match_csharp_dialog(self):
+        # Exact strings from BattlePlans.Designer.cs:147-150
+        from backend.server.battle.battle_plan import ATTACK_OPTIONS
+        assert ATTACK_OPTIONS == [
+            "Enemies", "Enemies and Neutrals", "Everyone"]
+
+    def test_plan_cap_and_labels(self):
+        from backend.server.battle.battle_plan import (
+            MAX_BATTLE_PLANS, VICTIMS_LABELS)
+        assert MAX_BATTLE_PLANS == 14  # canonical Stars! cap
+        assert len(VICTIMS_LABELS) == 7
+        assert VICTIMS_LABELS[Victims.CAPITAL_SHIP] == "Capital Ship"
+
+    def test_full_custom_plan_round_trip(self):
+        plan = BattlePlan(
+            name="Sniper",
+            primary_target=int(Victims.CAPITAL_SHIP),
+            secondary_target=int(Victims.STARBASE),
+            tertiary_target=int(Victims.BOMBER),
+            quaternary_target=int(Victims.ESCORT),
+            quinary_target=int(Victims.SUPPORT_SHIP),
+            tactic="Disengage if Challenged",
+            attack="Enemies and Neutrals",
+            target_id=3,
+        )
+        restored = BattlePlan.from_dict(plan.to_dict())
+        assert restored == plan
+
 
 class TestVictims:
     """Tests for Victims enum."""
@@ -359,6 +404,60 @@ class TestWeaponDetails:
         assert weapons[0].weapon.initiative == 50
         assert weapons[1].weapon.initiative == 100
         assert weapons[2].weapon.initiative == 200
+
+    def test_missile_accuracy_computer_cuts_miss_chance(self):
+        """Base 0.75 + computer 20: 1 - 0.25 * 0.8 = 0.80."""
+        details = WeaponDetails()
+        source = MockDesign(battle_computer_accuracy=20.0)
+        target = MockDesign()
+        assert details.missile_accuracy(source, target, 0.75) == \
+            pytest.approx(0.80)
+
+    def test_missile_accuracy_jammer_cuts_hit_chance(self):
+        """Base 0.75 vs jammer 20: 0.75 * 0.8 = 0.60."""
+        details = WeaponDetails()
+        source = MockDesign()
+        target = MockDesign(jamming=20.0)
+        assert details.missile_accuracy(source, target, 0.75) == \
+            pytest.approx(0.60)
+
+    def test_missile_accuracy_computer_vs_jammer_matchup(self):
+        """Matchup matrix: computers modify the miss chance BEFORE
+        jammers cut the hit chance (canonical order-independent
+        multiplicative form)."""
+        details = WeaponDetails()
+        cases = [
+            # (computer_pct, jamming_pct, expected for base 0.75)
+            (0.0, 0.0, 0.75),
+            (20.0, 0.0, 0.80),
+            (0.0, 20.0, 0.60),
+            (20.0, 20.0, 0.64),
+            (50.0, 50.0, 0.4375),   # (1 - 0.25*0.5) * 0.5
+            (36.0, 28.0, 0.6048),   # 2x BC vs Jammer 20+10 aggregates
+        ]
+        for computer, jamming, expected in cases:
+            source = MockDesign(battle_computer_accuracy=computer)
+            target = MockDesign(jamming=jamming)
+            assert details.missile_accuracy(source, target, 0.75) == \
+                pytest.approx(expected), (computer, jamming)
+
+    def test_missile_accuracy_none_designs(self):
+        """None designs leave the base accuracy unchanged."""
+        details = WeaponDetails()
+        assert details.missile_accuracy(None, None, 0.75) == \
+            pytest.approx(0.75)
+
+    def test_beam_power_modifier(self):
+        """Capacitor 21 vs deflector 19: 1.21 * 0.81 = 0.9801."""
+        details = WeaponDetails()
+        source = MockDesign(capacitor=21.0)
+        target = MockDesign(beam_deflector=19.0)
+        assert details.beam_power_modifier(source, target) == \
+            pytest.approx(0.9801)
+        assert details.beam_power_modifier(None, None) == 1.0
+        assert details.beam_power_modifier(
+            MockDesign(capacitor=250.0), MockDesign()) == \
+            pytest.approx(3.5)
 
 
 # =============================================================================
@@ -745,6 +844,437 @@ class TestBattleDesignLearning:
         server.all_empires[0].empire_reports.clear()
         assert engine._are_enemies(stacks[0], stacks[1]) is True
 
+        # Neutral contact is not attacked under "Enemies"
+        # (BattleEngine.cs:487-491)
+        server.all_empires[0].empire_reports[1] = {"relation": "Neutral"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is False
+
         # Friendly relation is not attacked
         server.all_empires[0].empire_reports[1] = {"relation": "Friend"}
         assert engine._are_enemies(stacks[0], stacks[1]) is False
+
+
+# =============================================================================
+# Attack-who plan option (BattleEngine.cs:468-494 + dialog parity)
+# =============================================================================
+
+class TestAreEnemies:
+    """Battle plan attack option drives target eligibility."""
+
+    def _make_setup(self, engine_cls):
+        server = MockServerData()
+        stacks = []
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            server.all_empires[i] = empire
+
+            stack = Stack()
+            stack.owner = i
+            stack.token = StackToken(design_key=(i << 32) | 1,
+                                     quantity=1, armor=100.0)
+            stack.token.has_weapons = True
+            stacks.append(stack)
+
+        engine = engine_cls(server, [])
+        return server, engine, stacks
+
+    @pytest.mark.parametrize("engine_cls", [BattleEngine, RonBattleEngine])
+    def test_enemies_and_neutrals(self, engine_cls):
+        """Dialog option (BattlePlans.Designer.cs:149) the C# engine
+        never consumed - canonical Stars! rule: attacks Enemy and
+        Neutral contacts, spares Friends."""
+        server, engine, stacks = self._make_setup(engine_cls)
+        server.all_empires[0].battle_plans["Default"] = BattlePlan(
+            attack="Enemies and Neutrals")
+
+        server.all_empires[0].empire_reports[1] = {"relation": "Enemy"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is True
+
+        server.all_empires[0].empire_reports[1] = {"relation": "Neutral"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is True
+
+        server.all_empires[0].empire_reports[1] = {"relation": "Friend"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is False
+
+    @pytest.mark.parametrize("engine_cls", [BattleEngine, RonBattleEngine])
+    def test_enemies_ignores_neutral(self, engine_cls):
+        server, engine, stacks = self._make_setup(engine_cls)
+        server.all_empires[0].battle_plans["Default"] = BattlePlan(
+            attack="Enemies")
+        server.all_empires[0].empire_reports[1] = {"relation": "Neutral"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is False
+
+    @pytest.mark.parametrize("engine_cls", [BattleEngine, RonBattleEngine])
+    def test_target_id_overrides_friendship(self, engine_cls):
+        """BattleEngine.cs:484-487: a specific TargetId is attacked
+        regardless of relation."""
+        server, engine, stacks = self._make_setup(engine_cls)
+        server.all_empires[0].battle_plans["Default"] = BattlePlan(
+            attack="Enemies", target_id=1)
+        server.all_empires[0].empire_reports[1] = {"relation": "Friend"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is True
+
+
+# =============================================================================
+# Target-type priority and tactics (Ron engine; canonical Stars! rules)
+# =============================================================================
+
+def _make_battle_stack(owner, stack_id, x, y, armor=200.0, shields=0.0,
+                       quantity=1, has_weapons=True, battle_speed=1.0,
+                       weapon_range=1, battle_plan="Default",
+                       is_bomber=False, mass=100):
+    """Build a battle-ready Stack with a mock design."""
+    design = MockDesign(key=stack_id, battle_speed=battle_speed,
+                        has_weapons=has_weapons)
+    design.weapons = [MockWeapon(range=weapon_range)] if has_weapons else []
+
+    stack = Stack()
+    stack.key = (owner << 32) | stack_id
+    stack.owner = owner
+    stack.name = f"Stack #{stack_id}"
+    stack.battle_plan = battle_plan
+    stack.position = NovaPoint(x, y)
+    stack.token = StackToken(design_key=stack_id, quantity=quantity,
+                             armor=armor, shields=shields, mass=mass)
+    stack.token.has_weapons = has_weapons
+    stack.token.is_bomber = is_bomber
+    stack.token.battle_speed = battle_speed
+    stack.token.design = design
+    return stack
+
+
+class TestRonTargetPriority:
+    """Plan target tiers gate what an armed stack may engage."""
+
+    def _make_server(self):
+        server = MockServerData()
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+            server.all_empires[i] = empire
+        return server
+
+    def test_primary_tier_beats_attractiveness(self):
+        """A bomber matching the primary tier is chosen over a far
+        more attractive armed ship on a lower tier."""
+        server = self._make_server()
+        server.all_empires[0].battle_plans["AntiBomber"] = BattlePlan(
+            name="AntiBomber", attack="Everyone",
+            primary_target=int(Victims.BOMBER),
+            secondary_target=int(Victims.ARMED_SHIP))
+        engine = RonBattleEngine(server, [])
+
+        wolf = _make_battle_stack(0, 1, 200, 200,
+                                  battle_plan="AntiBomber")
+        # Bomber: tanky, hence unattractive (cost/defenses low)
+        bomber = _make_battle_stack(1, 2, 800, 200, armor=5000.0,
+                                    has_weapons=False, is_bomber=True)
+        # Armed ship: fragile, hence highly attractive
+        juicy = _make_battle_stack(1, 3, 800, 300, armor=10.0)
+        assert (engine._get_attractiveness(juicy)
+                > engine._get_attractiveness(bomber))
+
+        assert engine._select_targets([wolf, bomber, juicy]) > 0
+        assert wolf.target is bomber
+        # Fire allocation consumes target_list from the front: the
+        # priority target eats the fire first
+        assert wolf.target_list[0] is bomber
+
+    def test_no_tier_match_means_no_engagement(self):
+        """A plan whose five tiers match nothing about the lamb does
+        not engage it (canonical: target types define what may be
+        shot at; the C# engine never consumed the tiers)."""
+        server = self._make_server()
+        server.all_empires[0].battle_plans["BasesOnly"] = BattlePlan(
+            name="BasesOnly", attack="Everyone",
+            primary_target=int(Victims.STARBASE),
+            secondary_target=int(Victims.STARBASE),
+            tertiary_target=int(Victims.STARBASE),
+            quaternary_target=int(Victims.STARBASE),
+            quinary_target=int(Victims.STARBASE))
+        engine = RonBattleEngine(server, [])
+
+        wolf = _make_battle_stack(0, 1, 200, 200,
+                                  battle_plan="BasesOnly")
+        # Unarmed freighter - matches no STARBASE tier
+        freighter = _make_battle_stack(1, 2, 800, 200,
+                                       has_weapons=False)
+
+        # The freighter still (unarmed) targets the wolf to flee from,
+        # but the wolf engages nothing
+        engine._select_targets([wolf, freighter])
+        assert wolf.target is None
+        assert wolf.target_list == []
+
+
+class TestTactics:
+    """Plan tactics drive battle movement (canonical Stars! rules;
+    the C# engine never consumed Tactic - BattleEngine.cs:603 TODO)."""
+
+    def _setup(self, tactic, runner_armed=True, runner_shields=0.0,
+               runner_range=1):
+        server = MockServerData()
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+            server.all_empires[i] = empire
+        server.all_empires[1].battle_plans["Custom"] = BattlePlan(
+            name="Custom", tactic=tactic, attack="Everyone")
+        engine = RonBattleEngine(server, [])
+
+        wolf = _make_battle_stack(0, 1, 200, 200)
+        runner = _make_battle_stack(1, 2, 600, 200,
+                                    has_weapons=runner_armed,
+                                    shields=runner_shields,
+                                    weapon_range=runner_range,
+                                    battle_plan="Custom")
+        return server, engine, [wolf, runner], wolf, runner
+
+    def test_disengage_flees_and_leaves_after_seven_moves(self):
+        server, engine, stacks, wolf, runner = self._setup("Disengage")
+        battle = BattleReport()
+
+        # Rounds 5+ (past the random-flip opening): the runner flees
+        # its target every round (+x, away from the wolf at 200)
+        for i, battle_round in enumerate(range(5, 12)):
+            engine._select_targets(stacks)
+            x_before = runner.position.x
+            engine._move_stacks(stacks, battle_round, battle)
+            assert runner.position.x > x_before
+            assert runner.flee_rounds == i + 1
+
+        # Canonical: 7 squares of movement to leave the battle
+        assert runner.disengaged is True
+
+        # A disengaged stack is neither targeted nor fires
+        assert engine._select_targets(stacks) == 0
+        assert wolf.target is None
+        assert engine._generate_attacks(stacks) == []
+
+    def test_unarmed_disengage_flees_and_leaves(self):
+        """The e2e freighter mechanic: an unarmed stack with a
+        Disengage plan leaves the board instead of merely keeping out
+        of weapon range."""
+        server, engine, stacks, wolf, runner = self._setup(
+            "Disengage", runner_armed=False)
+        battle = BattleReport()
+
+        for battle_round in range(5, 12):
+            engine._select_targets(stacks)
+            engine._move_stacks(stacks, battle_round, battle)
+
+        assert runner.disengaged is True
+        assert engine._select_targets(stacks) == 0
+
+    def test_disengage_if_challenged_closes_then_flees(self):
+        server, engine, stacks, wolf, runner = self._setup(
+            "Disengage if Challenged")
+        battle = BattleReport()
+
+        # Undamaged: behaves as Maximise Damage (closes on the wolf)
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 5, battle)
+        assert runner.position.x < 600
+        assert runner.flee_rounds == 0
+
+        # First damage flips the tactic to Disengage
+        engine._damage_armor(wolf, runner, 10.0, battle)
+        assert runner.damage_taken is True
+
+        x_after_damage = runner.position.x
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 6, battle)
+        assert runner.position.x > x_after_damage
+        assert runner.flee_rounds == 1
+
+    @pytest.mark.parametrize("tactic", ["Maximise Net Damage",
+                                        "Maximise Damage Ratio",
+                                        "Minimise Damage to Self"])
+    def test_stand_off_holds_at_own_weapon_range(self, tactic):
+        server, engine, stacks, wolf, runner = self._setup(
+            tactic, runner_shields=50.0, runner_range=4)
+        battle = BattleReport()
+
+        # Out of range: the stack closes. The wolf moves first in the
+        # same pass (200 -> 300), so the runner sees distance 500 > 400
+        runner.position = NovaPoint(800, 200)
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 5, battle)
+        assert runner.position.x < 800
+
+        # Within own longest weapon range (4 * GRID_SCALE): hold
+        wolf.position = NovaPoint(200, 200)
+        runner.position = NovaPoint(500, 200)  # distance <= 400
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 6, battle)
+        assert (runner.position.x, runner.position.y) == (500, 200)
+
+    def test_minimise_damage_to_self_falls_back_shieldless(self):
+        server, engine, stacks, wolf, runner = self._setup(
+            "Minimise Damage to Self", runner_shields=0.0,
+            runner_range=4)
+        battle = BattleReport()
+
+        # In range but shields down: falls back instead of holding
+        runner.position = NovaPoint(500, 200)
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 5, battle)
+        assert runner.position.x > 500
+
+    def test_maximise_damage_keeps_closing(self):
+        """Regression guard: the default tactic still closes."""
+        server, engine, stacks, wolf, runner = self._setup(
+            "Maximise Damage")
+        battle = BattleReport()
+
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 5, battle)
+        assert runner.position.x < 600
+        assert runner.flee_rounds == 0
+        assert runner.disengaged is False
+
+
+# =============================================================================
+# Electronics in battle (canonical Stars! rules; the C# consumption
+# is a stub - BattleEngine.cs:880-929)
+# =============================================================================
+
+class TestElectronicsInBattle:
+    """Capacitors/deflectors modify beam damage and computers/jammers
+    modify torpedo accuracy inside both battle engines."""
+
+    def _make_stack(self, key, owner, design, quantity=1,
+                    armor=10000.0, shields=10000.0):
+        stack = Stack()
+        stack.key = key
+        stack.owner = owner
+        stack.token = StackToken()
+        stack.token.design = design
+        stack.token.quantity = quantity
+        stack.token.armor = armor
+        stack.token.shields = shields
+        return stack
+
+    def _attack(self, attacker_design, target_design, weapon,
+                attacker_quantity=1):
+        attacker = self._make_stack(1, 0, attacker_design,
+                                    quantity=attacker_quantity)
+        target = self._make_stack(2, 1, target_design)
+        attack = WeaponDetails()
+        attack.source_stack = attacker
+        attack.target_stack = TargetPercent(target, 100)
+        attack.weapon = weapon
+        return attack
+
+    @staticmethod
+    def _weapon_steps(battle):
+        return [s for s in battle.steps
+                if isinstance(s, BattleStepWeapons)]
+
+    def test_ron_beam_capacitor_boost(self):
+        """Ron beam damage = power * quantity * (1 + capacitor/100);
+        the deep-shielded target captures it in one shields step."""
+        engine = RonBattleEngine(MockServerData(), [])
+        attack = self._attack(MockDesign(capacitor=10.0), MockDesign(),
+                              MockWeapon(power=10), attacker_quantity=2)
+        battle = BattleReport()
+        engine._execute_attack(attack, battle)
+        steps = self._weapon_steps(battle)
+        assert len(steps) == 1
+        assert steps[0].damage == pytest.approx(10 * 2 * 1.1)
+
+    def test_ron_beam_deflector_cut(self):
+        """Ron beam damage x 0.9 against a deflector-fitted target."""
+        engine = RonBattleEngine(MockServerData(), [])
+        attack = self._attack(MockDesign(),
+                              MockDesign(beam_deflector=10.0),
+                              MockWeapon(power=10), attacker_quantity=2)
+        battle = BattleReport()
+        engine._execute_attack(attack, battle)
+        steps = self._weapon_steps(battle)
+        assert len(steps) == 1
+        assert steps[0].damage == pytest.approx(10 * 2 * 0.9)
+
+    def test_ron_missile_jammer_reduces_damage(self):
+        """Same seeded roll: the jammered target takes strictly less
+        torpedo damage (Ron's percent_hit scales with accuracy)."""
+        import random
+
+        totals = []
+        for jamming in (0.0, 50.0):
+            engine = RonBattleEngine(MockServerData(), [])
+            engine._random = random.Random(7)
+            attack = self._attack(MockDesign(),
+                                  MockDesign(jamming=jamming),
+                                  MockWeapon(power=100, accuracy=75,
+                                             group="torpedo"))
+            battle = BattleReport()
+            engine._execute_attack(attack, battle)
+            totals.append(sum(s.damage for s in
+                              self._weapon_steps(battle)))
+        assert totals[1] < totals[0]
+
+    def test_standard_missile_jammer_turns_hit_into_miss(self):
+        """Seeded rng rolls 49: base accuracy 75 hits (shields 32 +
+        armor 32); vs jammer 50 accuracy drops to 37.5 and the same
+        roll misses (splash 64/8 = 8 to shields)."""
+        import random
+
+        engine = BattleEngine(MockServerData(), [])
+        engine._random = random.Random(0)  # first randint(0,100) == 49
+        attack = self._attack(MockDesign(), MockDesign(),
+                              MockWeapon(power=64, accuracy=75,
+                                         group="torpedo"))
+        battle = BattleReport()
+        engine._execute_attack(attack, battle)
+        damages = [s.damage for s in self._weapon_steps(battle)]
+        assert damages == [pytest.approx(32.0), pytest.approx(32.0)]
+
+        engine = BattleEngine(MockServerData(), [])
+        engine._random = random.Random(0)
+        attack = self._attack(MockDesign(), MockDesign(jamming=50.0),
+                              MockWeapon(power=64, accuracy=75,
+                                         group="torpedo"))
+        battle = BattleReport()
+        engine._execute_attack(attack, battle)
+        damages = [s.damage for s in self._weapon_steps(battle)]
+        assert damages == [pytest.approx(8.0)]
+
+    def test_standard_missile_computer_turns_miss_into_hit(self):
+        """Mirror case, same roll 49: base accuracy 40 misses; with a
+        20% computer accuracy rises to (1 - 0.6 * 0.8) * 100 = 52 and
+        the same roll hits."""
+        import random
+
+        engine = BattleEngine(MockServerData(), [])
+        engine._random = random.Random(0)  # first randint(0,100) == 49
+        attack = self._attack(MockDesign(), MockDesign(),
+                              MockWeapon(power=64, accuracy=40,
+                                         group="torpedo"))
+        battle = BattleReport()
+        engine._execute_attack(attack, battle)
+        damages = [s.damage for s in self._weapon_steps(battle)]
+        assert damages == [pytest.approx(8.0)]  # miss splash
+
+        engine = BattleEngine(MockServerData(), [])
+        engine._random = random.Random(0)
+        attack = self._attack(
+            MockDesign(battle_computer_accuracy=20.0), MockDesign(),
+            MockWeapon(power=64, accuracy=40, group="torpedo"))
+        battle = BattleReport()
+        engine._execute_attack(attack, battle)
+        damages = [s.damage for s in self._weapon_steps(battle)]
+        assert damages == [pytest.approx(32.0), pytest.approx(32.0)]
+
+    def test_standard_beam_power_uses_modifier(self):
+        """Standard engine beam power = weapon.power * modifier
+        (BattleEngine.cs:880-908 stub returns raw power)."""
+        engine = BattleEngine(MockServerData(), [])
+        attack = self._attack(MockDesign(capacitor=21.0),
+                              MockDesign(beam_deflector=19.0),
+                              MockWeapon(power=100))
+        assert engine._calculate_weapon_power(attack) == \
+            pytest.approx(100 * 0.9801)
+        # Missiles are unaffected by capacitors/deflectors
+        attack.weapon = MockWeapon(power=100, group="torpedo")
+        assert engine._calculate_weapon_power(attack) == 100.0

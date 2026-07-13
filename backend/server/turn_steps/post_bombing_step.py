@@ -238,10 +238,8 @@ class PostBombingStep(ITurnStep):
         Perform invasion of an inhabited planet.
 
         Port of InvadeTask.cs IsValid (lines 66-141) and Perform
-        (lines 143-243). The Friend/Neutral relation cancellation
-        (InvadeTask.cs:112-119) is not ported yet - the relations
-        system arrives with Wave 4; today all foreign empires are
-        enemies.
+        (lines 143-243), including the Friend/Neutral relation
+        cancellation (InvadeTask.cs:110-131).
 
         Args:
             fleet: Invading fleet.
@@ -288,6 +286,26 @@ class PostBombingStep(ITurnStep):
                 text=prefix + f"{star.name} but it is not colonised. "
                      f"You must send a ship with a colony module and "
                      f"orders to colonise to take this system.",
+                message_type="Invasion",
+                fleet_key=fleet.key
+            ))
+            return messages
+
+        # Friend/Neutral relation cancels the invasion
+        # (InvadeTask.cs:110-131). The check sits before the troop
+        # commit below - IsValid runs before Perform in C# - so a
+        # cancelled invasion keeps its colonists aboard
+        relation = sender.empire_reports.get(
+            star.owner, {}).get("relation", "Enemy")
+        if relation in ("Friend", "Neutral"):
+            race_name = (sender.empire_reports.get(
+                star.owner, {}).get("race_name")
+                or getattr(receiver, 'race_name', '')
+                or f"empire {star.owner}")
+            messages.append(Message(
+                audience=fleet.owner,
+                text=prefix + f"{star.name} but the {race_name} are "
+                     f"not our enemies. Order has been cancelled.",
                 message_type="Invasion",
                 fleet_key=fleet.key
             ))

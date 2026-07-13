@@ -78,8 +78,11 @@ class BombingStep(ITurnStep):
         return False
 
     def _is_enemy(self, empire, target_owner: int) -> bool:
-        """All other empires are enemies (relations default to Enemy)."""
-        return empire.id != target_owner
+        """Only Enemy-relation planets are bombed (Bombing.cs:61 via
+        EmpireData.cs IsEnemy, lines 173-176). Unknown empires default
+        to Enemy (PlayerRelation enum member 0, EmpireData.cs:34-39)."""
+        return empire.empire_reports.get(
+            target_owner, {}).get("relation", "Enemy") == "Enemy"
 
     def _fleet_bombs(self, fleet, server_state: 'ServerData'):
         """

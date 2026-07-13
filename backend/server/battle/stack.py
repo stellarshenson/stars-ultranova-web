@@ -99,6 +99,15 @@ class Stack:
     velocity_vector: Optional[NovaPoint] = None
     in_orbit: Optional['Star'] = None
 
+    # Tactic state (battle-local, canonical Stars! disengage rules;
+    # C# absent - BattleEngine.cs:603 TODO admits fleeing is
+    # unimplemented). damage_taken drives "Disengage if Challenged";
+    # a stack that completes DISENGAGE_MOVES flee moves has left the
+    # battle (disengaged) and neither fires nor is targeted.
+    damage_taken: bool = False
+    flee_rounds: int = 0
+    disengaged: bool = False
+
     # Cargo
     cargo: Cargo = field(default_factory=Cargo)
 
@@ -150,6 +159,9 @@ class Stack:
         stack.in_orbit = other.in_orbit
         stack.target = other.target
         stack.target_list = list(other.target_list)
+        stack.damage_taken = other.damage_taken
+        stack.flee_rounds = other.flee_rounds
+        stack.disengaged = other.disengaged
         if other.velocity_vector:
             stack.velocity_vector = NovaPoint(
                 other.velocity_vector.x, other.velocity_vector.y
