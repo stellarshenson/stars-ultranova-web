@@ -8,9 +8,9 @@
 
 - Dev server: gunicorn on port 9800, PID 284746, detached via `./start.sh`, logs `server.log`, health 200. No action needed. If ever down: `./start.sh`
 
-### Dies with the session - RESUME FIRST
+### PAUSED by brace - /brace-resume MUST RESUME THIS
 
-- Wave 3 workflow `wf_49e7938a-7e5` (session-owned, killed at session death). Completed agents are cached on disk and replay instantly on resume:
+- Wave 3 workflow `wf_49e7938a-7e5` - **explicitly PAUSED via TaskStop (task whng2iiw4) at 2026-07-13 ~17:00 UTC** per user brace order. 6 results cached at pause (4 specs + cargo-ops + repair-refuel). Completed agents replay instantly on resume:
   - Done: 4 spec scouts + impl:cargo-ops (suite 594 passed) + impl:repair-refuel (suite 620 passed)
   - In flight at brace: impl:cloaking-intel (its partial file edits may sit in the working tree; agents re-read files before editing, so a re-run is safe)
   - Still to run: impl:mine-sweeping, impl:storm-overhaul, impl:encyclopedia-ui, verify:wave3
@@ -44,8 +44,8 @@
 - Out-of-scope declarations (user veto window open): mystery trader, random events, multiplayer turn model, extended diplomacy; mineral packets = wave 5 flesh-or-cut decision
 - User UX directives all recorded in acc-crit doc + task descriptions (storm blob shape/dashed red boundary/local intensity, encyclopedia+tooltips, zoom clamp fit/1.2, panel padding, race icons)
 
-### FIRST ACTION for next session
+### FIRST ACTION for next session (/brace-resume)
 
 1. Read this file, then `docs/acc-crit-stars-ultranova-web.md` + TaskList
-2. Resume Wave 3: the Workflow resume command above (cached agents replay; remaining 4-5 agents run live)
+2. **RESUME the paused Wave 3 workflow** - the exact Workflow resume command above (prior run already stopped via TaskStop, safe to resume immediately; 6 cached agents replay, then cloaking-intel re-runs live followed by mine-sweeping, storm-overhaul, encyclopedia-ui, verify:wave3)
 3. On wave-3 completion: review verify result, screenshot pass to `walkthrough/final/wave3/`, close task #18, launch Wave 4 per task #19
