@@ -53,19 +53,20 @@ class WaypointTaskBase(ABC):
 
     @classmethod
     def from_dict(cls, data: dict) -> 'WaypointTaskBase':
-        """Create task from dictionary."""
-        task_type = data.get("type", "NoTask")
-        if task_type == "CargoTask":
+        """Create task from dictionary. Accepts both 'XxxTask' and short names."""
+        task_type = str(data.get("type", "NoTask"))
+        normalized = task_type.removesuffix("Task").removesuffix("TaskObj").lower()
+        if normalized == "cargo":
             return CargoTaskObj.from_dict(data)
-        elif task_type == "ColoniseTask":
+        elif normalized in ("colonise", "colonize"):
             return ColoniseTaskObj.from_dict(data)
-        elif task_type == "LayMinesTask":
+        elif normalized == "laymines":
             return LayMinesTaskObj.from_dict(data)
-        elif task_type == "InvadeTask":
+        elif normalized == "invade":
             return InvadeTaskObj.from_dict(data)
-        elif task_type == "ScrapTask":
+        elif normalized == "scrap":
             return ScrapTaskObj.from_dict(data)
-        elif task_type == "SplitMergeTask":
+        elif normalized == "splitmerge":
             return SplitMergeTaskObj.from_dict(data)
         return NoTaskObj()
 

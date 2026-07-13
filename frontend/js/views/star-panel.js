@@ -15,13 +15,12 @@ const StarPanel = {
     // Current star being displayed
     currentStar: null,
 
-    // Item costs (from game data - simplified for now)
-    itemCosts: {
-        factory: { ironium: 4, boranium: 0, germanium: 4, resources: 10 },
-        mine: { ironium: 0, boranium: 0, germanium: 4, resources: 5 },
-        defense: { ironium: 5, boranium: 5, germanium: 5, resources: 15 },
-        scout: { ironium: 8, boranium: 2, germanium: 7, resources: 25 },
-        colony_ship: { ironium: 20, boranium: 10, germanium: 15, resources: 50 }
+    // Infrastructure costs (server-authoritative values mirrored for
+    // completion estimates; ship costs come from GameState.designs)
+    infraCosts: {
+        FACTORY: { ironium: 0, boranium: 0, germanium: 4, resources: 10 },
+        MINE: { ironium: 0, boranium: 0, germanium: 0, resources: 5 },
+        DEFENSE: { ironium: 5, boranium: 5, germanium: 5, resources: 15 }
     },
 
     /**
@@ -39,6 +38,7 @@ const StarPanel = {
         GameState.on('fleetSelected', () => this.hide());
         GameState.on('selectionCleared', () => this.hide());
         GameState.on('turnGenerated', () => this.refresh());
+        GameState.on('stateRefreshed', () => this.refresh());
 
         console.log('Star panel initialized');
     },
@@ -86,7 +86,7 @@ const StarPanel = {
         if (!star || !this.container) return;
 
         const isColonized = star.colonists > 0;
-        const isOwned = star.owner === 1;  // Player owns it
+        const isOwned = star.intel === 'owned';
 
         // Calculate habitability value (simplified - based on whether colonized and environment)
         const habitability = this.calculateHabitability(star);
@@ -128,9 +128,12 @@ const StarPanel = {
      * Returns percentage from -45 to 100.
      */
     calculateHabitability(star) {
-        // Use stored value if available
-        if (star.habitability !== undefined) {
+        // Use server-computed value when available
+        if (star.habitability !== undefined && star.habitability !== null) {
             return Math.round(star.habitability);
+        }
+        if (star.intel === 'unknown') {
+            return 0;
         }
 
         // Calculate based on environment (simplified)
@@ -494,8 +497,21 @@ const StarPanel = {
      * Get the cost of a production item.
      */
     getItemCost(item) {
-        const itemType = (item.type || item.name || '').toLowerCase().replace(' ', '_');
-        return this.itemCosts[itemType] || { ironium: 10, boranium: 10, germanium: 10, resources: 20 };
+        const ptype = item.production_type || '';
+        if (this.infraCosts[ptype]) return this.infraCosts[ptype];
+        // Ship or starbase - look up the design cost
+        let key = item.design_key;
+        if (typeof key === 'string') key = parseInt(key, 16);
+        const design = (GameState.designs || []).find(d => d.key === key);
+        if (design && design.cost) {
+            return {
+                ironium: design.cost.ironium || 0,
+                boranium: design.cost.boranium || 0,
+                germanium: design.cost.germanium || 0,
+                resources: design.cost.energy || 0
+            };
+        }
+        return { ironium: 0, boranium: 0, germanium: 0, resources: 20 };
     },
 
     /**
@@ -519,7 +535,7 @@ const StarPanel = {
         const startYear = Math.floor(resourcesUsedByPrior / resourcesPerYear);
         const endYear = Math.ceil((resourcesUsedByPrior + totalResourceCost) / resourcesPerYear);
 
-        const currentYear = GameState.game ? GameState.game.turn + 2400 : 2400;
+        const currentYear = GameState.game ? GameState.game.turn : 2100;
         return {
             startYear: currentYear + startYear,
             endYear: currentYear + endYear,
@@ -640,7 +656,7 @@ const StarPanel = {
     /**
      * Show production dialog.
      */
-    showProductionDialog(event) {
+    async showProductionDialog(event) {
         // Calculate default quantity based on modifier keys
         let defaultQuantity = 1;
         if (event && event.shiftKey && event.ctrlKey) {
@@ -651,50 +667,69 @@ const StarPanel = {
             defaultQuantity = 10;
         }
 
-        // Build options with costs
-        const options = [
-            '1. Factories (4 Ir, 4 Ge, 10 res)',
-            '2. Mines (4 Ge, 5 res)',
-            '3. Defenses (5 Ir, 5 Bo, 5 Ge, 15 res)',
-            '4. Scout Ship (8 Ir, 2 Bo, 7 Ge, 25 res)',
-            '5. Colony Ship (20 Ir, 10 Bo, 15 Ge, 50 res)'
-        ].join('\n');
-
-        const choice = prompt(`Add to production queue:\n${options}\n\nEnter number:`);
-        if (!choice) return;
-
-        const types = ['factory', 'mine', 'defense', 'scout', 'colony_ship'];
-        const index = parseInt(choice) - 1;
-
-        if (index >= 0 && index < types.length) {
-            const quantityHint = defaultQuantity > 1 ? ` (default ${defaultQuantity} from modifier keys)` : '';
-            const quantity = parseInt(prompt(`Quantity${quantityHint}:`, defaultQuantity.toString())) || 1;
-            this.addToProductionQueue(types[index], quantity);
+        // Buildable items: infrastructure + own ship designs
+        const items = [
+            { label: 'Factory (4 Ge, 10 res)', production_type: 'FACTORY', name: 'Factory' },
+            { label: 'Mine (5 res)', production_type: 'MINE', name: 'Mine' },
+            { label: 'Defense (5 Ir, 5 Bo, 5 Ge, 15 res)', production_type: 'DEFENSE', name: 'Defense' }
+        ];
+        for (const design of (GameState.designs || [])) {
+            if (design.obsolete) continue;
+            const c = design.cost || {};
+            const ptype = design.is_starbase ? 'STARBASE' : 'SHIP';
+            items.push({
+                label: `${design.name} (${c.ironium || 0} Ir, ${c.boranium || 0} Bo, ` +
+                       `${c.germanium || 0} Ge, ${c.energy || 0} res)`,
+                production_type: ptype,
+                name: design.name,
+                design_key: design.key
+            });
         }
+
+        const choiceIdx = await Dialogs.selectOption(
+            'Add to Production Queue',
+            'Select an item to build:',
+            items.map(i => i.label)
+        );
+        if (choiceIdx === null || choiceIdx === undefined) return;
+        const item = items[choiceIdx];
+
+        const quantityStr = await Dialogs.promptText(
+            'Quantity', `How many ${item.name}s to build?`, defaultQuantity.toString()
+        );
+        if (quantityStr === null) return;
+        const quantity = parseInt(quantityStr) || 1;
+
+        this.addToProductionQueue(item, quantity);
     },
 
     /**
      * Add item to production queue.
      */
-    async addToProductionQueue(type, quantity) {
+    async addToProductionQueue(item, quantity) {
         if (!this.currentStar || !GameState.game) return;
 
         try {
-            await ApiClient.request('POST',
-                `/games/${GameState.game.id}/empires/1/commands`,
-                {
-                    type: 'production',
-                    star_name: this.currentStar.name,
-                    action: 'add',
-                    item_type: type,
-                    quantity: quantity
-                }
-            );
-
-            // Refresh star data
+            const queueLength = (this.currentStar.production_queue || []).length;
+            const order = {
+                production_type: item.production_type,
+                quantity: quantity,
+                name: item.name
+            };
+            if (item.design_key !== undefined) {
+                order.design_key = '0x' + item.design_key.toString(16);
+            }
+            await GameState.submitCommand('production', {
+                mode: 'Add',
+                star_key: this.currentStar.name,
+                index: queueLength,
+                production_order: order
+            });
+            await GameState.refreshState();
             this.refresh();
+            ApiClient.showStatus(`Queued ${quantity} x ${item.name}`, 'info');
         } catch (error) {
-            alert('Failed to add to queue: ' + error.message);
+            ApiClient.showStatus('Failed to add to queue: ' + error.message, 'error');
         }
     },
 
@@ -704,21 +739,23 @@ const StarPanel = {
     async clearProductionQueue() {
         if (!this.currentStar || !GameState.game) return;
 
-        if (!confirm('Clear production queue?')) return;
+        const confirmed = await Dialogs.confirm('Clear Queue', 'Clear the production queue?');
+        if (!confirmed) return;
 
         try {
-            await ApiClient.request('POST',
-                `/games/${GameState.game.id}/empires/1/commands`,
-                {
-                    type: 'production',
-                    star_name: this.currentStar.name,
-                    action: 'clear'
-                }
-            );
-
+            const queue = this.currentStar.production_queue || [];
+            // Delete entries back to front so indices stay valid
+            for (let i = queue.length - 1; i >= 0; i--) {
+                await GameState.submitCommand('production', {
+                    mode: 'Delete',
+                    star_key: this.currentStar.name,
+                    index: i
+                });
+            }
+            await GameState.refreshState();
             this.refresh();
         } catch (error) {
-            alert('Failed to clear queue: ' + error.message);
+            ApiClient.showStatus('Failed to clear queue: ' + error.message, 'error');
         }
     },
 

@@ -1,5 +1,6 @@
 # Reference implementation (not part of this project)
 stars-nova-orig-c#/
+references/original-game/
 
 # Python
 __pycache__/
@@ -68,3 +69,6 @@ data/*
 
 # JupyterLab checkpoints
 .ipynb_checkpoints/
+
+# Playwright MCP session artifacts
+.playwright-mcp/

@@ -69,29 +69,11 @@ async def list_stars(game_id: str) -> List[StarSummary]:
     ]
 
 
-@router.get("/{star_name}", response_model=StarResponse)
-async def get_star(game_id: str, star_name: str) -> StarResponse:
-    """Get a specific star."""
+@router.get("/{star_name}")
+async def get_star(game_id: str, star_name: str) -> dict:
+    """Get a specific star with full detail (economy, queue, minerals)."""
     manager = get_game_manager()
     star = manager.get_star(game_id, star_name)
     if not star:
         raise HTTPException(status_code=404, detail="Star not found")
-    return StarResponse(
-        name=star["name"],
-        position_x=star["position_x"],
-        position_y=star["position_y"],
-        owner=star.get("owner"),
-        colonists=star.get("colonists", 0),
-        factories=star.get("factories", 0),
-        mines=star.get("mines", 0),
-        gravity=star.get("gravity", 50),
-        temperature=star.get("temperature", 50),
-        radiation=star.get("radiation", 50),
-        ironium_concentration=star.get("ironium_concentration", 0),
-        boranium_concentration=star.get("boranium_concentration", 0),
-        germanium_concentration=star.get("germanium_concentration", 0),
-        spectral_class=star.get("spectral_class", "G"),
-        luminosity_class=star.get("luminosity_class", "V"),
-        star_temperature=star.get("star_temperature", 5778),
-        star_radius=star.get("star_radius", 1.0)
-    )
+    return star

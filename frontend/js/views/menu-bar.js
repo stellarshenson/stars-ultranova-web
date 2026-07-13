@@ -461,13 +461,25 @@ const MenuBar = {
                 this.renameSelectedFleet();
                 break;
             case 'splitFleet':
-                // Open split fleet dialog
+                if (window.FleetPanel && GameState.selectedFleet) {
+                    FleetPanel.showSplitDialog();
+                } else {
+                    ApiClient.showStatus('Select a fleet first', 'error');
+                }
                 break;
             case 'mergeFleets':
-                // Merge fleets at location
+                if (window.FleetPanel && GameState.selectedFleet) {
+                    FleetPanel.showMergeDialog();
+                } else {
+                    ApiClient.showStatus('Select a fleet first', 'error');
+                }
                 break;
             case 'transferCargo':
-                // Open cargo transfer dialog
+                if (window.FleetPanel && GameState.selectedFleet) {
+                    FleetPanel.showCargoDialog();
+                } else {
+                    ApiClient.showStatus('Select a fleet first', 'error');
+                }
                 break;
             case 'designShip':
                 if (window.DesignPanel) {
@@ -475,10 +487,15 @@ const MenuBar = {
                 }
                 break;
             case 'research':
-                // Open research dialog
+                this.showResearchDialog();
                 break;
             case 'production':
-                // Open production dialog
+                if (window.StarPanel && GameState.selectedStar &&
+                        GameState.selectedStar.intel === 'owned') {
+                    StarPanel.showProductionDialog();
+                } else {
+                    ApiClient.showStatus('Select one of your planets first', 'error');
+                }
                 break;
 
             // Report menu
@@ -504,7 +521,9 @@ const MenuBar = {
                 // Show score history graph
                 break;
             case 'battleHistory':
-                // Show battle history
+                if (window.BattleViewer && BattleViewer.showBattleList) {
+                    BattleViewer.showBattleList();
+                }
                 break;
 
             // Help menu
@@ -571,7 +590,7 @@ const MenuBar = {
         Dialogs.showSelectDialog('Find Star', 'Select a star:', options, (starName) => {
             const star = stars.find(s => s.name === starName);
             if (star && window.GalaxyMap) {
-                GalaxyMap.centerOn(star.x, star.y);
+                GalaxyMap.centerOn(star.position_x, star.position_y);
                 GameState.selectStar(star);
             }
         });
@@ -589,7 +608,7 @@ const MenuBar = {
         Dialogs.showSelectDialog('Find Fleet', 'Select a fleet:', options, (fleetKey) => {
             const fleet = fleets.find(f => f.key === fleetKey);
             if (fleet && window.GalaxyMap) {
-                GalaxyMap.centerOn(fleet.x, fleet.y);
+                GalaxyMap.centerOn(fleet.position_x, fleet.position_y);
                 GameState.selectFleet(fleet);
             }
         });
@@ -600,10 +619,63 @@ const MenuBar = {
      */
     renameSelectedFleet() {
         if (!window.GameState || !GameState.selectedFleet) {
-            console.log('No fleet selected');
+            ApiClient.showStatus('Select a fleet first', 'error');
             return;
         }
-        // Implementation would show rename dialog
+        if (window.FleetPanel) {
+            FleetPanel.renameFleet();
+        }
+    },
+
+    /**
+     * Research settings dialog - budget and next research field.
+     */
+    async showResearchDialog() {
+        const research = GameState.research;
+        if (!research) {
+            ApiClient.showStatus('No research data available', 'error');
+            return;
+        }
+
+        const fields = ['Energy', 'Weapons', 'Propulsion', 'Construction', 'Electronics', 'Biotechnology'];
+        const currentTarget = fields.find(f => (research.topics || {})[f] === 1) || 'Energy';
+
+        const items = fields.map(f => {
+            const lvl = (research.levels || {})[f] || 0;
+            const progress = (research.progress || {})[f] || 0;
+            const cost = (research.next_costs || {})[f] || 0;
+            const marker = f === currentTarget ? ' (current)' : '';
+            return `${f} - level ${lvl}, ${progress}/${cost} to next${marker}`;
+        });
+
+        const fieldIdx = await Dialogs.selectOption(
+            'Research', 'Field to research next:', items
+        );
+        if (fieldIdx === null) return;
+
+        const budgetStr = await Dialogs.promptText(
+            'Research Budget', 'Percent of resources to research (0-100):',
+            String(research.budget)
+        );
+        if (budgetStr === null) return;
+        const budget = Math.max(0, Math.min(100, parseInt(budgetStr) || 0));
+
+        const topics = {};
+        for (const f of fields) topics[f] = 0;
+        topics[fields[fieldIdx]] = 1;
+
+        try {
+            await GameState.submitCommand('research', {
+                budget: budget,
+                topics: { levels: topics }
+            });
+            await GameState.refreshState();
+            ApiClient.showStatus(
+                `Research: ${fields[fieldIdx]} at ${budget}% budget`, 'info'
+            );
+        } catch (error) {
+            ApiClient.showStatus('Failed to set research: ' + error.message, 'error');
+        }
     },
 
     /**

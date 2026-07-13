@@ -66,4 +66,6 @@ make dev-install
 
 ## Source
 
-This project uses [Stars! Nova](https://github.com/stars-nova/stars-nova) as the reference implementation. All game rules, calculations, and behaviours are derived from that codebase.
+This project uses [Stars! Nova](https://github.com/ekolis/stars-nova) as the reference implementation - the GitHub fork of the original SourceForge svn repository, itself an open-source clone of Stars! by Jeff Johnson and Jeff McBride. All game rules, calculations, and behaviours are derived from that codebase.
+
+The reference source is kept locally at `references/original-game/` (gitignored; restore with `git clone https://github.com/ekolis/stars-nova.git references/original-game`).

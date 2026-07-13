@@ -64,6 +64,119 @@ class Minefield:
 
 
 @dataclass
+class Wormhole:
+    """
+    A wormhole pair connecting two points in space.
+
+    Wormholes existed in original Stars! but were never implemented
+    in the Nova codebase; this follows the canonical behaviour:
+    stable endpoint pairs that drift slowly over time, giving instant
+    transit between the two ends.
+    """
+    key: int = 0
+    name: str = ""
+    x1: float = 0.0
+    y1: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    stability: float = 0.5  # 0..1, scales endpoint drift per turn
+
+    def endpoints(self):
+        """Both endpoints as (end_index, name, x, y) tuples."""
+        return [
+            (0, f"{self.name} (A)", self.x1, self.y1),
+            (1, f"{self.name} (B)", self.x2, self.y2),
+        ]
+
+    def other_end(self, end_index: int):
+        """Coordinates of the opposite end."""
+        if end_index == 0:
+            return self.x2, self.y2
+        return self.x1, self.y1
+
+    def drift(self, rng, universe_width: int, universe_height: int) -> None:
+        """Jiggle both endpoints; less stable wormholes drift more."""
+        magnitude = 1.0 + (1.0 - self.stability) * 3.0
+        self.x1 = min(float(universe_width), max(
+            0.0, self.x1 + rng.uniform(-magnitude, magnitude)))
+        self.y1 = min(float(universe_height), max(
+            0.0, self.y1 + rng.uniform(-magnitude, magnitude)))
+        self.x2 = min(float(universe_width), max(
+            0.0, self.x2 + rng.uniform(-magnitude, magnitude)))
+        self.y2 = min(float(universe_height), max(
+            0.0, self.y2 + rng.uniform(-magnitude, magnitude)))
+
+    def to_dict(self) -> dict:
+        return {
+            'key': self.key, 'name': self.name,
+            'x1': self.x1, 'y1': self.y1,
+            'x2': self.x2, 'y2': self.y2,
+            'stability': self.stability,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Wormhole':
+        return cls(
+            key=data.get('key', 0), name=data.get('name', ''),
+            x1=data.get('x1', 0.0), y1=data.get('y1', 0.0),
+            x2=data.get('x2', 0.0), y2=data.get('y2', 0.0),
+            stability=data.get('stability', 0.5),
+        )
+
+
+@dataclass
+class GalacticStorm:
+    """
+    A roaming galactic storm (web extension - not in original Stars!).
+
+    Storms drift across the universe each turn and damage ships
+    caught inside their radius.
+    """
+    key: int = 0
+    x: float = 0.0
+    y: float = 0.0
+    radius: float = 40.0
+    velocity_x: float = 0.0   # ly per turn
+    velocity_y: float = 0.0
+    intensity: float = 0.5    # 0.0 to 1.0, scales damage
+
+    def contains(self, px: float, py: float) -> bool:
+        """Check whether a position lies inside the storm."""
+        import math
+        return math.hypot(px - self.x, py - self.y) <= self.radius
+
+    def drift(self, universe_width: int, universe_height: int) -> None:
+        """Move the storm one turn, bouncing off universe edges."""
+        self.x += self.velocity_x
+        self.y += self.velocity_y
+        if self.x < 0 or self.x > universe_width:
+            self.velocity_x = -self.velocity_x
+            self.x = max(0.0, min(float(universe_width), self.x))
+        if self.y < 0 or self.y > universe_height:
+            self.velocity_y = -self.velocity_y
+            self.y = max(0.0, min(float(universe_height), self.y))
+
+    def to_dict(self) -> dict:
+        return {
+            'key': self.key, 'x': self.x, 'y': self.y,
+            'radius': self.radius,
+            'velocity_x': self.velocity_x, 'velocity_y': self.velocity_y,
+            'intensity': self.intensity,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'GalacticStorm':
+        return cls(
+            key=data.get('key', 0),
+            x=data.get('x', 0.0), y=data.get('y', 0.0),
+            radius=data.get('radius', 40.0),
+            velocity_x=data.get('velocity_x', 0.0),
+            velocity_y=data.get('velocity_y', 0.0),
+            intensity=data.get('intensity', 0.5),
+        )
+
+
+@dataclass
 class NebulaRegion:
     """
     A single nebula region with position, shape, and density.
@@ -89,8 +202,9 @@ class NebulaField:
     universe_width: int = 600
     universe_height: int = 600
 
-    # Cached density grid for fast lookups
+    # Cached density grids for fast lookups
     _grid: Optional[List[List[float]]] = field(default=None, repr=False)
+    _dust_grid: Optional[List[List[float]]] = field(default=None, repr=False)
     _grid_resolution: int = 20  # Grid cell size in light years
 
     def get_density_at(self, x: float, y: float) -> float:
@@ -102,14 +216,41 @@ class NebulaField:
         """
         if self._grid is None:
             self._build_grid()
+        return self._sample_grid(self._grid, x, y)
 
+    def get_dust_density_at(self, x: float, y: float) -> float:
+        """
+        Get dust (dark) nebula density at a specific position.
+
+        Only dark/dust nebulae impede travel and dampen sensors;
+        emission and filament nebulae are luminous gas without drag.
+        """
+        if self._dust_grid is None:
+            self._build_grid()
+        return self._sample_grid(self._dust_grid, x, y)
+
+    def get_average_dust_density_along_path(
+        self, x1: float, y1: float, x2: float, y2: float, samples: int = 10
+    ) -> float:
+        """Average dust density along a path (for warp speed penalty)."""
+        if samples < 2:
+            samples = 2
+        total = 0.0
+        for i in range(samples):
+            t = i / (samples - 1)
+            total += self.get_dust_density_at(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+        return total / samples
+
+    def _sample_grid(self, grid: Optional[List[List[float]]],
+                     x: float, y: float) -> float:
+        """Look up a density grid at a world position."""
         # Convert world position to grid cell
         grid_x = int(x / self._grid_resolution)
         grid_y = int(y / self._grid_resolution)
 
         # Bounds check
-        if self._grid and 0 <= grid_y < len(self._grid):
-            row = self._grid[grid_y]
+        if grid and 0 <= grid_y < len(grid):
+            row = grid[grid_y]
             if 0 <= grid_x < len(row):
                 return row[grid_x]
 
@@ -142,13 +283,14 @@ class NebulaField:
         return total_density / samples
 
     def _build_grid(self) -> None:
-        """Build cached density grid from regions."""
+        """Build cached density grids (all nebulae + dust-only) from regions."""
         import math
 
         cols = max(1, self.universe_width // self._grid_resolution + 1)
         rows = max(1, self.universe_height // self._grid_resolution + 1)
 
         self._grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
+        self._dust_grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
 
         for region in self.regions:
             # Calculate bounding box for this region
@@ -187,10 +329,15 @@ class NebulaField:
                         contribution = region.density * math.exp(-norm_dist ** 2)
                         # Additive blending, clamped to 1.0
                         self._grid[gy][gx] = min(1.0, self._grid[gy][gx] + contribution)
+                        if region.nebula_type == 'dark':
+                            self._dust_grid[gy][gx] = min(
+                                1.0, self._dust_grid[gy][gx] + contribution
+                            )
 
     def invalidate_cache(self) -> None:
-        """Invalidate the cached grid (call after modifying regions)."""
+        """Invalidate the cached grids (call after modifying regions)."""
         self._grid = None
+        self._dust_grid = None
 
     def to_dict(self) -> dict:
         """Serialize to dictionary for persistence."""
@@ -261,6 +408,12 @@ class ServerData:
 
     # Nebula density field (affects warp speed)
     nebula_field: Optional[NebulaField] = None
+
+    # Roaming galactic storms (by key)
+    all_storms: Dict[int, GalacticStorm] = field(default_factory=dict)
+
+    # Wormhole pairs (by key)
+    all_wormholes: Dict[int, Wormhole] = field(default_factory=dict)
 
     # Messages generated this turn
     all_messages: List['Message'] = field(default_factory=list)
@@ -470,6 +623,12 @@ class ServerData:
                     "mine_type": v.mine_type
                 }
                 for k, v in self.all_minefields.items()
+            },
+            "all_storms": {
+                str(k): v.to_dict() for k, v in self.all_storms.items()
+            },
+            "all_wormholes": {
+                str(k): v.to_dict() for k, v in self.all_wormholes.items()
             }
         }
 
@@ -502,5 +661,11 @@ class ServerData:
                 number_of_mines=v.get("number_of_mines", 0),
                 mine_type=v.get("mine_type", 0)
             )
+
+        for k, v in data.get("all_storms", {}).items():
+            server.all_storms[int(k)] = GalacticStorm.from_dict(v)
+
+        for k, v in data.get("all_wormholes", {}).items():
+            server.all_wormholes[int(k)] = Wormhole.from_dict(v)
 
         return server

@@ -83,7 +83,7 @@ class ProductionCommand(Command):
             # Simplified for now - full validation done when processing
 
         elif self.mode == CommandMode.EDIT:
-            if self.index >= len(star.manufacturing_queue.queue):
+            if self.index >= len(star.manufacturing_queue.orders):
                 msg = Message(
                     audience=empire.id,
                     text=f"Queue index {self.index} out of range",
@@ -92,7 +92,7 @@ class ProductionCommand(Command):
                 return False, msg
 
         elif self.mode == CommandMode.DELETE:
-            if self.index >= len(star.manufacturing_queue.queue):
+            if self.index >= len(star.manufacturing_queue.orders):
                 msg = Message(
                     audience=empire.id,
                     text=f"Queue index {self.index} out of range",
@@ -118,7 +118,7 @@ class ProductionCommand(Command):
             )
 
         star = empire.owned_stars[self.star_key]
-        queue = star.manufacturing_queue.queue
+        queue = star.manufacturing_queue.orders
 
         if self.mode == CommandMode.ADD:
             if self.production_order is None:

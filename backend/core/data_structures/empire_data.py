@@ -125,6 +125,7 @@ class EmpireData:
             "last_turn_submitted": self.last_turn_submitted,
             "research_budget": self.research_budget,
             "research_levels": self.research_levels.to_dict(),
+            "research_resources": self.research_resources.to_dict(),
             "research_topics": self.research_topics.to_dict(),
             "gravity_mod_capability": self.gravity_mod_capability,
             "radiation_mod_capability": self.radiation_mod_capability,
@@ -151,6 +152,8 @@ class EmpireData:
 
         if "research_levels" in data:
             empire.research_levels = TechLevel.from_dict(data["research_levels"])
+        if "research_resources" in data:
+            empire.research_resources = TechLevel.from_dict(data["research_resources"])
         if "research_topics" in data:
             empire.research_topics = TechLevel.from_dict(data["research_topics"])
 

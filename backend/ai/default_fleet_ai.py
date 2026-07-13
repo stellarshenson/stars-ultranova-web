@@ -270,13 +270,17 @@ class DefaultFleetAI:
 
     def can_reach(self, destination: dict) -> bool:
         """
-        Check if fleet can reach a destination.
+        Check if fleet can reach a destination at ANY practical warp.
+
+        Fuel per year scales with warp^3 while speed scales with
+        warp^2, so slowing down extends range - the AI budgets fuel
+        the way the original did.
 
         Args:
             destination: Star report with position
 
         Returns:
-            True if fleet has enough fuel
+            True if some warp factor gets the fleet there on its fuel
 
         Ported from DefaultFleetAI.cs canReach().
         """
@@ -284,13 +288,28 @@ class DefaultFleetAI:
             x=destination.get("position_x", 0),
             y=destination.get("position_y", 0)
         )
-        destination_distance = self._distance_to(self.fleet.position, dest_pos)
-        years_of_travel = destination_distance / (self.fleet.slowest_engine ** 2) if self.fleet.slowest_engine > 0 else float('inf')
+        return self._economical_warp(dest_pos) > 0
+
+    def _economical_warp(self, dest_pos: NovaPoint) -> int:
+        """
+        Fastest warp factor that reaches dest_pos within 90% of fuel.
+
+        Returns 0 when no warp (down to 4) makes the trip.
+        """
+        top = self.fleet.slowest_engine
+        if top <= 0:
+            return 0
+        distance = self._distance_to(self.fleet.position, dest_pos)
+        if distance <= 0:
+            return top
         race = self.empire_data.race
-        fuel_required = self.fleet.fuel_consumption_when_full(
-            self.fleet.slowest_engine, race
-        ) * years_of_travel
-        return self.fleet.fuel_available > fuel_required
+        budget = self.fleet.fuel_available * 0.9
+        for warp in range(top, 3, -1):
+            years = distance / (warp ** 2)
+            required = self.fleet.fuel_consumption_when_full(warp, race) * years
+            if required <= budget:
+                return warp
+        return 0
 
     def max_distance(self) -> float:
         """
@@ -314,7 +333,10 @@ class DefaultFleetAI:
 
     def _closest_star(self, excluded_stars: List[dict]) -> Optional[dict]:
         """
-        Find closest star not in excluded list.
+        Find the closest UNEXPLORED star not in the excluded list.
+
+        A star counts as unexplored while its report has never been
+        refreshed by a scan (scan level "none" / no report year).
 
         Args:
             excluded_stars: Stars to skip
@@ -329,6 +351,13 @@ class DefaultFleetAI:
 
         for star_name, report in self.empire_data.star_reports.items():
             if report in excluded_stars:
+                continue
+
+            # Skip stars we already know (own, scanned) - scouts want
+            # unexplored systems
+            if report.get("scan_level", "none") not in ("none", None):
+                continue
+            if star_name in self.empire_data.owned_stars:
                 continue
 
             star_pos = NovaPoint(
@@ -445,20 +474,10 @@ class DefaultFleetAI:
         )
         star_name = star_report.get("name", str(star_pos))
 
-        # Adjust warp factor based on fuel situation
-        warp = self.fleet.slowest_engine
-        race = self.empire_data.race
-        fuel_consumption = self.fleet.fuel_consumption(warp, race)
-
-        if fuel_consumption < 0:
-            # Making fuel
-            fuel_ratio = self.fleet.total_fuel_capacity / max(1, self.fleet.fuel_available)
-            if fuel_ratio < 3:
-                # Plenty of fuel, go faster
-                warp = min(warp + 1, 9)
-            elif fuel_ratio >= 5:
-                # Low on fuel, slow down to generate more
-                warp = max(warp - 1, 1)
+        # Pick the fastest warp that fits the fuel budget; fall back to
+        # the fleet's optimal speed when even slow warps can't make it
+        # (the fleet will run dry and drift, as in the original).
+        warp = self._economical_warp(star_pos) or self.fleet.slowest_engine
 
         wp = Waypoint(
             position_x=star_pos.x,

@@ -15,13 +15,25 @@ const MessagePanel = {
 
     // Message types with colors
     messageTypes: {
-        info: { color: '#7cb3ff', icon: 'i' },
-        warning: { color: '#ffaa00', icon: '!' },
-        research: { color: '#cc66ff', icon: 'R' },
-        combat: { color: '#ff4444', icon: 'X' },
-        colonization: { color: '#44ff44', icon: 'C' },
-        production: { color: '#ffff44', icon: 'P' },
-        default: { color: '#888888', icon: '*' }
+        'info': { color: '#7cb3ff', icon: 'i' },
+        'Star': { color: '#ffff44', icon: 'P' },
+        'TechAdvance': { color: '#cc66ff', icon: 'R' },
+        'Colonization': { color: '#44ff44', icon: 'C' },
+        'Colonization Failed': { color: '#ffaa00', icon: '!' },
+        'Battle': { color: '#ff4444', icon: 'X' },
+        'Minefield Hit': { color: '#ff4444', icon: 'X' },
+        'Minefield': { color: '#ff8844', icon: 'M' },
+        'Storm': { color: '#ff8844', icon: '~' },
+        'Wormhole': { color: '#bb88ff', icon: 'W' },
+        'Stargate': { color: '#66ddff', icon: 'G' },
+        'Bombing': { color: '#ff4444', icon: 'B' },
+        'Fleet Destroyed': { color: '#ff4444', icon: 'X' },
+        'Fuel': { color: '#ffaa00', icon: 'F' },
+        'Victory': { color: '#ffff44', icon: 'V' },
+        'Cheap Engines': { color: '#ffaa00', icon: '!' },
+        'Invalid Command': { color: '#ffaa00', icon: '!' },
+        'Scrap': { color: '#888888', icon: 'S' },
+        'default': { color: '#888888', icon: '*' }
     },
 
     /**
@@ -56,13 +68,8 @@ const MessagePanel = {
             return;
         }
 
-        // Get messages from game state
-        this.messages = GameState.game.messages || [];
-
-        // Also include any events that occurred this turn
-        if (GameState.game.turn_events) {
-            this.messages = [...this.messages, ...GameState.game.turn_events];
-        }
+        // Get this empire's messages from the player state
+        this.messages = GameState.messages || [];
 
         // Reset to first message if we have new messages
         if (this.messages.length > 0) {
@@ -143,7 +150,7 @@ const MessagePanel = {
     render() {
         if (!this.container) return;
 
-        const year = GameState.game ? GameState.game.turn + 2400 : 2400;
+        const year = GameState.game ? GameState.game.turn : 2100;
         const msgCount = this.messages.length;
         const currentNum = msgCount > 0 ? this.currentIndex + 1 : 0;
 
@@ -201,10 +208,13 @@ const MessagePanel = {
     /**
      * Show goto dialog for jumping to specific message.
      */
-    showGotoDialog() {
+    async showGotoDialog() {
         if (this.messages.length === 0) return;
 
-        const target = prompt(`Go to message (1-${this.messages.length}):`, this.currentIndex + 1);
+        const target = await Dialogs.promptText(
+            'Go to Message', `Message number (1-${this.messages.length}):`,
+            String(this.currentIndex + 1)
+        );
         if (target === null) return;
 
         const index = parseInt(target) - 1;
@@ -212,6 +222,16 @@ const MessagePanel = {
             this.currentIndex = index;
             this.render();
         }
+    },
+
+    /**
+     * Replace messages (called after turn generation).
+     */
+    setMessages(messages) {
+        this.messages = messages || [];
+        this.currentIndex = 0;
+        if (this.messages.length > 0) this.show(); else this.hide();
+        this.render();
     },
 
     /**

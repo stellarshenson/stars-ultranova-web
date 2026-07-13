@@ -58,6 +58,11 @@ class ShipToken:
     dock_capacity: int = 0
     heals_others_percent: int = 0
 
+    # Stargate (starbases with a Gate component); -1 means unlimited
+    has_gate: bool = False
+    gate_mass: int = 0
+    gate_range: int = 0
+
     @property
     def key(self) -> int:
         """Return design key as the token key."""
@@ -82,7 +87,17 @@ class ShipToken:
             "is_bomber": self.is_bomber,
             "has_weapons": self.has_weapons,
             "free_warp_speed": self.free_warp_speed,
-            "optimal_speed": self.optimal_speed
+            "optimal_speed": self.optimal_speed,
+            "scan_range_normal": self.scan_range_normal,
+            "scan_range_penetrating": self.scan_range_penetrating,
+            "mine_count": self.mine_count,
+            "heavy_mine_count": self.heavy_mine_count,
+            "speed_bump_mine_count": self.speed_bump_mine_count,
+            "dock_capacity": self.dock_capacity,
+            "heals_others_percent": self.heals_others_percent,
+            "has_gate": self.has_gate,
+            "gate_mass": self.gate_mass,
+            "gate_range": self.gate_range,
         }
 
     @classmethod
@@ -108,6 +123,16 @@ class ShipToken:
         token.has_weapons = data.get("has_weapons", False)
         token.free_warp_speed = data.get("free_warp_speed", 0)
         token.optimal_speed = data.get("optimal_speed", 6)
+        token.scan_range_normal = data.get("scan_range_normal", 0)
+        token.scan_range_penetrating = data.get("scan_range_penetrating", 0)
+        token.mine_count = data.get("mine_count", 0)
+        token.heavy_mine_count = data.get("heavy_mine_count", 0)
+        token.speed_bump_mine_count = data.get("speed_bump_mine_count", 0)
+        token.dock_capacity = data.get("dock_capacity", 0)
+        token.heals_others_percent = data.get("heals_others_percent", 0)
+        token.has_gate = data.get("has_gate", False)
+        token.gate_mass = data.get("gate_mass", 0)
+        token.gate_range = data.get("gate_range", 0)
         return token
 
 
@@ -479,12 +504,12 @@ class Fleet(Mappable):
         else:
             cargo_fullness = self.cargo.mass / self.total_cargo_capacity
 
-        # Sum fuel consumption from all ships
-        # Simplified - would need full engine model for accurate calculation
+        # Sum fuel consumption from all ships (per year of travel).
+        # Matches the movement model: mass * warp / 200 fuel per ly,
+        # at warp^2 ly per year -> mass * warp^3 / 200 per year.
         total = 0.0
         for token in self.tokens.values():
-            # Base fuel consumption model (simplified)
-            base_consumption = token.mass * token.quantity * (warp_factor ** 4) / 200.0
+            base_consumption = token.mass * token.quantity * (warp_factor ** 3) / 200.0
             cargo_factor = 1 + cargo_fullness * (token.cargo_capacity * token.quantity / max(1, token.mass * token.quantity))
             total += base_consumption * cargo_factor
 

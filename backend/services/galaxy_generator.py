@@ -15,7 +15,10 @@ from ..core.game_objects.star import Star
 from ..core.game_objects.fleet import Fleet, ShipToken
 from ..core.race.race import Race
 from ..core.globals import STARTING_YEAR, COLONISTS_PER_KILOTON
-from ..server.server_data import ServerData, PlayerSettings, NebulaField, NebulaRegion
+from ..server.server_data import (
+    ServerData, PlayerSettings, NebulaField, NebulaRegion,
+    GalacticStorm, Wormhole
+)
 
 
 # Universe size configurations (width x height in light years)
@@ -113,7 +116,8 @@ class GalaxyGenerator:
     def generate(
         self,
         player_count: int = 2,
-        universe_size: str = "medium"
+        universe_size: str = "medium",
+        player_race: Optional[Race] = None
     ) -> ServerData:
         """
         Generate a new game.
@@ -121,6 +125,7 @@ class GalaxyGenerator:
         Args:
             player_count: Number of players.
             universe_size: Size of universe.
+            player_race: Optional custom race for the human player.
 
         Returns:
             Initialized ServerData.
@@ -140,8 +145,22 @@ class GalaxyGenerator:
         # Generate nebula density field
         server_data.nebula_field = self._generate_nebulae(stars, width, height)
 
+        # Generate roaming galactic storms (web extension)
+        for storm in self._generate_storms(width, height):
+            server_data.all_storms[storm.key] = storm
+
+        # Generate wormhole pairs
+        for wormhole in self._generate_wormholes(width, height):
+            server_data.all_wormholes[wormhole.key] = wormhole
+
         # Create player settings and races
         races = self._create_races(player_count)
+        if player_race is not None:
+            # Human player (empire 1) uses the wizard-designed race;
+            # keep its name unique against the AI templates
+            if any(r.name == player_race.name for r in races[1:]):
+                player_race.name = f"{player_race.name} Prime"
+            races[0] = player_race
         for i, race in enumerate(races):
             server_data.all_races[race.name] = race
             server_data.all_players.append(PlayerSettings(
@@ -163,10 +182,23 @@ class GalaxyGenerator:
             home_star.colonists = 250000  # Starting population
             home_star.factories = 10
             home_star.mines = 10
+            home_star.this_race = race
 
-            # Create starting fleet with scout
-            scout_fleet = self._create_starting_fleet(empire_id, home_star, race)
-            empire.owned_fleets[scout_fleet.key] = scout_fleet
+            # Starting surface minerals and planetary scanner
+            home_star.resources_on_hand = Resources(
+                ironium=600, boranium=300, germanium=600, energy=0
+            )
+            home_star.scan_range = 50
+            home_star.scanner_type = "Viewer 50"
+
+            # Starting fleets: scout and loaded colony ship
+            for fleet in self._create_starting_fleets(empire, home_star, race):
+                empire.owned_fleets[fleet.key] = fleet
+
+            # Homeworld starbase (dock, refuel, defense) as in the original
+            starbase = self._create_starbase(empire, home_star)
+            empire.owned_fleets[starbase.key] = starbase
+            home_star.starbase_key = starbase.key
 
         return server_data
 
@@ -341,13 +373,6 @@ class GalaxyGenerator:
             # Assign spectral class based on astronomical distribution
             self._assign_spectral_class(star)
 
-            # Starting surface minerals
-            star.resource_rate = self.rng.randint(5, 15)
-            star.mineral_concentration = (
-                star.ironium_concentration +
-                star.boranium_concentration +
-                star.germanium_concentration
-            ) // 3
 
             stars.append(star)
             used_names.add(name)
@@ -422,6 +447,58 @@ class GalaxyGenerator:
         y = selected['mean_y'] + world_y
 
         return x, y
+
+    def _generate_storms(self, width: int, height: int) -> List[GalacticStorm]:
+        """
+        Generate roaming galactic storms scaled to universe size.
+
+        Web extension - not in original Stars!. Storms drift each turn
+        and damage ships caught inside them.
+        """
+        area = width * height
+        count = max(1, area // 160000)  # tiny/small 1, medium 2, large 4, huge 6
+        storms = []
+        for i in range(count):
+            angle = self.rng.random() * math.pi * 2
+            speed = 4.0 + self.rng.random() * 6.0  # 4-10 ly per turn
+            storms.append(GalacticStorm(
+                key=i + 1,
+                x=self.rng.random() * width,
+                y=self.rng.random() * height,
+                radius=25.0 + self.rng.random() * 30.0,
+                velocity_x=math.cos(angle) * speed,
+                velocity_y=math.sin(angle) * speed,
+                intensity=0.3 + self.rng.random() * 0.7,
+            ))
+        return storms
+
+    WORMHOLE_NAMES = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"]
+
+    def _generate_wormholes(self, width: int, height: int) -> List[Wormhole]:
+        """
+        Generate wormhole pairs scaled to universe size.
+
+        Endpoints are placed far apart (at least a third of the
+        universe width) so transit is worth the risk of the unknown.
+        """
+        area = width * height
+        count = min(len(self.WORMHOLE_NAMES), max(1, area // 250000))
+        wormholes = []
+        for i in range(count):
+            for _ in range(20):  # retry until endpoints are far apart
+                x1 = self.rng.random() * width
+                y1 = self.rng.random() * height
+                x2 = self.rng.random() * width
+                y2 = self.rng.random() * height
+                if math.hypot(x2 - x1, y2 - y1) >= width / 3:
+                    break
+            wormholes.append(Wormhole(
+                key=i + 1,
+                name=f"Wormhole {self.WORMHOLE_NAMES[i]}",
+                x1=x1, y1=y1, x2=x2, y2=y2,
+                stability=0.3 + self.rng.random() * 0.7,
+            ))
+        return wormholes
 
     def _generate_nebulae(self, stars: List[Star], width: int, height: int) -> NebulaField:
         """
@@ -549,21 +626,22 @@ class GalaxyGenerator:
 
             race.plural_name = race.name
             race.icon = template.get("icon", "humanoid")
+            race.primary_trait = template.get("prt", "JOAT")
 
             # Default habitability ranges (centered, wide range)
-            race.gravity_minimum = 15
-            race.gravity_maximum = 85
-            race.temperature_minimum = 15
-            race.temperature_maximum = 85
-            race.radiation_minimum = 15
-            race.radiation_maximum = 85
+            race.gravity_min = 15
+            race.gravity_max = 85
+            race.temperature_min = 15
+            race.temperature_max = 85
+            race.radiation_min = 15
+            race.radiation_max = 85
 
             race.growth_rate = 15  # 15% base growth
-            race.colonist_resource_production = 10  # 1000 colonists = 10 resources
+            race.colonists_per_resource = 1000  # 1000 colonists = 1 resource
             race.factory_production = 10
             race.factory_cost = 10
             race.mine_cost = 5
-            race.mine_production = 10
+            race.mine_production_rate = 10
 
             races.append(race)
 
@@ -656,8 +734,11 @@ class GalaxyGenerator:
         Returns:
             Initialized EmpireData.
         """
+        from .ship_specs import make_starting_designs
+
         empire = EmpireData()
         empire.id = empire_id
+        empire.race = race
         empire.race_name = race.name
         empire.turn_year = STARTING_YEAR
 
@@ -671,50 +752,79 @@ class GalaxyGenerator:
         # Home star ownership
         empire.owned_stars[home_star.name] = home_star
 
+        # Starting ship designs
+        make_starting_designs(empire)
+
+        # Default battle plan - all empires are hostile in a skirmish
+        from ..server.battle.battle_plan import BattlePlan
+        empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+
         return empire
 
-    def _create_starting_fleet(
+    def _create_starting_fleets(
         self,
-        empire_id: int,
+        empire: EmpireData,
         home_star: Star,
         race: Race
-    ) -> Fleet:
+    ) -> List[Fleet]:
         """
-        Create starting fleet for empire.
+        Create starting fleets for an empire.
+
+        Matches the original starting force: a Long Range Scout and a
+        Santa Maria colony ship pre-loaded with colonists.
 
         Args:
-            empire_id: Empire identifier.
+            empire: Empire receiving the fleets.
             home_star: Home world.
             race: Race definition.
 
         Returns:
-            Scout fleet.
+            List of starting fleets.
         """
-        fleet = Fleet()
-        fleet.owner = empire_id
-        fleet.id = 1  # First fleet
-        fleet.name = "Scout #1"
-        fleet.position = NovaPoint(home_star.position.x, home_star.position.y)
-        fleet.in_orbit_name = home_star.name
-        fleet.fuel_available = 200  # Full tank
+        from .ship_specs import find_design, make_token
+        from ..core.data_structures.cargo import Cargo
 
-        # Add scout ship token
-        token = ShipToken()
-        token.design_key = 1
-        token.design_name = "Long Range Scout"
-        token.quantity = 1
-        token.armor = 20
-        token.shields = 0
-        token.mass = 25
-        token.has_weapons = False
-        token.can_colonize = False
-        token.can_scan = True
-        token.optimal_speed = 9
-        token.free_warp_speed = 0
-        token.fuel_capacity = 200
-        token.scan_range_normal = 150
-        token.scan_range_penetrating = 0
+        fleets: List[Fleet] = []
 
-        fleet.tokens[token.design_key] = token
+        scout_design = find_design(empire, "Long Range Scout")
+        scout = Fleet()
+        scout.key = empire.get_next_fleet_key()
+        scout.name = "Long Range Scout #1"
+        scout.position = NovaPoint(home_star.position.x, home_star.position.y)
+        scout.in_orbit_name = home_star.name
+        token = make_token(scout_design)
+        scout.tokens[token.design_key] = token
+        scout.fuel_available = scout.total_fuel_capacity
+        fleets.append(scout)
 
-        return fleet
+        colony_design = find_design(empire, "Santa Maria")
+        colony = Fleet()
+        colony.key = empire.get_next_fleet_key()
+        colony.name = "Santa Maria #2"
+        colony.position = NovaPoint(home_star.position.x, home_star.position.y)
+        colony.in_orbit_name = home_star.name
+        token = make_token(colony_design)
+        colony.tokens[token.design_key] = token
+        colony.fuel_available = colony.total_fuel_capacity
+        # Pre-loaded with 2500 colonists (25 kT), as in the original
+        colony.cargo = Cargo(colonists_in_kilotons=25)
+        fleets.append(colony)
+
+        return fleets
+
+    def _create_starbase(self, empire: EmpireData, home_star: Star) -> Fleet:
+        """Create the homeworld starbase fleet."""
+        from .ship_specs import find_design, make_token
+
+        design = find_design(empire, "Starbase")
+        base = Fleet()
+        base.key = empire.get_next_fleet_key()
+        base.name = "Starbase"
+        base.position = NovaPoint(home_star.position.x, home_star.position.y)
+        base.in_orbit_name = home_star.name
+        token = make_token(design)
+        base.tokens[token.design_key] = token
+        base.fuel_available = 0
+        return base
+
+

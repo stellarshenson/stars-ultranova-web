@@ -118,12 +118,13 @@ class RonBattleEngine:
 
                 if sample.in_orbit:
                     battle.location = sample.in_orbit.name
+                elif sample.in_orbit_name:
+                    battle.location = sample.in_orbit_name
                 else:
-                    scaled_pos = NovaPoint(
-                        int(sample.position.x / self.GRID_SCALE),
-                        int(sample.position.y / self.GRID_SCALE)
+                    battle.location = (
+                        f"deep space ({int(sample.position.x)}, "
+                        f"{int(sample.position.y)})"
                     )
-                    battle.location = f"coordinates {scaled_pos}"
 
                 self._position_stacks(battling_stacks, battle)
 
@@ -281,7 +282,7 @@ class RonBattleEngine:
         number_of_targets = 0
 
         for wolf in battling_stacks:
-            if not wolf.tokens:
+            if wolf.token is None or wolf.token.quantity <= 0:
                 continue
 
             wolf.target = None
@@ -289,7 +290,7 @@ class RonBattleEngine:
             have_incremented = False
 
             for lamb in battling_stacks:
-                if not lamb.tokens:
+                if lamb.token is None or lamb.token.quantity <= 0:
                     continue
                 if lamb.token is None or lamb.token.armor <= 0:
                     continue
@@ -424,7 +425,7 @@ class RonBattleEngine:
     ) -> None:
         """Move stacks using Ron's improved movement system."""
         for stack in battling_stacks:
-            if stack is None or not stack.tokens:
+            if stack is None or stack.token is None or stack.token.quantity <= 0:
                 continue
 
             if stack.target is None or stack.is_starbase:
@@ -763,11 +764,11 @@ class RonBattleEngine:
         empire.add_or_update_fleet(fleet)
 
     def _report_battle(self, battle: BattleReport) -> None:
-        """Report battle to participants."""
-        for empire_id in battle.losses:
-            if empire_id not in self.server_state.all_empires:
-                continue
+        """
+        Report the battle to the turn generator.
 
-            empire = self.server_state.all_empires[empire_id]
-            empire.battle_reports.append(battle)
-            self.battles.append(battle)
+        Distribution to each participant's battle_reports (as dicts)
+        happens in TurnGenerator._execute_battles; appending the raw
+        BattleReport object here would break JSON persistence.
+        """
+        self.battles.append(battle)

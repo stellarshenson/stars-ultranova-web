@@ -142,7 +142,7 @@ class DesignCommand(Command):
             tokens_to_remove = []
 
             for token_key, token in fleet.tokens.items():
-                if token.design.key == design_key:
+                if token.design_key == design_key:
                     tokens_to_remove.append(token_key)
 
             for token_key in tokens_to_remove:

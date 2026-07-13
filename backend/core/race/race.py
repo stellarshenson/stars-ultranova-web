@@ -51,6 +51,13 @@ class Race:
     radiation_min: int = 15
     radiation_max: int = 85
 
+    # AI production proclivities (C# Race AI weighting knobs)
+    # 50 = neutral weighting for the interceptor ratio (divided by 50)
+    ai_proclivities_interceptors: int = 50
+    ai_proclivities_bombers: float = 1.0
+    ai_proclivities_escorts: float = 1.0
+    ai_proclivities_starbases: float = 1.0
+
     # Traits
     traits: Set[str] = field(default_factory=set)
 

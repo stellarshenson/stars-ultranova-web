@@ -104,8 +104,13 @@ class BattleEngine:
 
             if sample.in_orbit:
                 battle.location = sample.in_orbit.name
+            elif sample.in_orbit_name:
+                battle.location = sample.in_orbit_name
             else:
-                battle.location = f"coordinates {sample.position}"
+                battle.location = (
+                    f"deep space ({int(sample.position.x)}, "
+                    f"{int(sample.position.y)})"
+                )
 
             self._position_stacks(battling_stacks, battle)
 
@@ -262,7 +267,7 @@ class BattleEngine:
         number_of_targets = 0
 
         for wolf in battling_stacks:
-            if not wolf.tokens:
+            if wolf.token is None or wolf.token.quantity <= 0:
                 continue
 
             wolf.target = None
@@ -273,7 +278,7 @@ class BattleEngine:
             max_attractiveness = 0.0
 
             for lamb in battling_stacks:
-                if not lamb.tokens:
+                if lamb.token is None or lamb.token.quantity <= 0:
                     continue
 
                 if self._are_enemies(wolf, lamb):
@@ -334,7 +339,7 @@ class BattleEngine:
         """Move stacks toward their targets."""
         for phase in range(1, self.MOVEMENT_PHASES_PER_ROUND + 1):
             for stack in battling_stacks:
-                if stack is None or not stack.tokens:
+                if stack is None or stack.token is None or stack.token.quantity <= 0:
                     continue
 
                 # Record position
@@ -713,8 +718,9 @@ class BattleEngine:
             else:
                 text += f"{loss_count} of your ships were destroyed"
 
-            # Add to empire's battle reports
-            empire.battle_reports.append(battle)
+            # Distribution to empire.battle_reports (as dicts) happens
+            # in TurnGenerator._execute_battles; raw objects would
+            # break JSON persistence
 
             # Add to main battle list
             self.battles.append(battle)

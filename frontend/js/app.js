@@ -120,6 +120,10 @@ document.addEventListener('DOMContentLoaded', () => {
             GameState.on('turnGenerated', (turn) => {
                 this.setStatus(`Turn ${turn} generated`);
                 this.updateTurnIndicator(turn);
+                this.updateEmpireSummary();
+                if (window.MessagePanel) {
+                    MessagePanel.setMessages(GameState.messages);
+                }
                 // Show turn report if there are messages
                 if (GameState.game) {
                     this.showTurnReport();
@@ -161,8 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateTurnIndicator(turn) {
             const indicator = document.getElementById('turn-indicator');
             if (indicator) {
-                const year = 2400 + (turn || 0);
-                indicator.textContent = `Year ${year}`;
+                indicator.textContent = `Year ${turn || 0}`;
             }
         },
 
@@ -173,8 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!GameState.game) return;
 
             // Count player's planets and calculate totals
-            const playerStars = GameState.stars.filter(s => s.owner === 1);
-            const playerFleets = GameState.fleets.filter(f => f.owner === 1);
+            const playerStars = GameState.stars.filter(s => s.intel === 'owned');
+            const playerFleets = GameState.fleets;
 
             const totalPop = playerStars.reduce((sum, s) => sum + (s.colonists || 0), 0);
             const totalIronium = playerStars.reduce((sum, s) => sum + (s.ironium || 0), 0);
@@ -269,7 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 await GameState.generateTurn();
             } catch (error) {
                 this.setStatus('Turn generation failed');
-                alert('Failed to generate turn: ' + error.message);
+                ApiClient.showStatus('Failed to generate turn: ' + error.message, 'error');
             }
         },
 
@@ -283,12 +286,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Construct a report from current state
                 const report = {
                     turn: GameState.game.turn,
-                    stars: GameState.stars.filter(s => s.owner === 1).length,
-                    fleets: GameState.fleets.filter(f => f.owner === 1).length,
+                    stars: GameState.stars.filter(s => s.intel === 'owned').length,
+                    fleets: GameState.fleets.length,
                     population: GameState.stars
-                        .filter(s => s.owner === 1)
+                        .filter(s => s.intel === 'owned')
                         .reduce((sum, s) => sum + (s.colonists || 0), 0),
-                    messages: GameState.game.messages || []
+                    messages: GameState.messages || []
                 };
 
                 Dialogs.showTurnReport(report);

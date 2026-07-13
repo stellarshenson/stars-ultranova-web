@@ -45,6 +45,26 @@ class Message:
         self.message_type = message_type
         self.fleet_key = fleet_key
 
+    def __str__(self) -> str:
+        return self.text
+
+    def to_dict(self) -> dict:
+        return {
+            "audience": self.audience,
+            "text": self.text,
+            "type": self.message_type,
+            "fleet_key": self.fleet_key,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Message':
+        return cls(
+            audience=data.get("audience", 0),
+            text=data.get("text", ""),
+            message_type=data.get("type", ""),
+            fleet_key=data.get("fleet_key", 0),
+        )
+
 
 class Command(ABC):
     """

@@ -732,8 +732,12 @@ const RaceWizard = {
             });
             localStorage.setItem('customRaces', JSON.stringify(races));
 
-            alert(`Race "${this.raceData.name}" saved successfully!`);
             this.hide();
+            ApiClient.showStatus(`Race "${this.raceData.name}" saved`, 'success');
+            // Back to New Game so the race can be picked immediately
+            if (window.Dialogs && !GameState.game) {
+                Dialogs.showNewGame();
+            }
         } catch (error) {
             alert('Failed to save race: ' + error.message);
         }

@@ -115,13 +115,14 @@ const ApiClient = {
     },
 
     // Games
-    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null) {
+    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null, race = null) {
         return this.request('POST', '/games/', {
             name,
             player_count: playerCount,
             universe_size: universeSize,
             density,
-            seed
+            seed,
+            race
         }, { showLoading: true, loadingMessage: 'Creating game...' });
     },
 
@@ -172,9 +173,32 @@ const ApiClient = {
         return this.request('GET', `/games/${gameId}/fleets/${fleetKey}/waypoints`);
     },
 
-    async updateFleetWaypoints(gameId, fleetKey, waypoints) {
-        return this.request('PUT', `/games/${gameId}/fleets/${fleetKey}/waypoints`, waypoints, {
-            showLoading: true, loadingMessage: 'Updating waypoints...'
+    async splitFleet(gameId, fleetKey, empireId, keep) {
+        // keep: {design_key: quantity to KEEP in this fleet}
+        return this.request('POST', `/games/${gameId}/fleets/${fleetKey}/split`, {
+            empire_id: empireId,
+            keep
+        });
+    },
+
+    async mergeFleets(gameId, fleetKey, empireId, otherFleetKey) {
+        return this.request('POST', `/games/${gameId}/fleets/${fleetKey}/merge`, {
+            empire_id: empireId,
+            other_fleet_key: otherFleetKey
+        });
+    },
+
+    async getBattles(gameId, empireId) {
+        return this.request('GET', `/games/${gameId}/empires/${empireId}/battles`);
+    },
+
+    async transferCargo(gameId, fleetKey, empireId, delta) {
+        return this.request('POST', `/games/${gameId}/fleets/${fleetKey}/cargo`, {
+            empire_id: empireId,
+            ironium: delta.ironium || 0,
+            boranium: delta.boranium || 0,
+            germanium: delta.germanium || 0,
+            colonists: delta.colonists || 0
         });
     },
 
@@ -187,10 +211,19 @@ const ApiClient = {
         return this.request('GET', `/games/${gameId}/empires/${empireId}`);
     },
 
-    // Commands
-    async submitCommand(gameId, empireId, command) {
-        return this.request('POST', `/games/${gameId}/empires/${empireId}/commands`, command, {
-            showLoading: true, loadingMessage: 'Submitting command...'
+    async getPlayerState(gameId, empireId) {
+        return this.request('GET', `/games/${gameId}/empires/${empireId}/state`);
+    },
+
+    /**
+     * Submit a command. commandType is one of waypoint/production/
+     * design/research; commandData must match the backend command
+     * schema (mode, star_key/fleet_key, production_order/waypoint/...).
+     */
+    async submitCommand(gameId, empireId, commandType, commandData) {
+        return this.request('POST', `/games/${gameId}/empires/${empireId}/commands`, {
+            command_type: commandType,
+            command_data: commandData
         });
     },
 

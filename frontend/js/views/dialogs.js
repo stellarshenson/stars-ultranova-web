@@ -112,6 +112,16 @@ const Dialogs = {
                 </div>
 
                 <div class="form-group">
+                    <label for="player-race">Your Race</label>
+                    <select id="player-race" class="form-select">
+                        <option value="">Default (Humanoids)</option>
+                        ${this.getCustomRaces().map((r, i) =>
+                            `<option value="${i}">${r.name} (${r.prt || 'JOAT'})</option>`
+                        ).join('')}
+                    </select>
+                </div>
+
+                <div class="form-group">
                     <button class="btn-small" id="btn-design-race">Design Custom Race...</button>
                 </div>
             </div>
@@ -132,20 +142,37 @@ const Dialogs = {
             const density = document.getElementById('star-density').value || 'normal';
             const seed = document.getElementById('game-seed').value || null;
 
+            const raceIdx = document.getElementById('player-race').value;
+            const race = raceIdx === '' ? null
+                : (this.getCustomRaces()[parseInt(raceIdx)] || null);
+
             try {
-                await GameState.createGame(name, playerCount, universeSize, density, seed);
+                await GameState.createGame(name, playerCount, universeSize, density, seed, race);
                 this.close();
             } catch (error) {
                 alert('Failed to create game: ' + error.message);
             }
         });
 
-        // Bind race designer button
+        // Bind race designer button: reopen New Game afterwards so the
+        // freshly saved race appears in the selector
         document.getElementById('btn-design-race')?.addEventListener('click', () => {
             if (window.RaceWizard) {
+                this.close();
                 RaceWizard.show();
             }
         });
+    },
+
+    /**
+     * Custom races saved by the race wizard (localStorage).
+     */
+    getCustomRaces() {
+        try {
+            return JSON.parse(localStorage.getItem('customRaces') || '[]');
+        } catch (e) {
+            return [];
+        }
     },
 
     /**
@@ -603,6 +630,89 @@ const Dialogs = {
                     callback(value);
                 }
             }
+        });
+    },
+
+    /**
+     * Promise-based option picker. items may be strings or {value,label}.
+     * Resolves with the selected INDEX, or null when cancelled.
+     */
+    selectOption(title, label, items) {
+        return new Promise((resolve) => {
+            const optionsHtml = items.map((item, i) => {
+                const text = typeof item === 'string' ? item : item.label;
+                return `<option value="${i}">${text}</option>`;
+            }).join('');
+
+            const html = `
+                <div class="dialog-header">
+                    <h2>${title}</h2>
+                    <button class="btn-close" id="btn-select-cancel-x">X</button>
+                </div>
+                <div class="dialog-body">
+                    <div class="form-group">
+                        <label for="select-dialog-value">${label}</label>
+                        <select id="select-dialog-value" class="form-select" size="${Math.min(items.length, 12)}">
+                            ${optionsHtml}
+                        </select>
+                    </div>
+                </div>
+                <div class="dialog-footer">
+                    <button class="btn-primary" id="btn-select-confirm">OK</button>
+                    <button class="btn-secondary" id="btn-select-cancel">Cancel</button>
+                </div>
+            `;
+
+            this.show(html);
+            const select = document.getElementById('select-dialog-value');
+            if (select && items.length > 0) select.value = '0';
+
+            const finish = (value) => { this.close(); resolve(value); };
+            const confirm = () => {
+                const v = select ? select.value : null;
+                finish(v === null || v === '' ? null : parseInt(v));
+            };
+
+            document.getElementById('btn-select-confirm')?.addEventListener('click', confirm);
+            select?.addEventListener('dblclick', confirm);
+            select?.addEventListener('keydown', (e) => { if (e.key === 'Enter') confirm(); });
+            document.getElementById('btn-select-cancel')?.addEventListener('click', () => finish(null));
+            document.getElementById('btn-select-cancel-x')?.addEventListener('click', () => finish(null));
+        });
+    },
+
+    /**
+     * Promise-based text prompt. Resolves with the string, or null on cancel.
+     */
+    promptText(title, label, defaultValue = '') {
+        return new Promise((resolve) => {
+            const html = `
+                <div class="dialog-header">
+                    <h2>${title}</h2>
+                    <button class="btn-close" id="btn-prompt-cancel-x">X</button>
+                </div>
+                <div class="dialog-body">
+                    <div class="form-group">
+                        <label for="prompt-dialog-value">${label}</label>
+                        <input type="text" id="prompt-dialog-value" class="form-input" value="${defaultValue}">
+                    </div>
+                </div>
+                <div class="dialog-footer">
+                    <button class="btn-primary" id="btn-prompt-confirm">OK</button>
+                    <button class="btn-secondary" id="btn-prompt-cancel">Cancel</button>
+                </div>
+            `;
+
+            this.show(html);
+            const input = document.getElementById('prompt-dialog-value');
+            input?.focus();
+            input?.select();
+
+            const finish = (value) => { this.close(); resolve(value); };
+            document.getElementById('btn-prompt-confirm')?.addEventListener('click', () => finish(input ? input.value : null));
+            input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(input.value); });
+            document.getElementById('btn-prompt-cancel')?.addEventListener('click', () => finish(null));
+            document.getElementById('btn-prompt-cancel-x')?.addEventListener('click', () => finish(null));
         });
     }
 };

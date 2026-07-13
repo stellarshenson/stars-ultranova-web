@@ -428,7 +428,7 @@ const GalaxyMap = {
         const threshold = this.starRadius * 2 / this.zoom;
 
         // Check fleets first (on top)
-        for (const fleet of GameState.fleets) {
+        for (const fleet of GameState.allVisibleFleets) {
             const dx = fleet.position_x - worldX;
             const dy = fleet.position_y - worldY;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -455,7 +455,7 @@ const GalaxyMap = {
      */
     centerOnHomeworld() {
         // Find player's homeworld (first star with colonists owned by player)
-        const homeworld = GameState.stars.find(s => s.colonists > 0 && s.owner === 1);
+        const homeworld = GameState.stars.find(s => s.intel === 'owned');
         if (homeworld) {
             this.viewX = homeworld.position_x;
             this.viewY = homeworld.position_y;
@@ -534,6 +534,11 @@ const GalaxyMap = {
             this.renderGrid();
         }
 
+        // Spatial phenomena underlays
+        this.renderMinefields();
+        this.renderStorms();
+        this.renderWormholes();
+
         // Draw waypoint lines for selected fleet
         if (this.selectedFleet) {
             this.renderWaypoints(this.selectedFleet);
@@ -545,7 +550,7 @@ const GalaxyMap = {
         }
 
         // Draw fleets
-        for (const fleet of GameState.fleets) {
+        for (const fleet of GameState.allVisibleFleets) {
             this.renderFleet(fleet);
         }
 
@@ -577,6 +582,137 @@ const GalaxyMap = {
 
         // Draw HUD
         this.renderHUD();
+    },
+
+    /**
+     * Render known minefields as hatched circles
+     * (own fields green, hostile fields red).
+     */
+    renderMinefields() {
+        const fields = GameState.minefields || [];
+        if (!fields.length) return;
+        const ctx = this.ctx;
+
+        for (const field of fields) {
+            const { x: sx, y: sy } = this.worldToScreen(field.x, field.y);
+            const radius = field.radius * this.zoom;
+            if (radius < 2) continue;
+
+            const own = field.owner === GameState.empireId;
+            const color = own ? '0, 255, 0' : '255, 60, 60';
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${color}, 0.07)`;
+            ctx.fill();
+            ctx.strokeStyle = `rgba(${color}, 0.45)`;
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            if (this.zoom >= 0.5) {
+                ctx.fillStyle = `rgba(${color}, 0.7)`;
+                ctx.font = '9px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${field.mine_descriptor || ''} mines`, sx, sy);
+            }
+            ctx.restore();
+        }
+    },
+
+    /**
+     * Render galactic storms as pulsing hazard swirls.
+     */
+    renderStorms() {
+        const storms = GameState.storms || [];
+        if (!storms.length) return;
+        const ctx = this.ctx;
+        const pulse = 0.75 + 0.25 * Math.sin(Date.now() / 400);
+
+        for (const storm of storms) {
+            const { x: sx, y: sy } = this.worldToScreen(storm.x, storm.y);
+            const radius = storm.radius * this.zoom;
+            if (radius < 2) continue;
+
+            ctx.save();
+            const grad = ctx.createRadialGradient(sx, sy, radius * 0.1, sx, sy, radius);
+            grad.addColorStop(0, `rgba(255, 120, 40, ${0.30 * pulse})`);
+            grad.addColorStop(0.7, `rgba(200, 60, 160, ${0.16 * pulse})`);
+            grad.addColorStop(1, 'rgba(120, 40, 160, 0)');
+            ctx.beginPath();
+            ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            ctx.strokeStyle = `rgba(255, 140, 60, ${0.5 * pulse})`;
+            ctx.setLineDash([6, 6]);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            if (this.zoom >= 0.4) {
+                ctx.fillStyle = 'rgba(255, 160, 80, 0.85)';
+                ctx.font = 'bold 10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('STORM', sx, sy + 3);
+            }
+            ctx.restore();
+        }
+    },
+
+    /**
+     * Render discovered wormholes: two swirl endpoints joined by a
+     * faint line.
+     */
+    renderWormholes() {
+        const wormholes = GameState.wormholes || [];
+        if (!wormholes.length) return;
+        const ctx = this.ctx;
+        const spin = (Date.now() / 900) % (Math.PI * 2);
+
+        for (const w of wormholes) {
+            const { x: ax, y: ay } = this.worldToScreen(w.x1, w.y1);
+            const { x: bx, y: by } = this.worldToScreen(w.x2, w.y2);
+
+            ctx.save();
+            ctx.strokeStyle = 'rgba(170, 110, 255, 0.18)';
+            ctx.setLineDash([2, 8]);
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            for (const [ex, ey, label] of [[ax, ay, `${w.name} (A)`],
+                                           [bx, by, `${w.name} (B)`]]) {
+                const r = Math.max(4, 7 * this.zoom);
+                for (let arm = 0; arm < 3; arm++) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = 'rgba(190, 130, 255, 0.8)';
+                    ctx.lineWidth = 1.5;
+                    const start = spin + arm * (Math.PI * 2 / 3);
+                    ctx.arc(ex, ey, r, start, start + Math.PI * 0.9);
+                    ctx.stroke();
+                }
+                ctx.beginPath();
+                ctx.arc(ex, ey, Math.max(1.5, r * 0.3), 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(230, 200, 255, 0.9)';
+                ctx.fill();
+
+                if (this.showNames && this.zoom >= 0.5) {
+                    ctx.fillStyle = 'rgba(190, 140, 255, 0.85)';
+                    ctx.font = '9px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(label, ex, ey + r + 10);
+                }
+            }
+            ctx.restore();
+        }
     },
 
     /**
@@ -857,14 +993,10 @@ const GalaxyMap = {
 
         // Determine star color - spectral for uncolonized, ownership for colonized
         let fillColor;
-        if (star.colonists > 0) {
-            if (star.owner === 1) {  // Player
-                fillColor = this.colors.starFriendly;
-            } else if (star.owner > 1) {  // Enemy
-                fillColor = this.colors.starEnemy;
-            } else {
-                fillColor = `rgb(${colors.r}, ${colors.g}, ${colors.b})`;
-            }
+        if (star.intel === 'owned') {
+            fillColor = this.colors.starFriendly;
+        } else if (star.owner > 0 && star.colonists > 0) {
+            fillColor = this.colors.starEnemy;
         } else {
             fillColor = `rgb(${colors.r}, ${colors.g}, ${colors.b})`;
         }
@@ -890,9 +1022,9 @@ const GalaxyMap = {
             ctx.fill();
         }
 
-        // Draw ownership ring for colonized stars
-        if (star.colonists > 0) {
-            const ringColor = star.owner === 1 ? this.colors.starFriendly : this.colors.starEnemy;
+        // Draw ownership ring for colonized stars we know about
+        if (star.colonists > 0 && (star.intel === 'owned' || star.owner > 0)) {
+            const ringColor = star.intel === 'owned' ? this.colors.starFriendly : this.colors.starEnemy;
             ctx.strokeStyle = ringColor;
             ctx.lineWidth = Math.max(1, 2 * this.zoom);
             ctx.beginPath();
@@ -924,7 +1056,7 @@ const GalaxyMap = {
         }
 
         // Determine color based on ownership
-        let color = fleet.owner === 1 ? this.colors.fleetFriendly : this.colors.fleetEnemy;
+        let color = fleet.intel === 'scanned' ? this.colors.fleetEnemy : this.colors.fleetFriendly;
 
         // Draw fleet as diamond
         ctx.beginPath();
@@ -1041,10 +1173,8 @@ const GalaxyMap = {
 
         // Draw scanner ranges for player's fleets
         for (const fleet of GameState.fleets) {
-            if (fleet.owner !== 1) continue;  // Only player fleets
-
-            // Get scanner range from fleet (default to 50 ly if not set)
-            const scanRange = fleet.scan_range || fleet.scanner_range || 50;
+            // Own fleets only; scan range comes from ship designs
+            const scanRange = fleet.scan_range || fleet.scanner_range || 66;
             if (scanRange <= 0) continue;
 
             const pos = this.worldToScreen(fleet.position_x, fleet.position_y);
@@ -1064,10 +1194,10 @@ const GalaxyMap = {
 
         // Also draw scanner ranges for player's colonized stars
         for (const star of GameState.stars) {
-            if (star.owner !== 1 || star.colonists <= 0) continue;
+            if (star.intel !== 'owned') continue;
 
-            // Colonized planets have a base scanner range
-            const scanRange = 30;  // Base planetary scanner range
+            const scanRange = star.scan_range || 0;
+            if (scanRange <= 0) continue;
             const pos = this.worldToScreen(star.position_x, star.position_y);
             const radius = scanRange * this.zoom;
 
@@ -1140,6 +1270,7 @@ const GalaxyMap = {
      * Center on specific coordinates.
      */
     centerOn(x, y) {
+        if (x === undefined || y === undefined || isNaN(x) || isNaN(y)) return;
         this.viewX = x;
         this.viewY = y;
         this.render();

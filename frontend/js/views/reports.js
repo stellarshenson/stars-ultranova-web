@@ -365,7 +365,7 @@ const Reports = {
         if (fleet.in_orbit_name) {
             return fleet.in_orbit_name;
         }
-        return `(${Math.round(fleet.x)}, ${Math.round(fleet.y)})`;
+        return `(${Math.round(fleet.position_x)}, ${Math.round(fleet.position_y)})`;
     },
 
     /**
@@ -408,36 +408,46 @@ const Reports = {
      * @returns {string} HTML content
      */
     renderResearch() {
-        // Default research data (would come from empire data in full implementation)
-        const research = {
-            budget: 15,
-            fields: [
-                { name: 'Energy', level: 3, progress: 45, color: '#ffcc00' },
-                { name: 'Weapons', level: 3, progress: 30, color: '#ff4444' },
-                { name: 'Propulsion', level: 3, progress: 60, color: '#44ff44' },
-                { name: 'Construction', level: 3, progress: 15, color: '#888888' },
-                { name: 'Electronics', level: 3, progress: 50, color: '#4488ff' },
-                { name: 'Biotechnology', level: 3, progress: 25, color: '#ff88ff' }
-            ],
-            currentField: 'Propulsion'
+        const rs = GameState.research;
+        if (!rs) {
+            return '<p class="info-text">No research data available.</p>';
+        }
+
+        const colors = {
+            Energy: '#ffcc00', Weapons: '#ff4444', Propulsion: '#44ff44',
+            Construction: '#888888', Electronics: '#4488ff', Biotechnology: '#ff88ff'
         };
+        const fieldNames = ['Energy', 'Weapons', 'Propulsion', 'Construction', 'Electronics', 'Biotechnology'];
+        const currentField = fieldNames.find(f => (rs.topics || {})[f] === 1) || 'Energy';
+
+        const fields = fieldNames.map(name => {
+            const level = (rs.levels || {})[name] || 0;
+            const progress = (rs.progress || {})[name] || 0;
+            const cost = (rs.next_costs || {})[name] || 1;
+            return {
+                name, level,
+                progress: Math.min(100, Math.round((progress / cost) * 100)),
+                progressText: `${progress} / ${cost}`,
+                color: colors[name]
+            };
+        });
 
         return `
             <div class="research-status">
                 <div class="research-summary">
                     <div class="research-budget">
                         <span class="label">Research Budget:</span>
-                        <span class="value">${research.budget}%</span>
+                        <span class="value">${rs.budget}%</span>
                     </div>
                     <div class="current-research">
                         <span class="label">Currently Researching:</span>
-                        <span class="value">${research.currentField}</span>
+                        <span class="value">${currentField}</span>
                     </div>
                 </div>
 
                 <div class="research-fields">
-                    ${research.fields.map(field => `
-                        <div class="research-field ${field.name === research.currentField ? 'active' : ''}">
+                    ${fields.map(field => `
+                        <div class="research-field ${field.name === currentField ? 'active' : ''}">
                             <div class="field-header">
                                 <span class="field-name">${field.name}</span>
                                 <span class="field-level">Level ${field.level}</span>
@@ -446,7 +456,7 @@ const Reports = {
                                 <div class="progress-bar">
                                     <div class="progress-fill" style="width: ${field.progress}%; background-color: ${field.color}"></div>
                                 </div>
-                                <span class="progress-text">${field.progress}%</span>
+                                <span class="progress-text">${field.progressText}</span>
                             </div>
                         </div>
                     `).join('')}
@@ -454,8 +464,7 @@ const Reports = {
 
                 <div class="research-info">
                     <p class="info-text">
-                        Click on a field to set it as the current research priority.
-                        Higher budget allocation speeds up research progress.
+                        Use Commands &gt; Research... to change the research field and budget.
                     </p>
                 </div>
             </div>
@@ -512,13 +521,13 @@ const Reports = {
         if (type === 'star') {
             const star = GameState.stars.find(s => s.name === name);
             if (star) {
-                GalaxyMap.centerOn(star.x, star.y);
+                GalaxyMap.centerOn(star.position_x, star.position_y);
                 GameState.selectStar(star);
             }
         } else if (type === 'fleet') {
             const fleet = GameState.fleets.find(f => f.name === name);
             if (fleet) {
-                GalaxyMap.centerOn(fleet.x, fleet.y);
+                GalaxyMap.centerOn(fleet.position_x, fleet.position_y);
                 GameState.selectFleet(fleet);
             }
         }

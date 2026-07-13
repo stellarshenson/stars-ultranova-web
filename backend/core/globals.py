@@ -88,6 +88,13 @@ UNSET = -10000
 MINE_FIELD_SNAP_TO_GRID_SIZE = 5
 MINEFIELD_SNAP_TO_GRID_SIZE = 5  # Alias for consistency
 
+# Spatial phenomena (web extension - not in original Stars!)
+# Dust nebulae impede travel and dampen sensors; galactic storms damage ships
+NEBULA_SPEED_PENALTY = 0.4       # Max fractional speed loss in dense dust (density 1.0)
+NEBULA_MIN_SPEED_FACTOR = 0.6    # Speed never drops below this fraction
+NEBULA_SCAN_PENALTY = 0.5        # Max fractional scanner range loss in dense dust
+STORM_DAMAGE_PER_TURN = 20       # Armor damage percent per turn at intensity 1.0
+
 # Beam rating multiplier table [battlespeed_index][range]
 # From direct observation of Stars! 2.70j using Hyper Expansion Race
 # battlespeed: 0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5

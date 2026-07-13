@@ -113,6 +113,42 @@ class Star(Mappable):
         return self.name
 
     # =========================================================================
+    # Mineral concentration accessors
+    # Single storage in mineral_concentration (Resources); these properties
+    # keep the per-mineral field names used by the galaxy generator, scan
+    # reports, and the API consistent with that storage.
+    # =========================================================================
+
+    @property
+    def ironium_concentration(self) -> int:
+        return self.mineral_concentration.ironium
+
+    @ironium_concentration.setter
+    def ironium_concentration(self, value: int) -> None:
+        self.mineral_concentration.ironium = value
+
+    @property
+    def boranium_concentration(self) -> int:
+        return self.mineral_concentration.boranium
+
+    @boranium_concentration.setter
+    def boranium_concentration(self, value: int) -> None:
+        self.mineral_concentration.boranium = value
+
+    @property
+    def germanium_concentration(self) -> int:
+        return self.mineral_concentration.germanium
+
+    @germanium_concentration.setter
+    def germanium_concentration(self, value: int) -> None:
+        self.mineral_concentration.germanium = value
+
+    @property
+    def resources_per_year(self) -> int:
+        """Resources generated per year (colonists + factories)."""
+        return self.get_resource_rate()
+
+    # =========================================================================
     # Factory Operations
     # Port of: Star.cs lines 94-170
     # =========================================================================
@@ -535,7 +571,12 @@ class Star(Mappable):
             "original_gravity": self.original_gravity,
             "original_radiation": self.original_radiation,
             "original_temperature": self.original_temperature,
-            "this_race_name": self.this_race.name if self.this_race else None
+            "this_race_name": self.this_race.name if self.this_race else None,
+            "owner": self.owner,
+            "spectral_class": self.spectral_class,
+            "luminosity_class": self.luminosity_class,
+            "star_temperature": self.star_temperature,
+            "star_radius": self.star_radius
         })
         return data
 
@@ -588,6 +629,13 @@ class Star(Mappable):
         star.original_gravity = data.get("original_gravity", 0)
         star.original_radiation = data.get("original_radiation", 0)
         star.original_temperature = data.get("original_temperature", 0)
+
+        if "owner" in data:
+            star.owner = data["owner"]
+        star.spectral_class = data.get("spectral_class", "G")
+        star.luminosity_class = data.get("luminosity_class", "V")
+        star.star_temperature = data.get("star_temperature", 5778)
+        star.star_radius = data.get("star_radius", 1.0)
 
         return star
 

@@ -33,17 +33,28 @@ const DesignPanel = {
         console.log('Design panel initialized');
     },
 
+    // Item types that can be mounted in hull slots (see ItemType enum
+    // in backend/core/game_objects/item.py)
+    mountableItemTypes: [
+        'ENGINE', 'MECHANICAL', 'ELECTRICAL', 'SCANNER', 'ORBITAL', 'GATE',
+        'MINING_ROBOT', 'MINE_LAYER', 'SHIELD', 'ARMOR', 'BOMB',
+        'WEAPON', 'BEAM_WEAPONS', 'TORPEDOES'
+    ],
+
     /**
      * Load available components.
+     * The components endpoint returns everything (including hulls and
+     * engines) with an item_type field; keep only mountable components.
      */
     async loadComponents() {
         try {
             const hulls = await ApiClient.request('GET', '/designs/hulls');
-            const engines = await ApiClient.request('GET', '/designs/engines');
             const components = await ApiClient.request('GET', '/designs/components');
 
             this.availableHulls = hulls;
-            this.availableComponents = [...engines, ...components];
+            this.availableComponents = components.filter(
+                c => this.mountableItemTypes.includes(c.item_type)
+            );
         } catch (error) {
             console.error('Failed to load components:', error);
         }
@@ -168,32 +179,33 @@ const DesignPanel = {
     },
 
     /**
-     * Group components by category.
+     * Group components by category (derived from item_type).
      */
     groupComponentsByCategory() {
-        const categories = {
-            'Engines': [],
-            'Weapons': [],
-            'Shields': [],
-            'Armor': [],
-            'Scanners': [],
-            'Other': []
+        const categoryByType = {
+            'ENGINE': 'Engines',
+            'WEAPON': 'Weapons',
+            'BEAM_WEAPONS': 'Weapons',
+            'TORPEDOES': 'Weapons',
+            'SHIELD': 'Shields',
+            'ARMOR': 'Armor',
+            'SCANNER': 'Scanners',
+            'ELECTRICAL': 'Electrical',
+            'MECHANICAL': 'Mechanical',
+            'BOMB': 'Bombs',
+            'MINE_LAYER': 'Mine Layers',
+            'MINING_ROBOT': 'Mining Robots',
+            'ORBITAL': 'Orbital',
+            'GATE': 'Orbital'
         };
 
+        const categories = {};
         for (const comp of this.availableComponents) {
-            const cat = comp.category || 'Other';
-            if (categories[cat]) {
-                categories[cat].push(comp);
-            } else {
-                categories['Other'].push(comp);
+            const cat = categoryByType[comp.item_type] || 'Other';
+            if (!categories[cat]) {
+                categories[cat] = [];
             }
-        }
-
-        // Remove empty categories
-        for (const key of Object.keys(categories)) {
-            if (categories[key].length === 0) {
-                delete categories[key];
-            }
+            categories[cat].push(comp);
         }
 
         return categories;
@@ -220,10 +232,13 @@ const DesignPanel = {
         for (let i = 0; i < slots.length; i++) {
             const slot = slots[i];
             const filled = slot.component ? 'filled' : 'empty';
+            const label = slot.component
+                ? (slot.count > 1 ? `${slot.count}x ${slot.component}` : slot.component)
+                : 'Empty';
             slotsHtml += `
                 <div class="slot ${filled}" data-index="${i}">
-                    <span class="slot-type">${slot.type}</span>
-                    <span class="slot-component">${slot.component || 'Empty'}</span>
+                    <span class="slot-type">${slot.type} (${slot.max})</span>
+                    <span class="slot-component">${label}</span>
                 </div>
             `;
         }
@@ -347,19 +362,49 @@ const DesignPanel = {
             return;
         }
 
-        // Create new design with this hull
+        // Create new design with this hull. Slots keep the hull module
+        // cell_number - it is the slot identity in the design command.
         this.currentDesign = {
             name: `New ${hullName}`,
             hull: hullName,
             slots: hull.modules?.map(m => ({
-                type: m.type,
+                cell_number: m.cell_number,
+                type: m.component_type,
+                max: m.component_maximum || 1,
                 component: null,
-                quantity: 0
+                count: 0
             })) || [],
-            stats: hull.base_stats || {}
+            stats: this.baseHullStats(hull)
         };
 
         this.render();
+    },
+
+    /**
+     * Base stats from a hull response.
+     */
+    baseHullStats(hull) {
+        return {
+            mass: hull.mass || 0,
+            fuel_capacity: hull.fuel_capacity || 0,
+            armor: hull.armor_strength || 0,
+            shields: 0,
+            initiative: hull.battle_initiative || 0,
+            cost_ironium: hull.cost?.ironium || 0,
+            cost_boranium: hull.cost?.boranium || 0,
+            cost_germanium: hull.cost?.germanium || 0,
+            cost_resources: hull.cost?.energy || 0
+        };
+    },
+
+    /**
+     * Keep the typed design name across re-renders.
+     */
+    syncName() {
+        const nameInput = document.getElementById('design-name');
+        if (nameInput && this.currentDesign) {
+            this.currentDesign.name = nameInput.value;
+        }
     },
 
     /**
@@ -367,105 +412,154 @@ const DesignPanel = {
      */
     addComponent(componentName) {
         if (!this.currentDesign) {
-            alert('Please select a hull first.');
+            ApiClient.showStatus('Select a hull first', 'error');
             return;
         }
 
         const component = this.availableComponents.find(c => c.name === componentName);
         if (!component) return;
 
-        // Find an empty slot that accepts this component type
-        const slot = this.currentDesign.slots.find(s =>
-            !s.component && this.slotAcceptsComponent(s.type, component.category)
+        // Prefer a slot already holding this component with spare capacity
+        let slot = this.currentDesign.slots.find(s =>
+            s.component === componentName && s.count < s.max
         );
 
         if (!slot) {
-            alert('No available slot for this component.');
-            return;
+            slot = this.currentDesign.slots.find(s =>
+                !s.component && this.slotAcceptsComponent(s.type, component.item_type)
+            );
+            if (!slot) {
+                ApiClient.showStatus('No available slot for this component', 'error');
+                return;
+            }
+            slot.component = componentName;
+            slot.count = 0;
         }
 
-        slot.component = componentName;
-        slot.quantity = 1;
+        slot.count++;
 
+        this.syncName();
         this.updateStats();
         this.render();
     },
 
     /**
-     * Check if a slot accepts a component category.
+     * Check if a slot accepts a component item type.
+     * Mirrors slot_accepts in backend/services/design_builder.py:
+     * the slot type is a phrase ("Shield or Armor", "General Purpose",
+     * "Scanner Electrical Mechanical") and each recognized token widens
+     * the accepted set.
      */
-    slotAcceptsComponent(slotType, componentCategory) {
-        const mapping = {
-            'Engine': ['Engines'],
-            'Weapon': ['Weapons'],
-            'Shield': ['Shields'],
-            'Armor': ['Armor'],
-            'Scanner': ['Scanners'],
-            'Mechanical': ['Other', 'Mechanical'],
-            'Electrical': ['Other', 'Electrical', 'Scanners'],
-            'General': ['Engines', 'Weapons', 'Shields', 'Armor', 'Scanners', 'Other']
+    slotAcceptsComponent(slotType, itemType) {
+        const tokenTypes = {
+            'weapon': ['WEAPON', 'BEAM_WEAPONS', 'TORPEDOES'],
+            'engine': ['ENGINE'],
+            'shield': ['SHIELD'],
+            'armor': ['ARMOR'],
+            'electrical': ['ELECTRICAL'],
+            'elect': ['ELECTRICAL'],
+            'mechanical': ['MECHANICAL'],
+            'mech': ['MECHANICAL'],
+            'scanner': ['SCANNER'],
+            'bomb': ['BOMB'],
+            'orbital': ['ORBITAL', 'GATE'],
+            'miner': ['MINING_ROBOT']
         };
 
-        const accepted = mapping[slotType] || mapping['General'];
-        return accepted.includes(componentCategory);
+        // General purpose: everything except engines and orbitals
+        const generalPurpose = [
+            'WEAPON', 'BEAM_WEAPONS', 'TORPEDOES', 'SHIELD', 'ARMOR',
+            'ELECTRICAL', 'MECHANICAL', 'SCANNER', 'BOMB',
+            'MINING_ROBOT', 'MINE_LAYER'
+        ];
+
+        const lowered = (slotType || '').toLowerCase();
+        if (lowered.includes('general purpose')) {
+            return generalPurpose.includes(itemType);
+        }
+        if (lowered.includes('mine layer') && itemType === 'MINE_LAYER') {
+            return true;
+        }
+        for (const token of lowered.replace(/ or /g, ' ').split(/\s+/)) {
+            const accepted = tokenTypes[token];
+            if (accepted && accepted.includes(itemType)) {
+                return true;
+            }
+        }
+        return false;
     },
 
     /**
-     * Update design stats based on components.
+     * Update design stats based on hull + components.
+     * Client-side estimate only - the server is authoritative.
      */
     updateStats() {
         if (!this.currentDesign) return;
 
-        // This would calculate stats from hull + components
-        // For now, just accumulate basic values
-        let stats = { ...this.currentDesign.stats };
+        const hull = this.availableHulls.find(h => h.name === this.currentDesign.hull);
+        const stats = hull ? this.baseHullStats(hull) : { ...this.currentDesign.stats };
 
         for (const slot of this.currentDesign.slots) {
-            if (slot.component) {
-                const comp = this.availableComponents.find(c => c.name === slot.component);
-                if (comp) {
-                    stats.mass = (stats.mass || 0) + (comp.mass || 0);
-                    stats.armor = (stats.armor || 0) + (comp.armor || 0);
-                    stats.shields = (stats.shields || 0) + (comp.shields || 0);
-                    stats.cost_ironium = (stats.cost_ironium || 0) + (comp.cost?.ironium || 0);
-                    stats.cost_boranium = (stats.cost_boranium || 0) + (comp.cost?.boranium || 0);
-                    stats.cost_germanium = (stats.cost_germanium || 0) + (comp.cost?.germanium || 0);
-                    stats.cost_resources = (stats.cost_resources || 0) + (comp.cost?.resources || 0);
-                }
-            }
+            if (!slot.component || slot.count <= 0) continue;
+
+            const comp = this.availableComponents.find(c => c.name === slot.component);
+            if (!comp) continue;
+
+            const n = slot.count;
+            stats.mass = (stats.mass || 0) + (comp.mass || 0) * n;
+            stats.armor = (stats.armor || 0) + (comp.properties?.Armor?.Value || 0) * n;
+            stats.shields = (stats.shields || 0) + (comp.properties?.Shield?.Value || 0) * n;
+            stats.cost_ironium = (stats.cost_ironium || 0) + (comp.cost?.ironium || 0) * n;
+            stats.cost_boranium = (stats.cost_boranium || 0) + (comp.cost?.boranium || 0) * n;
+            stats.cost_germanium = (stats.cost_germanium || 0) + (comp.cost?.germanium || 0) * n;
+            stats.cost_resources = (stats.cost_resources || 0) + (comp.cost?.energy || 0) * n;
         }
 
         this.currentDesign.stats = stats;
     },
 
     /**
-     * Save the current design.
+     * Save the current design through the canonical design command.
+     * The server aggregates and validates (slot type/capacity, tech
+     * requirements, engine required for non-starbase designs).
      */
     async saveDesign() {
         if (!this.currentDesign || !GameState.game) {
-            alert('No design to save.');
+            ApiClient.showStatus('No design to save', 'error');
             return;
         }
 
-        const nameInput = document.getElementById('design-name');
-        if (nameInput) {
-            this.currentDesign.name = nameInput.value;
+        this.syncName();
+        const name = (this.currentDesign.name || '').trim();
+        if (!name) {
+            ApiClient.showStatus('Design name is required', 'error');
+            return;
         }
 
-        try {
-            await ApiClient.request('POST',
-                `/games/${GameState.game.id}/empires/1/commands`,
-                {
-                    type: 'design',
-                    action: 'add',
-                    design: this.currentDesign
-                }
-            );
+        const slots = this.currentDesign.slots
+            .filter(s => s.component && s.count > 0)
+            .map(s => ({
+                cell_number: s.cell_number,
+                component: s.component,
+                count: s.count
+            }));
 
-            alert('Design saved successfully!');
+        try {
+            await GameState.submitCommand('design', {
+                mode: 'Add',
+                design: {
+                    name: name,
+                    hull: this.currentDesign.hull,
+                    slots: slots
+                }
+            });
+
+            ApiClient.showStatus('Design saved', 'success');
+            await GameState.refreshState();
+            this.currentDesign = null;
             this.hide();
         } catch (error) {
-            alert('Failed to save design: ' + error.message);
+            ApiClient.showStatus(error.message, 'error');
         }
     },
 

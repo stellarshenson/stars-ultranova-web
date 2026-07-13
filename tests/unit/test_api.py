@@ -263,14 +263,17 @@ class TestCommandEndpoints:
         create_response = client.post("/api/games/", json={"name": "Test Game"})
         game_id = create_response.json()["id"]
 
-        # Submit a command
+        # Submit a command (applies immediately to the empire's state)
         response = client.post(f"/api/games/{game_id}/empires/1/commands", json={
-            "command_type": "waypoint",
-            "command_data": {"fleet_key": 1, "waypoints": []}
+            "command_type": "research",
+            "command_data": {
+                "budget": 25,
+                "topics": {"levels": {"Energy": 1}}
+            }
         })
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "queued"
+        assert data["status"] == "applied"
         assert "turn_year" in data
 
 

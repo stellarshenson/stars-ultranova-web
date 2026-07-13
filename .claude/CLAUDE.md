@@ -19,6 +19,14 @@ The following workspace rules are STRICTLY ENFORCED for this project:
 - **No manual package installs if Makefile exists** - use `make install` or equivalent Makefile targets, not direct `pip install`/`uv install`/`npm install`
 - **No automatic git commits or pushes** - only when user explicitly requests
 
+## Journal Rules (Project-Specific)
+
+- **APPEND ONLY**: New journal entries MUST be appended at the end of the file, never inserted between existing entries
+- Entries maintain strict chronological order by position - the last entry in the file is always the most recent work
+- Never reorder, move, or insert entries out of sequence
+- The Stellars **journal plugin** is the canonical tool for this file: create via `/journal:create`, append via `/journal:update`, archive via `/journal:archive`. The `journal:journal` skill auto-triggers on any mention of "journal" and runs `journal-tools check` after every write
+- Direct edits to `JOURNAL.md` are a last resort - prefer the plugin so modus secundis format, continuous numbering and append-only order are enforced automatically
+
 ## Project Context
 
 Stars Nova Web - a direct port of the Stars! 4X strategy game from C# to a Python web application.
@@ -28,18 +36,21 @@ Stars Nova Web - a direct port of the Stars! 4X strategy game from C# to a Pytho
 - FastAPI framework
 - uvicorn ASGI server
 - HTML/CSS/JavaScript frontend (preserving original Stars! aesthetic)
-- Original Stars! Nova C# codebase as reference (`stars-nova-orig-c#/`)
+- Original Stars! Nova C# codebase as reference (`references/original-game/`)
 
 **Reference Implementation**:
-- All game logic, rules, and calculations must match the C# source in `stars-nova-orig-c#/`
+- All game logic, rules, and calculations must match the C# source in `references/original-game/`
 - Visual style, themes, and imagery preserved from original
 - Feature parity is mandatory - no omissions or simplifications
 
 **Key Directories**:
-- `stars-nova-orig-c#/` - Original C# source (reference only, gitignored)
-- `src/` - Python backend source
-- `static/` - Frontend assets (HTML, CSS, JS, images)
+- `references/original-game/` - Original C# source (reference only, gitignored)
+- `backend/` - Python backend source (FastAPI app, core game logic)
+- `frontend/` - Frontend assets (HTML, CSS, JS)
 - `tests/` - Test suite
+- `data/` - Database files (gitignored except `.gitkeep`)
+- `scripts/` - Utility scripts (screenshot capture)
+- `docs/` - Technical documentation
 
 ## Strengthened Rules
 

@@ -155,7 +155,7 @@ class PostBombingStep(ITurnStep):
             return messages
 
         # Check if there are colonists to drop
-        colonists_to_drop = fleet.cargo.colonists if hasattr(fleet.cargo, 'colonists') else 0
+        colonists_to_drop = fleet.cargo.colonist_numbers
 
         if colonists_to_drop <= 0:
             messages.append(Message(
@@ -169,32 +169,37 @@ class PostBombingStep(ITurnStep):
         # Perform colonization
         star.owner = fleet.owner
         star.colonists = colonists_to_drop
-        fleet.cargo.colonists = 0
+        star.this_race = sender.race
+        fleet.cargo.colonists_in_kilotons = 0
 
         # Transfer cargo to planet
-        if hasattr(fleet.cargo, 'ironium'):
-            star.resources_on_hand.ironium += fleet.cargo.ironium
-            fleet.cargo.ironium = 0
-        if hasattr(fleet.cargo, 'boranium'):
-            star.resources_on_hand.boranium += fleet.cargo.boranium
-            fleet.cargo.boranium = 0
-        if hasattr(fleet.cargo, 'germanium'):
-            star.resources_on_hand.germanium += fleet.cargo.germanium
-            fleet.cargo.germanium = 0
+        star.resources_on_hand.ironium += fleet.cargo.ironium
+        fleet.cargo.ironium = 0
+        star.resources_on_hand.boranium += fleet.cargo.boranium
+        fleet.cargo.boranium = 0
+        star.resources_on_hand.germanium += fleet.cargo.germanium
+        fleet.cargo.germanium = 0
 
         # Add star to sender's owned stars
         sender.owned_stars[star.name] = star
 
         messages.append(Message(
             audience=fleet.owner,
-            text=f"{star.name} has been colonized with {colonists_to_drop} colonists.",
+            text=f"You have colonized {star.name}. {colonists_to_drop:,} "
+                 f"colonists are now living there.",
             message_type="Colonization",
             fleet_key=fleet.key
         ))
 
-        # Scrap the colonizer module ship (typically)
-        # In actual Stars!, the colony ship is consumed
-        # For now, we just remove colonists - ship handling varies
+        # The colony ship is consumed by colonization, as in the original.
+        # Its hull minerals are recovered on the planet surface.
+        consumed = []
+        for token_key, token in fleet.tokens.items():
+            if token.can_colonize:
+                star.resources_on_hand.ironium += token.mass // 2
+                consumed.append(token_key)
+        for token_key in consumed:
+            del fleet.tokens[token_key]
 
         return messages
 

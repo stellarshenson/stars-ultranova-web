@@ -10,7 +10,7 @@ import math
 
 from .base import ITurnStep
 from ...core.commands.base import Message
-from ...core.globals import NOBODY
+from ...core.globals import NOBODY, NEBULA_SCAN_PENALTY
 
 if TYPE_CHECKING:
     from ..server_data import ServerData
@@ -143,6 +143,16 @@ class ScanStep(ITurnStep):
             empire: Scanning empire.
             server_state: Game state.
         """
+        # Dust nebulae dampen sensors: reduce ranges by dust density
+        # at the scanner's position
+        nebula = getattr(server_state, 'nebula_field', None)
+        if nebula is not None:
+            dust = nebula.get_dust_density_at(x, y)
+            if dust > 0.01:
+                factor = 1.0 - NEBULA_SCAN_PENALTY * dust
+                scan_range = int(scan_range * factor)
+                pen_scan_range = int(pen_scan_range * factor)
+
         # Scan stars (requires penetrating scan)
         for star in server_state.all_stars.values():
             if star.owner == empire.id:

@@ -22,7 +22,9 @@ from .turn_steps import (
     ScrapFleetStep
 )
 from ..core.commands.base import Message
-from ..core.globals import NOBODY
+from ..core.globals import (
+    NOBODY, NEBULA_SPEED_PENALTY, NEBULA_MIN_SPEED_FACTOR, STORM_DAMAGE_PER_TURN
+)
 from ..core.waypoints.waypoint import WaypointTask, get_task_type, Waypoint, NoTaskObj
 
 if TYPE_CHECKING:
@@ -101,7 +103,8 @@ class TurnGenerator:
         messages = ScrapFleetStep().process(self.server_state)
         self.server_state.all_messages.extend(messages)
 
-        # Move fleets
+        # Move fleets; minefield check follows each fleet's move, as in
+        # the original TurnGenerator.UpdateFleet -> CheckForMinefields.Check
         destroyed_fleets: List['Fleet'] = []
         for fleet in list(self.server_state.iterate_all_fleets()):
             if fleet.name == "Mineral Packet":
@@ -109,16 +112,21 @@ class TurnGenerator:
             if getattr(fleet, 'is_starbase', False):
                 continue
 
+            start_x, start_y = fleet.position.x, fleet.position.y
             if self._process_fleet(fleet):
                 destroyed_fleets.append(fleet)
+                continue
 
-        # Check for minefields
-        for fleet_key in list(self.server_state.iterate_all_fleet_keys()):
-            empire_id = fleet_key >> 32
-            if empire_id in self.server_state.all_empires:
-                fleet = self.server_state.all_empires[empire_id].owned_fleets.get(fleet_key)
-                if fleet is not None and fleet.name != "Mineral Packet":
-                    self._check_minefield(fleet)
+            self._check_minefield(fleet, start_x, start_y)
+            self._check_wormhole_transit(fleet)
+
+        self.server_state.cleanup_fleets()
+
+        # Galactic storms: drift and damage ships caught inside
+        self._process_storms()
+
+        # Wormhole endpoints drift
+        self._process_wormholes()
 
         self.server_state.cleanup_fleets()
 
@@ -156,8 +164,9 @@ class TurnGenerator:
 
         self.server_state.cleanup_fleets()
 
-        # Update minefield visibility
+        # Update minefield and wormhole visibility
         self._update_minefield_visibility()
+        self._update_wormhole_visibility()
 
         # Return all generated messages
         return self.server_state.all_messages
@@ -171,6 +180,8 @@ class TurnGenerator:
 
         messages = ScanStep().process(self.server_state)
         self.server_state.all_messages.extend(messages)
+
+        self._update_wormhole_visibility()
 
     def _parse_commands(self):
         """
@@ -195,15 +206,16 @@ class TurnGenerator:
                     if result is not None:
                         self.server_state.all_messages.append(result)
                 else:
+                    # A rejection with no message is benign (e.g. a
+                    # no-change research command) - skip silently
                     if message is not None:
                         self.server_state.all_messages.append(message)
-
-                    error_msg = Message(
-                        audience=empire.id,
-                        text=f"Invalid {type(command).__name__} command for {empire.race.name if empire.race else 'Unknown'}",
-                        message_type="Invalid Command"
-                    )
-                    self.server_state.all_messages.append(error_msg)
+                        error_msg = Message(
+                            audience=empire.id,
+                            text=f"Invalid {type(command).__name__} command for {empire.race.name if empire.race else 'Unknown'}",
+                            message_type="Invalid Command"
+                        )
+                        self.server_state.all_messages.append(error_msg)
 
             self.server_state.cleanup_fleets()
 
@@ -282,6 +294,13 @@ class TurnGenerator:
                 self.server_state.all_messages.append(msg)
                 return False
 
+        # Stargate travel: a warp-10 order between two friendly gated
+        # starbases is an instant jump (gate components existed in the
+        # original but travel was never implemented; canonical rules)
+        if waypoint_zero.warp_factor >= 10:
+            if self._gate_travel(fleet, waypoint_zero, empire):
+                return False
+
         # Calculate movement
         available_time = 1.0
         messages = []
@@ -353,6 +372,21 @@ class TurnGenerator:
         if speed <= 0:
             return "in_transit"
 
+        # Dust nebulae impede travel: sample dust density along this
+        # turn's path segment and slow the fleet proportionally
+        nebula = getattr(self.server_state, 'nebula_field', None)
+        if nebula is not None:
+            segment = min(speed * available_time, distance)
+            seg_x = fleet.position.x + dx / distance * segment
+            seg_y = fleet.position.y + dy / distance * segment
+            dust = nebula.get_average_dust_density_along_path(
+                fleet.position.x, fleet.position.y, seg_x, seg_y
+            )
+            if dust > 0.01:
+                factor = max(NEBULA_MIN_SPEED_FACTOR,
+                             1.0 - NEBULA_SPEED_PENALTY * dust)
+                speed *= factor
+
         # Calculate how far we can travel this turn
         travel_distance = speed * available_time
 
@@ -380,18 +414,60 @@ class TurnGenerator:
         """
         Calculate and consume fuel for movement.
 
-        Args:
-            fleet: Moving fleet.
-            distance: Distance traveled in light years.
-            warp: Warp factor used.
+        Uses each design's engine fuel table when available
+        (ShipDesign.fuel_consumption - port of ShipDesign.cs lines
+        721-744: (mass + cargo) * table[warp]/100 * warp^2 / 200,
+        IFE x0.85). Designs without engine data (starting
+        SimpleDesigns) fall back to mass * warp/200 per light year.
+        Out of fuel drops the fleet to its free warp speed, as in
+        Fleet.cs Move (lines 456-463).
         """
-        # Fuel consumption depends on mass and engine efficiency
-        # Simplified implementation
-        mass = getattr(fleet, 'total_mass', 100)
-        fuel_per_ly = mass * warp / 200  # Simplified fuel formula
+        if warp <= 0 or distance <= 0:
+            return
 
-        fuel_consumed = int(fuel_per_ly * distance)
+        empire = self.server_state.all_empires.get(fleet.owner)
+        designs = empire.designs if empire else {}
+        race = empire.race if empire else None
+
+        speed = warp * warp  # ly per year
+        years = distance / speed
+
+        # Cargo mass distributed over tokens by cargo capacity,
+        # as in Fleet.cs FuelConsumption
+        cargo_mass = fleet.cargo.mass
+        total_capacity = fleet.total_cargo_capacity
+
+        fuel_per_year = 0.0
+        for token in fleet.tokens.values():
+            token_cargo = 0.0
+            if cargo_mass > 0 and token.cargo_capacity > 0 and total_capacity:
+                token_cargo = (cargo_mass * token.cargo_capacity
+                               * token.quantity / total_capacity)
+
+            design = designs.get(token.design_key)
+            if design is not None and getattr(design, 'engine', None) \
+                    is not None:
+                per_ship_cargo = token_cargo / max(1, token.quantity)
+                fuel_per_year += design.fuel_consumption(
+                    warp, race, per_ship_cargo) * token.quantity
+            else:
+                # Simplified model: mass * warp / 200 per ly at
+                # warp^2 ly/year -> mass * warp^3 / 200 per year
+                fuel_per_year += ((token.mass * token.quantity + token_cargo)
+                                  * (warp ** 3) / 200.0)
+
+        fuel_consumed = int(fuel_per_year * years)
         fleet.fuel_available = max(0, fleet.fuel_available - fuel_consumed)
+
+        if fleet.fuel_available <= 0 and fleet.waypoints:
+            free_warp = fleet.free_warp_speed
+            if fleet.waypoints[0].warp_factor > free_warp:
+                fleet.waypoints[0].warp_factor = free_warp
+                self.server_state.all_messages.append(Message(
+                    audience=fleet.owner,
+                    text=f"{fleet.name} has run out of fuel and dropped "
+                         f"to warp {free_warp}.",
+                    message_type="Fuel", fleet_key=fleet.key))
 
     def _regenerate_fleet(self, fleet: 'Fleet'):
         """
@@ -408,10 +484,11 @@ class TurnGenerator:
             star = self.server_state.all_stars.get(star.name)
 
         # Refuel if at friendly starbase with dock
+        starbase = self._get_starbase(star)
         if (star is not None and
                 star.owner == fleet.owner and
-                star.starbase is not None and
-                getattr(star.starbase, 'can_refuel', False)):
+                starbase is not None and
+                starbase.can_refuel):
             fleet.fuel_available = fleet.total_fuel_capacity
 
         # Repair
@@ -444,8 +521,9 @@ class TurnGenerator:
         """
         if star is not None:
             if star.owner == fleet.owner:
-                if star.starbase is not None:
-                    if getattr(star.starbase, 'can_refuel', False):
+                starbase = self._get_starbase(star)
+                if starbase is not None:
+                    if starbase.can_refuel:
                         return 20  # Orbiting own planet with dock
                     return 8  # Orbiting own planet with starbase but no dock
                 return 5  # Orbiting own planet, no starbase
@@ -455,56 +533,446 @@ class TurnGenerator:
                 return 2  # Stopped in space
             return 1  # Moving through space
 
+    def _get_starbase(self, star) -> Optional['Fleet']:
+        """Resolve the starbase fleet orbiting a star, if any."""
+        if star is None or not getattr(star, 'starbase_key', None):
+            return None
+        empire = self.server_state.all_empires.get(star.owner)
+        if empire is None:
+            return None
+        return empire.owned_fleets.get(star.starbase_key)
+
     def _same_position(self, pos1, waypoint) -> bool:
         """Check if position matches waypoint position."""
         return (abs(pos1.x - waypoint.position_x) < 0.01 and
                 abs(pos1.y - waypoint.position_y) < 0.01)
 
-    def _check_minefield(self, fleet: 'Fleet'):
+    def _star_gate(self, star) -> Optional[tuple]:
         """
-        Check if fleet hits a minefield.
+        Find a stargate at a star: (safe_mass, safe_range) or None.
 
-        Args:
-            fleet: Fleet to check.
+        The gate lives on the owner's starbase fleet in orbit.
         """
-        # Simplified - actual implementation checks movement path
-        for minefield in self.server_state.all_minefields.values():
+        if star is None or star.owner == NOBODY:
+            return None
+        empire = self.server_state.all_empires.get(star.owner)
+        if empire is None:
+            return None
+        for fleet in empire.owned_fleets.values():
+            if not getattr(fleet, 'is_starbase', False):
+                continue
+            if fleet.in_orbit_name != star.name:
+                continue
+            for token in fleet.tokens.values():
+                if getattr(token, 'has_gate', False):
+                    return (token.gate_mass, token.gate_range)
+        return None
+
+    def _gate_travel(self, fleet: 'Fleet', waypoint, empire) -> bool:
+        """
+        Attempt stargate travel for a warp-10 order.
+
+        Both the origin (orbited star) and the destination star must
+        carry a friendly gated starbase. Exceeding the gates' safe
+        hull mass or safe range risks losing ships in transit
+        (canonical rule; the original never implemented gate travel,
+        so limit handling is an approximation).
+
+        Returns True if the order was handled (jump or failure).
+        """
+        origin = fleet.in_orbit
+        if origin is not None:
+            origin = self.server_state.all_stars.get(origin.name)
+        dest = self.server_state.all_stars.get(waypoint.destination)
+
+        origin_gate = self._star_gate(origin) if (
+            origin is not None and origin.owner == fleet.owner) else None
+        dest_gate = self._star_gate(dest) if (
+            dest is not None and dest.owner == fleet.owner) else None
+
+        if origin_gate is None or dest_gate is None:
+            self.server_state.all_messages.append(Message(
+                audience=fleet.owner,
+                text=f"{fleet.name} cannot make a stargate jump: both "
+                     f"origin and destination need your own starbase "
+                     f"with a stargate.",
+                message_type="Invalid Command", fleet_key=fleet.key))
+            waypoint.warp_factor = min(waypoint.warp_factor, 9)
+            return False
+
+        distance = math.hypot(dest.position.x - fleet.position.x,
+                              dest.position.y - fleet.position.y)
+
+        def limit(a: int, b: int) -> float:
+            vals = [v for v in (a, b) if v >= 0]  # -1 means unlimited
+            return min(vals) if vals else float('inf')
+
+        safe_mass = limit(origin_gate[0], dest_gate[0])
+        safe_range = limit(origin_gate[1], dest_gate[1])
+
+        over_range = distance > safe_range
+        ships_lost = 0
+        for token in list(fleet.tokens.values()):
+            over_mass = token.mass > safe_mass
+            if not over_mass and not over_range:
+                continue
+            # Over-limit transit: each ship risks destruction and the
+            # survivors arrive damaged
+            survivors = 0
+            for _ in range(token.quantity):
+                if self.rand.random() < 0.25:
+                    ships_lost += 1
+                else:
+                    survivors += 1
+            token.quantity = survivors
+            token.damage_percent = min(99.0, token.damage_percent + 50.0)
+            if token.quantity <= 0:
+                del fleet.tokens[token.design_key]
+
+        if not fleet.tokens:
+            self.server_state.all_messages.append(Message(
+                audience=fleet.owner,
+                text=f"{fleet.name} was torn apart in a stargate jump "
+                     f"beyond the gate's limits!",
+                message_type="Fleet Destroyed", fleet_key=fleet.key))
+            empire.owned_fleets.pop(fleet.key, None)
+            return True
+
+        # Instant jump, no fuel used
+        fleet.position.x = dest.position.x
+        fleet.position.y = dest.position.y
+        self.server_state.set_fleet_orbit(fleet)
+        waypoint.position_x = dest.position.x
+        waypoint.position_y = dest.position.y
+        waypoint.warp_factor = 0
+
+        if ships_lost > 0:
+            text = (f"{fleet.name} gated to {dest.name}, losing "
+                    f"{ships_lost} ship(s) beyond the gate's limits!")
+        else:
+            text = f"{fleet.name} has gated safely to {dest.name}."
+        self.server_state.all_messages.append(Message(
+            audience=fleet.owner, text=text,
+            message_type="Stargate", fleet_key=fleet.key))
+        return True
+
+    def _check_wormhole_transit(self, fleet: 'Fleet'):
+        """
+        Pull a fleet through a wormhole it has flown into.
+
+        Transit requires the fleet's waypoint to target the endpoint
+        (by name) and the fleet to be at the endpoint's current
+        position; the fleet emerges at the opposite end.
+        """
+        if not fleet.waypoints:
+            return
+        waypoint = fleet.waypoints[0]
+        destination = waypoint.destination or ""
+        if not destination.startswith("Wormhole"):
+            return
+
+        for wormhole in self.server_state.all_wormholes.values():
+            for end_index, end_name, x, y in wormhole.endpoints():
+                if destination != end_name:
+                    continue
+                # Endpoints drift, so allow a small catch radius
+                if math.hypot(fleet.position.x - x,
+                              fleet.position.y - y) > 5.0:
+                    continue
+
+                out_x, out_y = wormhole.other_end(end_index)
+                fleet.position.x = out_x
+                fleet.position.y = out_y
+                fleet.in_orbit = None
+                fleet.waypoints.pop(0)
+                if not fleet.waypoints:
+                    fleet.waypoints.append(Waypoint(
+                        position_x=out_x, position_y=out_y,
+                        warp_factor=0,
+                        destination=f"{wormhole.name} "
+                                    f"({'B' if end_index == 0 else 'A'})",
+                        task=NoTaskObj()))
+                self.server_state.set_fleet_orbit(fleet)
+                self.server_state.all_messages.append(Message(
+                    audience=fleet.owner,
+                    text=f"{fleet.name} has passed through "
+                         f"{wormhole.name} and emerged at "
+                         f"({out_x:.0f}, {out_y:.0f})!",
+                    message_type="Wormhole", fleet_key=fleet.key))
+                return
+
+    def _process_wormholes(self):
+        """Drift wormhole endpoints (less stable ones drift more)."""
+        nebula = self.server_state.nebula_field
+        width = nebula.universe_width if nebula else 600
+        height = nebula.universe_height if nebula else 600
+        for wormhole in self.server_state.all_wormholes.values():
+            wormhole.drift(self.rand, width, height)
+
+    def _process_storms(self):
+        """
+        Drift galactic storms and damage fleets caught inside.
+
+        Web extension - not in original Stars!. Each ship in a storm
+        accumulates hull damage scaled by storm intensity; ships whose
+        damage reaches 100% are destroyed.
+        """
+        storms = getattr(self.server_state, 'all_storms', None)
+        if not storms:
+            return
+
+        nebula = self.server_state.nebula_field
+        width = nebula.universe_width if nebula else 600
+        height = nebula.universe_height if nebula else 600
+
+        for storm in storms.values():
+            storm.drift(width, height)
+
+        for fleet in list(self.server_state.iterate_all_fleets()):
+            if getattr(fleet, 'is_starbase', False):
+                continue  # starbases shelter in a planet's magnetosphere
+            if fleet.name == "Mineral Packet":
+                continue
+
+            for storm in storms.values():
+                if not storm.contains(fleet.position.x, fleet.position.y):
+                    continue
+
+                damage = STORM_DAMAGE_PER_TURN * storm.intensity
+                ships_lost = 0
+                for token in list(fleet.tokens.values()):
+                    token.damage_percent += damage
+                    while token.damage_percent >= 100 and token.quantity > 0:
+                        token.quantity -= 1
+                        ships_lost += 1
+                        token.damage_percent -= 100
+                    if token.quantity <= 0:
+                        del fleet.tokens[token.design_key]
+
+                if ships_lost > 0:
+                    text = (f"{fleet.name} was caught in a galactic storm - "
+                            f"{ships_lost} ship(s) torn apart!")
+                else:
+                    text = (f"{fleet.name} is riding out a galactic storm "
+                            f"and taking hull damage")
+                self.server_state.all_messages.append(Message(
+                    audience=fleet.owner, text=text,
+                    message_type="Storm", fleet_key=fleet.key
+                ))
+                break  # one storm hit per fleet per turn
+
+    # Mine stats per type, from the Mine Layer component properties in
+    # the reference components.xml (Mine Dispenser / Heavy Dispenser /
+    # Speed Trap). hit_chance is per light year per warp above safe
+    # speed. damage_per_ship approximates DamagePerEngine with one
+    # engine per ship (engine counts are not tracked per token).
+    MINE_STATS = {
+        0: {"safe_speed": 4, "hit_chance": 0.003,
+            "damage_per_ship": 100, "min_fleet_damage": 500},
+        1: {"safe_speed": 6, "hit_chance": 0.010,
+            "damage_per_ship": 50, "min_fleet_damage": 2000},
+        2: {"safe_speed": 5, "hit_chance": 0.035,
+            "damage_per_ship": 0, "min_fleet_damage": 0},
+    }
+
+    def _check_minefield(self, fleet: 'Fleet', start_x: float, start_y: float):
+        """
+        Check whether a fleet's movement this turn strikes a minefield.
+
+        Ported from CheckForMinefields.cs. The original implementation
+        was a stub with hardcoded values; this follows the canonical
+        rules its comments describe, using the Mine Layer constants
+        from components.xml: chance per light year travelled inside
+        the field, per warp above the field's safe speed.
+        """
+        warp = 0
+        if fleet.waypoints:
+            warp = fleet.waypoints[0].warp_factor
+
+        for minefield in list(self.server_state.all_minefields.values()):
             if minefield.owner == fleet.owner:
                 continue
 
-            # Check if fleet is inside minefield
-            dx = fleet.position.x - minefield.position_x
-            dy = fleet.position.y - minefield.position_y
-            distance = math.sqrt(dx * dx + dy * dy)
+            stats = self.MINE_STATS.get(minefield.mine_type, self.MINE_STATS[0])
 
-            if distance < minefield.radius:
-                # Hit minefield - calculate damage
-                hit_chance = 0.003  # 0.3% per ly per warp factor
-                # Actual formula is more complex
-                if self.rand.random() < hit_chance * minefield.radius:
-                    msg = Message(
-                        audience=fleet.owner,
-                        text=f"{fleet.name} has hit a minefield!",
-                        message_type="Minefield Hit",
-                        fleet_key=fleet.key
-                    )
-                    self.server_state.all_messages.append(msg)
-                    # TODO: Apply damage
+            # Travelling at or below the safe speed never triggers mines
+            speeding = warp - stats["safe_speed"]
+            if speeding <= 0:
+                continue
+
+            dist_in_field = self._chord_length(
+                start_x, start_y, fleet.position.x, fleet.position.y,
+                minefield.position_x, minefield.position_y, minefield.radius
+            )
+            if dist_in_field <= 0:
+                continue
+
+            probability = min(
+                1.0, stats["hit_chance"] * speeding * dist_in_field
+            )
+            if self.rand.random() < probability:
+                self._strike_minefield(fleet, minefield, stats)
+                break  # one strike per fleet per turn
+
+    def _chord_length(self, x1: float, y1: float, x2: float, y2: float,
+                      cx: float, cy: float, radius: float) -> float:
+        """Length of the segment (x1,y1)-(x2,y2) inside a circle."""
+        dx, dy = x2 - x1, y2 - y1
+        seg_len = math.hypot(dx, dy)
+        if seg_len < 1e-9:
+            # Stationary: inside or not
+            return 1.0 if math.hypot(x1 - cx, y1 - cy) < radius else 0.0
+
+        # Project circle center onto the segment line (parametric t)
+        fx, fy = x1 - cx, y1 - cy
+        a = dx * dx + dy * dy
+        b = 2 * (fx * dx + fy * dy)
+        c = fx * fx + fy * fy - radius * radius
+        disc = b * b - 4 * a * c
+        if disc <= 0:
+            return 0.0
+        sqrt_disc = math.sqrt(disc)
+        t1 = max(0.0, (-b - sqrt_disc) / (2 * a))
+        t2 = min(1.0, (-b + sqrt_disc) / (2 * a))
+        if t2 <= t1:
+            return 0.0
+        return (t2 - t1) * seg_len
+
+    def _strike_minefield(self, fleet: 'Fleet', minefield, stats: dict):
+        """
+        Apply a minefield strike: stop the fleet, damage ships,
+        expend detonated mines.
+        """
+        ships = sum(t.quantity for t in fleet.tokens.values())
+
+        # Fleet is stopped dead, as in the original (fleet.Speed = 0)
+        if fleet.waypoints:
+            fleet.waypoints[0].warp_factor = 0
+
+        ships_lost = 0
+        if stats["damage_per_ship"] > 0 and ships > 0:
+            total_damage = max(stats["min_fleet_damage"],
+                               stats["damage_per_ship"] * ships)
+            per_ship = total_damage / ships
+            for token in list(fleet.tokens.values()):
+                armor = max(1, token.armor)
+                token.damage_percent += per_ship / armor * 100
+                while token.damage_percent >= 100 and token.quantity > 0:
+                    token.quantity -= 1
+                    ships_lost += 1
+                    token.damage_percent -= 100
+                if token.quantity <= 0:
+                    del fleet.tokens[token.design_key]
+
+        # Detonated mines are expended
+        minefield.number_of_mines = max(0, minefield.number_of_mines - 10)
+        if minefield.number_of_mines <= 10:
+            self.server_state.all_minefields.pop(minefield.key, None)
+
+        descriptor = minefield.mine_descriptor
+        if stats["damage_per_ship"] == 0:
+            text = (f"{fleet.name} has been caught in a {descriptor} "
+                    f"minefield and is stopped dead in space!")
+        elif ships_lost > 0:
+            text = (f"{fleet.name} has struck a {descriptor} minefield! "
+                    f"{ships_lost} ship(s) were destroyed.")
+        else:
+            text = (f"{fleet.name} has struck a {descriptor} minefield "
+                    f"and taken damage!")
+        self.server_state.all_messages.append(Message(
+            audience=fleet.owner, text=text,
+            message_type="Minefield Hit", fleet_key=fleet.key
+        ))
+        if minefield.owner != NOBODY:
+            self.server_state.all_messages.append(Message(
+                audience=minefield.owner,
+                text=f"An enemy fleet has struck our {descriptor} "
+                     f"minefield at ({int(minefield.position_x)}, "
+                     f"{int(minefield.position_y)})!",
+                message_type="Minefield Hit", fleet_key=fleet.key
+            ))
 
     def _run_battle_engine(self):
         """Run standard battle engine."""
-        # Simplified - actual implementation in BattleEngine class
-        pass
+        from .battle.battle_engine import BattleEngine
+        self._execute_battles(BattleEngine)
 
     def _run_ron_battle_engine(self):
         """Run Ron's battle engine variant."""
-        # Simplified - actual implementation in RonBattleEngine class
-        pass
+        from .battle.ron_battle_engine import RonBattleEngine
+        self._execute_battles(RonBattleEngine)
+
+    def _execute_battles(self, engine_cls):
+        """Run a battle engine and distribute reports and messages."""
+        battle_reports = []
+        try:
+            engine = engine_cls(self.server_state, battle_reports)
+            engine.run()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Battle engine failed")
+            return
+
+        announced = set()
+        for battle in battle_reports:
+            participants = set()
+            for stack in battle.stacks.values():
+                participants.add(stack.key >> 32)
+
+            for empire_id in participants:
+                empire = self.server_state.all_empires.get(empire_id)
+                if empire is None:
+                    continue
+                empire.battle_reports.append(
+                    battle.to_dict() if hasattr(battle, 'to_dict') else {}
+                )
+                # One message per empire per location per turn
+                if (empire_id, battle.location) in announced:
+                    continue
+                announced.add((empire_id, battle.location))
+                self.server_state.all_messages.append(Message(
+                    audience=empire_id,
+                    text=f"A battle took place at {battle.location}",
+                    message_type="Battle"
+                ))
 
     def _victory_check(self):
-        """Check for victory conditions."""
-        # Simplified - actual implementation checks various conditions
-        pass
+        """
+        Check for victory conditions.
+
+        An empire wins by owning 60% of all stars, or by being the
+        last empire with any colonized planets.
+        """
+        if getattr(self.server_state, 'victor', None):
+            return
+
+        total_stars = len(self.server_state.all_stars)
+        if total_stars == 0:
+            return
+
+        active = [
+            e for e in self.server_state.all_empires.values()
+            if e.owned_stars
+        ]
+
+        winner = None
+        if len(active) == 1 and len(self.server_state.all_empires) > 1:
+            winner = active[0]
+        else:
+            for empire in active:
+                if len(empire.owned_stars) >= 0.6 * total_stars:
+                    winner = empire
+                    break
+
+        if winner is not None:
+            self.server_state.victor = winner.id
+            race_name = winner.race.name if winner.race else f"Empire {winner.id}"
+            self.server_state.all_messages.append(Message(
+                audience=0,
+                text=f"The {race_name} have achieved domination of the galaxy! "
+                     f"They control {len(winner.owned_stars)} of {total_stars} star systems.",
+                message_type="Victory"
+            ))
 
     def _move_mineral_packets(self):
         """Move mineral packets after they are created."""
@@ -564,6 +1032,50 @@ class TurnGenerator:
             empire = self.server_state.all_empires.get(packet.owner)
             if empire is not None and packet.key in empire.owned_fleets:
                 del empire.owned_fleets[packet.key]
+
+    def _update_wormhole_visibility(self):
+        """
+        Discover wormholes that come within scanner range.
+
+        Once discovered, a wormhole stays on the empire's charts
+        (endpoint positions still drift).
+        """
+        wormholes = self.server_state.all_wormholes
+        if not wormholes:
+            return
+
+        for empire in self.server_state.all_empires.values():
+            known = getattr(empire, 'known_wormholes', None)
+            if known is None:
+                known = set()
+                empire.known_wormholes = known
+
+            scanners = []
+            for fleet in empire.owned_fleets.values():
+                scan = max((getattr(t, 'scan_range_normal', 0)
+                            for t in fleet.tokens.values()), default=0)
+                if scan > 0:
+                    scanners.append((fleet.position.x, fleet.position.y,
+                                     scan))
+            for star in empire.owned_stars.values():
+                scan = getattr(star, 'scan_range', 0)
+                if scan > 0:
+                    scanners.append((star.position.x, star.position.y,
+                                     scan))
+
+            for wormhole in wormholes.values():
+                if wormhole.key in known:
+                    continue
+                for _, _, wx, wy in wormhole.endpoints():
+                    if any(math.hypot(wx - sx, wy - sy) <= srange
+                           for sx, sy, srange in scanners):
+                        known.add(wormhole.key)
+                        self.server_state.all_messages.append(Message(
+                            audience=empire.id,
+                            text=f"Our scanners have discovered "
+                                 f"{wormhole.name}!",
+                            message_type="Wormhole"))
+                        break
 
     def _update_minefield_visibility(self):
         """Update which minefields are visible to each empire."""

@@ -30,8 +30,11 @@ class MockFleetToken:
     """Mock ship token for fleet tokens."""
     quantity: int = 1
     design: Optional[object] = None
+    design_key: int = 1
     scan_range_normal: int = 0
     scan_range_penetrating: int = 0
+    can_colonize: bool = False
+    mass: int = 0
 
     def __post_init__(self):
         # Copy scan ranges from design if provided
@@ -59,7 +62,11 @@ class MockCargo:
     ironium: int = 0
     boranium: int = 0
     germanium: int = 0
-    colonists: int = 0
+    colonists_in_kilotons: int = 0
+
+    @property
+    def colonist_numbers(self) -> int:
+        return self.colonists_in_kilotons * 100
 
 
 @dataclass
@@ -122,11 +129,26 @@ class MockStar:
     research_allocation: int = 0
     max_population: int = 1000000
     manufacturing_queue: Optional[object] = None
+    this_race: Optional[object] = None
+    only_leftover: bool = False
+
+    def update_minerals(self):
+        pass
+
+    def update_research(self, budget: int):
+        self.research_allocation = 0
+
+    def update_resources(self):
+        pass
+
+    def update_population(self, race):
+        self.colonists += int(self.colonists * 0.15)
 
 
 @dataclass
 class MockRace:
     """Mock race for testing."""
+    name: str = "Mock Race"
     growth_rate: int = 15
     factory_output: int = 10
 
@@ -450,16 +472,29 @@ class TestBombingStep:
     """Tests for BombingStep."""
 
     def test_bombing_kills_colonists(self):
-        """Bombing reduces colonist population."""
+        """Bombing reduces colonist population per Bombing.cs formulas."""
+        from backend.core.components.ship_design import Bomb
+
         data = ServerData()
 
-        star = MockStar(name="Target", owner=1, colonists=100000, defense_coverage=0.0)
+        star = MockStar(name="Target", owner=1, colonists=100000)
         data.all_stars = {"Target": star}
 
-        bomber_design = MockDesign(bomb_count=10, bomb_kill_rate=1.0)  # 10% kill rate
-        token = MockFleetToken(quantity=1, design=bomber_design)
+        @dataclass
+        class BomberDesign:
+            key: int = 1
+            conventional_bombs: object = None
+            smart_bombs: object = None
+
+        design = BomberDesign(
+            conventional_bombs=Bomb(pop_kill=2.5, installations=10,
+                                    minimum_kill=300, is_smart=False),
+            smart_bombs=Bomb(is_smart=True),
+        )
 
         empire0 = EmpireData(id=0)
+        empire0.designs[1] = design
+        token = MockFleetToken(quantity=2, design_key=1)
         fleet = MockFleet(
             key=1, owner=0,
             in_orbit=star,
@@ -475,8 +510,55 @@ class TestBombingStep:
         step = BombingStep()
         messages = step.process(data)
 
-        assert star.colonists < 100000
+        # 2 bombers x 2.5% pop kill, no defenses: 5% of 100,000 = 5,000
+        assert star.colonists == 95000
         assert len(messages) > 0
+
+    def test_bombing_blocked_by_starbase(self):
+        """A starbase protects the planet from bombing (Bombing.cs)."""
+        from backend.core.components.ship_design import Bomb
+
+        data = ServerData()
+        star = MockStar(name="Target", owner=1, colonists=100000)
+        data.all_stars = {"Target": star}
+
+        @dataclass
+        class BomberDesign:
+            key: int = 1
+            conventional_bombs: object = None
+            smart_bombs: object = None
+
+        empire0 = EmpireData(id=0)
+        empire0.designs[1] = BomberDesign(
+            conventional_bombs=Bomb(pop_kill=2.5, installations=10,
+                                    minimum_kill=300, is_smart=False),
+            smart_bombs=Bomb(is_smart=True),
+        )
+        fleet = MockFleet(key=1, owner=0, in_orbit=star, has_bombers=True,
+                          tokens={1: MockFleetToken(quantity=2)})
+        empire0.owned_fleets = {1: fleet}
+
+        empire1 = EmpireData(id=1)
+        starbase = MockFleet(key=(1 << 32) | 9, owner=1, is_starbase=True,
+                             tokens={1: MockFleetToken(quantity=1)})
+        starbase.in_orbit_name = "Target"
+        empire1.owned_fleets = {starbase.key: starbase}
+
+        data.all_empires = {0: empire0, 1: empire1}
+
+        BombingStep().process(data)
+        assert star.colonists == 100000  # untouched
+
+    def test_defense_coverage_formula(self):
+        """Defense coverage follows Defenses.cs exponential formula."""
+        from backend.server.turn_steps.bombing_step import (
+            compute_defense_coverage
+        )
+        star = MockStar(name="D", owner=1, colonists=1000, defenses=50)
+        cov = compute_defense_coverage(star)
+        expected = 1.0 - (1.0 - 0.0099) ** 50
+        assert cov["population"] == pytest.approx(expected)
+        assert cov["buildings"] == pytest.approx(expected * 0.5)
 
 
 # --------------------------------------------------------------------------
@@ -502,7 +584,7 @@ class TestPostBombingStep:
                 destination="New World",
                 task=WaypointTask.COLONIZE
             )],
-            cargo=MockCargo(colonists=10000, ironium=500),
+            cargo=MockCargo(colonists_in_kilotons=100, ironium=500),
             can_colonize=True,
             tokens={1: MockFleetToken(quantity=1)}
         )
@@ -515,7 +597,7 @@ class TestPostBombingStep:
         assert star.owner == 0
         assert star.colonists == 10000
         assert star.resources_on_hand.ironium == 500
-        assert fleet.cargo.colonists == 0
+        assert fleet.cargo.colonists_in_kilotons == 0
         assert any("colonized" in m.text.lower() for m in messages)
 
 

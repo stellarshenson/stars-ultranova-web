@@ -1,7 +1,15 @@
 /**
  * Stars Nova Web - Battle Viewer
- * Replays combat sequences from battle reports.
+ * Replays combat sequences from server battle reports.
  * Ported from original Stars! visual style.
+ *
+ * Report format (backend/server/battle/battle_report.py):
+ *   { location, space_size, grid_size, year, steps, stacks, losses }
+ * Step types (backend/server/battle/battle_step.py):
+ *   Movement { stack_key, position:{x,y} }
+ *   Target   { stack_key, target_key, percent_to_fire }
+ *   Weapons  { weapon_target:{stack_key, target_key}, damage, targeting }
+ *   Destroy  { stack_key }
  */
 
 const BattleViewer = {
@@ -54,6 +62,50 @@ const BattleViewer = {
     },
 
     /**
+     * Fetch the empire's battle reports from the last generated turn.
+     */
+    async loadBattles() {
+        return ApiClient.request('GET',
+            `/games/${GameState.game.id}/empires/${GameState.empireId}/battles`
+        );
+    },
+
+    /**
+     * Load battle reports and show the list (or the single report).
+     */
+    async showBattleList() {
+        let battles;
+        try {
+            battles = await this.loadBattles();
+        } catch (error) {
+            // ApiClient.request already surfaced the error status
+            return;
+        }
+
+        if (!battles || battles.length === 0) {
+            ApiClient.showStatus('No battles were fought last turn', 'info');
+            return;
+        }
+
+        if (battles.length === 1) {
+            this.show(battles[0]);
+            return;
+        }
+
+        const labels = battles.map(b => {
+            const stackCount = Object.keys(b.stacks || {}).length;
+            return `${b.year} - Battle at ${b.location} (${stackCount} stacks)`;
+        });
+
+        const index = await Dialogs.selectOption(
+            'Battle Reports', 'Select a battle to view', labels
+        );
+        if (index === null || index === undefined) return;
+
+        this.show(battles[index]);
+    },
+
+    /**
      * Show battle viewer with a battle report.
      */
     show(battleReport) {
@@ -63,6 +115,9 @@ const BattleViewer = {
         this.battleSteps = battleReport?.steps || [];
         this.currentStep = 0;
         this.isPlaying = false;
+
+        this.gridSize = battleReport?.grid_size || 10;
+        this.cellSize = this.canvasWidth / this.gridSize;
 
         this.container.classList.remove('hidden');
         this.render();
@@ -86,9 +141,13 @@ const BattleViewer = {
     render() {
         if (!this.container) return;
 
+        const title = this.battleReport
+            ? `Battle at ${this.battleReport.location} - ${this.battleReport.year}`
+            : 'Battle Viewer';
+
         const html = `
             <div class="battle-viewer-header">
-                <h2>Battle Viewer</h2>
+                <h2>${title}</h2>
                 <button class="btn-close" id="btn-close-battle">X</button>
             </div>
 
@@ -180,26 +239,106 @@ const BattleViewer = {
     },
 
     /**
+     * Get a stack record from the report by key.
+     */
+    getStack(key) {
+        if (!this.battleReport || !this.battleReport.stacks) return null;
+        return this.battleReport.stacks[String(key)] || this.battleReport.stacks[key] || null;
+    },
+
+    /**
+     * Human-readable stack name.
+     */
+    stackName(key) {
+        const stack = this.getStack(key);
+        if (!stack) return `Stack ${key}`;
+        return stack.name || stack.token?.design_name || `Stack ${key}`;
+    },
+
+    /**
+     * Build playback state by applying steps up to the current index.
+     *
+     * Returns:
+     *   positions  - stack key -> {x, y} (start positions + Movement steps)
+     *   removed    - set of stack keys destroyed BEFORE the current step
+     *   explosions - stack keys destroyed AT the current step
+     *   fires      - weapon fire happening AT the current step
+     */
+    computePlaybackState() {
+        const positions = {};
+        const removed = new Set();
+        const explosions = [];
+        const fires = [];
+
+        const stacks = this.battleReport?.stacks || {};
+        for (const [key, stack] of Object.entries(stacks)) {
+            positions[key] = {
+                x: stack.position?.x || 0,
+                y: stack.position?.y || 0
+            };
+        }
+
+        for (let i = 0; i <= this.currentStep && i < this.battleSteps.length; i++) {
+            const step = this.battleSteps[i];
+            if (!step) continue;
+
+            if (step.type === 'Movement') {
+                positions[String(step.stack_key)] = {
+                    x: step.position?.x || 0,
+                    y: step.position?.y || 0
+                };
+            } else if (step.type === 'Destroy') {
+                if (i < this.currentStep) {
+                    removed.add(String(step.stack_key));
+                } else {
+                    explosions.push(String(step.stack_key));
+                }
+            } else if (step.type === 'Weapons' && i === this.currentStep) {
+                const wt = step.weapon_target || {};
+                fires.push({
+                    attackerKey: String(wt.stack_key),
+                    targetKey: String(wt.target_key),
+                    damage: step.damage || 0
+                });
+            }
+        }
+
+        return { positions, removed, explosions, fires };
+    },
+
+    /**
      * Render the battle at current step.
      */
     renderBattle() {
         if (!this.ctx) return;
 
         const ctx = this.ctx;
-        const w = this.canvasWidth;
-        const h = this.canvasHeight;
 
         // Clear
         ctx.fillStyle = this.colors.background;
-        ctx.fillRect(0, 0, w, h);
+        ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
 
         // Draw grid
         this.renderGrid();
 
-        // Get current step data
-        const step = this.battleSteps[this.currentStep];
-        if (step) {
-            this.renderStep(step);
+        if (this.battleReport) {
+            const state = this.computePlaybackState();
+
+            // Stacks still alive (destroyed-this-step drawn as explosion)
+            for (const [key, stack] of Object.entries(this.battleReport.stacks || {})) {
+                if (state.removed.has(key) || state.explosions.includes(key)) continue;
+                this.renderStack(stack, state.positions[key]);
+            }
+
+            // Weapon fire for the current step
+            for (const fire of state.fires) {
+                this.renderWeaponFire(fire, state.positions);
+            }
+
+            // Explosions for stacks destroyed this step
+            for (const key of state.explosions) {
+                this.renderExplosion(state.positions[key]);
+            }
         }
 
         // Update UI
@@ -232,108 +371,100 @@ const BattleViewer = {
     },
 
     /**
-     * Render a battle step.
+     * Canvas pixel center of a grid cell.
      */
-    renderStep(step) {
-        const ctx = this.ctx;
-
-        // Render stacks/ships
-        if (step.stacks) {
-            for (const stack of step.stacks) {
-                this.renderStack(stack);
-            }
-        }
-
-        // Render weapons fire
-        if (step.weapons) {
-            for (const weapon of step.weapons) {
-                this.renderWeaponFire(weapon);
-            }
-        }
-
-        // Render explosions
-        if (step.destroyed) {
-            for (const destroyed of step.destroyed) {
-                this.renderExplosion(destroyed);
-            }
-        }
+    cellCenter(pos) {
+        return {
+            x: (pos.x + 0.5) * this.cellSize,
+            y: (pos.y + 0.5) * this.cellSize
+        };
     },
 
     /**
      * Render a stack (group of ships).
+     * Friendly stacks are green triangles, enemy stacks red squares.
      */
-    renderStack(stack) {
+    renderStack(stack, pos) {
+        if (!pos) return;
         const ctx = this.ctx;
-        const x = stack.x * this.cellSize + this.cellSize / 2;
-        const y = stack.y * this.cellSize + this.cellSize / 2;
-        const radius = 12;
+        const { x, y } = this.cellCenter(pos);
+        const size = 10;
 
-        // Determine color based on owner
-        const color = stack.owner === 1 ? this.colors.friendlyShip : this.colors.enemyShip;
+        const friendly = stack.owner === GameState.empireId;
+        ctx.fillStyle = friendly ? this.colors.friendlyShip : this.colors.enemyShip;
 
-        // Draw ship
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fill();
+        if (friendly) {
+            // Triangle pointing up
+            ctx.beginPath();
+            ctx.moveTo(x, y - size);
+            ctx.lineTo(x - size, y + size);
+            ctx.lineTo(x + size, y + size);
+            ctx.closePath();
+            ctx.fill();
+        } else {
+            // Square
+            ctx.fillRect(x - size, y - size, size * 2, size * 2);
+        }
 
-        // Draw shield if present
-        if (stack.shields > 0) {
+        // Shield ring if the stack still has shields
+        const shields = stack.token?.shields || 0;
+        if (shields > 0) {
             ctx.strokeStyle = this.colors.shield;
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
+            ctx.arc(x, y, size + 5, 0, Math.PI * 2);
             ctx.stroke();
         }
 
-        // Draw quantity
-        if (stack.quantity > 1) {
-            ctx.fillStyle = this.colors.text;
-            ctx.font = '10px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(`x${stack.quantity}`, x, y + radius + 12);
-        }
+        // Quantity + design name label
+        const quantity = stack.token?.quantity || 1;
+        const designName = stack.token?.design_name || stack.name || '';
+        ctx.fillStyle = this.colors.text;
+        ctx.font = '9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${quantity}x ${designName}`, x, y + size + 10);
     },
 
     /**
-     * Render weapon fire.
+     * Render weapon fire as a line from attacker to target with damage text.
      */
-    renderWeaponFire(weapon) {
-        const ctx = this.ctx;
-        const fromX = weapon.from_x * this.cellSize + this.cellSize / 2;
-        const fromY = weapon.from_y * this.cellSize + this.cellSize / 2;
-        const toX = weapon.to_x * this.cellSize + this.cellSize / 2;
-        const toY = weapon.to_y * this.cellSize + this.cellSize / 2;
+    renderWeaponFire(fire, positions) {
+        const fromPos = positions[fire.attackerKey];
+        const toPos = positions[fire.targetKey];
+        if (!fromPos || !toPos) return;
 
-        // Determine color based on attacker
-        const color = weapon.attacker_owner === 1
-            ? this.colors.friendlyMissile
-            : this.colors.enemyMissile;
+        const ctx = this.ctx;
+        const from = this.cellCenter(fromPos);
+        const to = this.cellCenter(toPos);
+
+        const attacker = this.getStack(fire.attackerKey);
+        const friendly = attacker && attacker.owner === GameState.empireId;
+        const color = friendly ? this.colors.friendlyMissile : this.colors.enemyMissile;
 
         // Draw weapon line
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(fromX, fromY);
-        ctx.lineTo(toX, toY);
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
         ctx.stroke();
 
         // Draw damage number if hit
-        if (weapon.damage > 0) {
+        if (fire.damage > 0) {
             ctx.fillStyle = this.colors.explosion;
             ctx.font = 'bold 12px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(`-${weapon.damage}`, toX, toY - 15);
+            ctx.fillText(`-${Math.round(fire.damage)}`, to.x, to.y - 15);
         }
     },
 
     /**
-     * Render explosion effect.
+     * Render explosion effect at a grid cell.
      */
-    renderExplosion(destroyed) {
+    renderExplosion(pos) {
+        if (!pos) return;
         const ctx = this.ctx;
-        const x = destroyed.x * this.cellSize + this.cellSize / 2;
-        const y = destroyed.y * this.cellSize + this.cellSize / 2;
+        const { x, y } = this.cellCenter(pos);
 
         // Draw explosion
         ctx.fillStyle = this.colors.explosion;
@@ -360,7 +491,7 @@ const BattleViewer = {
         const totalEl = document.getElementById('total-steps');
         const playBtn = document.getElementById('btn-battle-play');
 
-        if (currentEl) currentEl.textContent = this.currentStep + 1;
+        if (currentEl) currentEl.textContent = this.battleSteps.length ? this.currentStep + 1 : 0;
         if (totalEl) totalEl.textContent = this.battleSteps.length;
         if (playBtn) playBtn.textContent = this.isPlaying ? 'Pause' : 'Play';
 
@@ -372,26 +503,75 @@ const BattleViewer = {
     },
 
     /**
-     * Update combatants panel.
+     * Update combatants panel: stacks grouped by owning empire,
+     * plus losses once playback reaches the end.
      */
     updateCombatants() {
         const container = document.getElementById('battle-combatants');
         if (!container || !this.battleReport) return;
 
-        const combatants = this.battleReport.combatants || [];
+        const byOwner = {};
+        for (const stack of Object.values(this.battleReport.stacks || {})) {
+            const owner = stack.owner;
+            if (!byOwner[owner]) {
+                byOwner[owner] = { stacks: 0, ships: 0 };
+            }
+            byOwner[owner].stacks++;
+            byOwner[owner].ships += stack.token?.quantity || 1;
+        }
 
         let html = '';
-        for (const combatant of combatants) {
-            const colorClass = combatant.owner === 1 ? 'friendly' : 'enemy';
+        for (const [owner, info] of Object.entries(byOwner)) {
+            const colorClass = Number(owner) === GameState.empireId ? 'friendly' : 'enemy';
             html += `
                 <div class="combatant ${colorClass}">
-                    <span class="combatant-name">${combatant.name}</span>
-                    <span class="combatant-ships">${combatant.ships} ships</span>
+                    <span class="combatant-name">Empire ${owner}</span>
+                    <span class="combatant-ships">${info.stacks} stacks, ${info.ships} ships</span>
                 </div>
             `;
         }
 
+        // Show losses once the replay has reached the final step
+        const atEnd = this.currentStep >= this.battleSteps.length - 1;
+        const losses = this.battleReport.losses || {};
+        if (atEnd && Object.keys(losses).length > 0) {
+            html += '<h4>Losses</h4>';
+            for (const [owner, count] of Object.entries(losses)) {
+                html += `<div class="combatant-losses">Empire ${owner} lost ${count} ships</div>`;
+            }
+        }
+
         container.innerHTML = html || '<p>No combatants.</p>';
+    },
+
+    /**
+     * Describe a battle step for the log.
+     */
+    describeStep(step) {
+        if (!step) return '';
+
+        switch (step.type) {
+            case 'Movement': {
+                const pos = step.position || {};
+                return `${this.stackName(step.stack_key)} moves to (${pos.x}, ${pos.y})`;
+            }
+            case 'Target':
+                return `${this.stackName(step.stack_key)} targets `
+                    + `${this.stackName(step.target_key)} (${step.percent_to_fire}% fire)`;
+            case 'Weapons': {
+                const wt = step.weapon_target || {};
+                // targeting is TokenDefence: 0 = shields, 1 = armor
+                const targeting = step.targeting === 1 || step.targeting === 'ARMOR'
+                    ? 'armor' : 'shields';
+                return `${this.stackName(wt.stack_key)} fires at `
+                    + `${this.stackName(wt.target_key)} for `
+                    + `${Math.round(step.damage || 0)} damage (${targeting})`;
+            }
+            case 'Destroy':
+                return `${this.stackName(step.stack_key)} destroyed`;
+            default:
+                return step.type;
+        }
     },
 
     /**
@@ -404,9 +584,9 @@ const BattleViewer = {
         // Show log entries up to current step
         const entries = [];
         for (let i = 0; i <= this.currentStep && i < this.battleSteps.length; i++) {
-            const step = this.battleSteps[i];
-            if (step.log) {
-                entries.push(`<div class="log-entry">[${i + 1}] ${step.log}</div>`);
+            const text = this.describeStep(this.battleSteps[i]);
+            if (text) {
+                entries.push(`<div class="log-entry">[${i + 1}] ${text}</div>`);
             }
         }
 
@@ -476,20 +656,6 @@ const BattleViewer = {
             this.playbackTimer = null;
         }
         this.updateUI();
-    },
-
-    /**
-     * Load and show a battle report from the API.
-     */
-    async loadBattle(battleId) {
-        try {
-            const report = await ApiClient.request('GET',
-                `/games/${GameState.game.id}/battles/${battleId}`
-            );
-            this.show(report);
-        } catch (error) {
-            alert('Failed to load battle: ' + error.message);
-        }
     }
 };
 

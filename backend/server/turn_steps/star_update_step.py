@@ -2,15 +2,27 @@
 Stars Nova Web - Star Update Step
 Ported from ServerState/TurnSteps/StarUpdateStep.cs (246 lines)
 
-Updates stars - manufacturing, research, and population growth.
+Updates stars - mining, resources, research, manufacturing, and
+population growth. Uses the C#-ported Star methods (update_minerals,
+update_research, update_resources, update_population) so the formulas
+match the original game.
 """
 
-from typing import List, Dict, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 
 from .base import ITurnStep
 from ...core.commands.base import Message
-from ...core.globals import NOBODY
-from ...core.data_structures.tech_level import ResearchField, RESEARCH_KEYS
+from ...core.globals import (
+    NOBODY,
+    DEFENSE_IRONIUM_COST,
+    DEFENSE_BORANIUM_COST,
+    DEFENSE_GERMANIUM_COST,
+    DEFENSE_ENERGY_COST,
+    MAX_DEFENSES,
+)
+from ...core.data_structures.tech_level import ResearchField
+from ...core.data_structures.resources import Resources
+from ...core.production.production_queue import ProductionOrder, ProductionType
 
 if TYPE_CHECKING:
     from ..server_data import ServerData
@@ -56,28 +68,31 @@ class StarUpdateStep(ITurnStep):
             if empire is None:
                 continue
 
-            # Update minerals (mining)
-            self._update_minerals(star)
+            # Keep race reference linked (needed by all Star math)
+            if star.this_race is None:
+                star.this_race = empire.race
 
-            # Update research allocation
-            self._update_research(star, empire)
+            # Update minerals (mining with concentration depletion)
+            star.update_minerals()
 
-            # Update resources (from colonists and factories)
-            self._update_resources(star, empire)
+            # Research allocation, then this year's resources (energy)
+            star.update_research(empire.research_budget)
+            star.update_resources()
 
             # Contribute allocated research
             self._contribute_allocated_research(star, empire)
 
             # Update population
             initial_population = star.colonists
-            self._update_population(star, empire)
+            if empire.race is not None:
+                star.update_population(empire.race)
             final_population = star.colonists
 
             if final_population < initial_population:
                 died = initial_population - final_population
                 messages.append(Message(
                     audience=star.owner,
-                    text=f"{died} of your colonists have been killed by the "
+                    text=f"{died:,} of your colonists have been killed by the "
                          f"environment on {star.name}",
                     message_type="Star"
                 ))
@@ -89,149 +104,7 @@ class StarUpdateStep(ITurnStep):
             # Contribute leftover research
             self._contribute_leftover_research(star, empire)
 
-            # Final resource update
-            self._update_research(star, empire)
-            self._update_resources(star, empire)
-
         return messages
-
-    def _update_minerals(self, star: 'Star'):
-        """
-        Update mineral stockpiles from mining.
-
-        Args:
-            star: Star to update.
-        """
-        # Mining rate depends on mines, concentration, and population
-        # Simplified implementation
-        mines = getattr(star, 'mines', 0)
-        if mines <= 0:
-            return
-
-        # Get mineral concentrations
-        iron_conc = getattr(star, 'ironium_concentration', 0) / 100.0
-        bor_conc = getattr(star, 'boranium_concentration', 0) / 100.0
-        germ_conc = getattr(star, 'germanium_concentration', 0) / 100.0
-
-        # Calculate mining output
-        # Simplified: each mine produces up to concentration % of base rate
-        base_rate = 10  # Base minerals per mine per year
-
-        iron_mined = int(mines * iron_conc * base_rate)
-        bor_mined = int(mines * bor_conc * base_rate)
-        germ_mined = int(mines * germ_conc * base_rate)
-
-        star.resources_on_hand.ironium += iron_mined
-        star.resources_on_hand.boranium += bor_mined
-        star.resources_on_hand.germanium += germ_mined
-
-        # Concentration decreases slightly over time
-        # Actual formula is more complex
-        if iron_conc > 0.01:
-            star.ironium_concentration = max(1, star.ironium_concentration - 1)
-        if bor_conc > 0.01:
-            star.boranium_concentration = max(1, star.boranium_concentration - 1)
-        if germ_conc > 0.01:
-            star.germanium_concentration = max(1, star.germanium_concentration - 1)
-
-    def _update_research(self, star: 'Star', empire: 'EmpireData'):
-        """
-        Calculate research allocation for the star.
-
-        Args:
-            star: Star to update.
-            empire: Owning empire.
-        """
-        # Research budget is percentage of resources
-        budget = empire.research_budget / 100.0
-        resources = getattr(star, 'resources_per_year', 0)
-
-        star.research_allocation = int(resources * budget)
-
-    def _update_resources(self, star: 'Star', empire: 'EmpireData'):
-        """
-        Calculate resource generation.
-
-        Args:
-            star: Star to update.
-            empire: Owning empire.
-        """
-        # Resources from colonists (1 per 1000 colonists)
-        colonist_resources = star.colonists // 1000
-
-        # Resources from factories (depends on race)
-        factories = getattr(star, 'factories', 0)
-        factory_output = getattr(empire.race, 'factory_output', 10) if empire.race else 10
-        factory_resources = factories * factory_output // 10
-
-        star.resources_per_year = colonist_resources + factory_resources
-
-    def _update_population(self, star: 'Star', empire: 'EmpireData'):
-        """
-        Update population with growth.
-
-        Args:
-            star: Star to update.
-            empire: Owning empire.
-        """
-        # Call star's population update method if it exists
-        if hasattr(star, 'update_population') and empire.race is not None:
-            star.update_population(empire.race)
-        else:
-            # Simplified growth calculation
-            hab_value = self._calculate_habitability(star, empire)
-
-            if hab_value <= 0:
-                # Hostile environment - population dies
-                death_rate = abs(hab_value) / 100.0 * 0.05  # Up to 5% death rate
-                deaths = int(star.colonists * death_rate)
-                star.colonists = max(0, star.colonists - deaths)
-            else:
-                # Population grows
-                growth_rate = (empire.race.growth_rate if empire.race else 15) / 100.0
-                growth_rate *= hab_value / 100.0  # Scale by habitability
-
-                # Crowding factor - max_population can be a method or attribute
-                max_pop = 1000000  # Default
-                if hasattr(star, 'max_population'):
-                    max_pop_attr = getattr(star, 'max_population')
-                    if callable(max_pop_attr) and empire.race is not None:
-                        max_pop = max_pop_attr(empire.race)
-                    elif isinstance(max_pop_attr, (int, float)):
-                        max_pop = int(max_pop_attr)
-                if star.colonists > max_pop * 0.25:
-                    crowding = 1 - ((star.colonists - max_pop * 0.25) / (max_pop * 0.75))
-                    crowding = max(0, crowding)
-                    growth_rate *= crowding
-
-                growth = int(star.colonists * growth_rate)
-                star.colonists = min(star.colonists + growth, max_pop)
-
-    def _calculate_habitability(self, star: 'Star', empire: 'EmpireData') -> int:
-        """
-        Calculate habitability value for a star.
-
-        Args:
-            star: Star to evaluate.
-            empire: Empire to evaluate for.
-
-        Returns:
-            Habitability percentage (-45 to 100).
-        """
-        if empire.race is None:
-            return 50  # Default
-
-        # Get star environment
-        gravity = getattr(star, 'gravity', 50)
-        temperature = getattr(star, 'temperature', 50)
-        radiation = getattr(star, 'radiation', 50)
-
-        # Use race's hab_value method if available
-        if hasattr(empire.race, 'hab_value'):
-            return empire.race.hab_value(gravity, temperature, radiation)
-
-        # Simplified calculation
-        return 50  # Default to moderate habitability
 
     def _contribute_allocated_research(self, star: 'Star', empire: 'EmpireData'):
         """
@@ -257,7 +130,11 @@ class StarUpdateStep(ITurnStep):
 
     def _contribute_leftover_research(self, star: 'Star', empire: 'EmpireData'):
         """
-        Apply leftover resources to research.
+        Apply leftover production resources to research.
+
+        Only when the star is flagged to contribute leftovers
+        (matches the original 'Contribute only leftover resources
+        to research' checkbox semantics).
 
         Args:
             star: Contributing star.
@@ -265,15 +142,13 @@ class StarUpdateStep(ITurnStep):
         """
         if star.owner == NOBODY:
             return
+        if not star.only_leftover:
+            return
 
         target_area = self._get_research_target(empire)
 
-        # Leftover energy goes to research
-        leftover = 0
-        resources = getattr(star, 'resources_on_hand', None)
-        if resources is not None and hasattr(resources, 'energy'):
-            leftover = resources.energy
-            resources.energy = 0
+        leftover = star.resources_on_hand.energy
+        star.resources_on_hand.energy = 0
 
         if leftover > 0:
             current = empire.research_resources.get_level(target_area)
@@ -325,8 +200,8 @@ class StarUpdateStep(ITurnStep):
 
                 self.server_state.all_messages.append(Message(
                     audience=empire.id,
-                    text=f"Your race has advanced to Tech Level {next_level} "
-                         f"in the {area.value} field",
+                    text=f"Your scientists have completed research into Tech Level "
+                         f"{next_level} in the {area.value} field",
                     message_type="TechAdvance"
                 ))
             else:
@@ -350,9 +225,17 @@ class StarUpdateStep(ITurnStep):
         base_cost = 50
         return int(base_cost * (1.75 ** target_level))
 
+    # =========================================================================
+    # Manufacturing
+    # =========================================================================
+
     def _manufacture_items(self, star: 'Star', empire: 'EmpireData') -> List[Message]:
         """
-        Process manufacturing queue.
+        Process the star's production queue.
+
+        Spends this year's resources (resources_on_hand.energy) and
+        surface minerals on queued orders, in queue order. Incomplete
+        orders carry partial progress to the next year.
 
         Args:
             star: Manufacturing star.
@@ -363,73 +246,203 @@ class StarUpdateStep(ITurnStep):
         """
         messages: List[Message] = []
 
-        # Get manufacturing queue
-        queue = getattr(star, 'manufacturing_queue', None)
-        if queue is None or not hasattr(queue, 'queue') or len(queue.queue) == 0:
+        queue = star.manufacturing_queue
+        if queue is None or len(queue.orders) == 0:
             return messages
 
-        # Resources available for manufacturing
-        available_resources = star.resources_per_year - star.research_allocation
-        if available_resources <= 0:
-            return messages
+        completed_orders = []
 
-        # Process queue items
-        completed = []
-
-        for order in queue.queue:
-            if available_resources <= 0:
+        for order in queue.orders:
+            if star.resources_on_hand.energy <= 0:
                 break
 
-            # Check if order can be processed
-            cost = self._get_order_cost(order, empire)
-
-            if cost > available_resources:
-                # Not enough resources for one unit
-                # Check if auto-build (doesn't block)
-                if not getattr(order, 'auto_build', False):
-                    break
+            unit_cost = self._get_order_cost(order, star, empire)
+            if unit_cost is None or unit_cost.energy <= 0:
+                # Unknown item - drop it from the queue
+                completed_orders.append(order)
+                messages.append(Message(
+                    audience=star.owner,
+                    text=f"{star.name} could not build '{order.name}' - unknown item",
+                    message_type="Star"
+                ))
                 continue
 
-            # Process as many as possible
-            units_possible = available_resources // cost
-            units_to_build = min(units_possible, order.quantity)
+            built = 0
+            while order.quantity > 0:
+                remaining = unit_cost.energy - order.partial_resources_spent
+                spend = min(remaining, star.resources_on_hand.energy)
 
-            if units_to_build > 0:
-                available_resources -= units_to_build * cost
-                order.quantity -= units_to_build
+                if spend < remaining:
+                    # Not enough resources to finish this unit - bank progress
+                    order.partial_resources_spent += spend
+                    star.resources_on_hand.energy -= spend
+                    break
 
-                # Create the items
+                # Check minerals for one unit
+                if (star.resources_on_hand.ironium < unit_cost.ironium or
+                        star.resources_on_hand.boranium < unit_cost.boranium or
+                        star.resources_on_hand.germanium < unit_cost.germanium):
+                    # Blocked on minerals - stop processing this order
+                    break
+
+                # Pay for the unit
+                star.resources_on_hand.energy -= spend
+                star.resources_on_hand.ironium -= unit_cost.ironium
+                star.resources_on_hand.boranium -= unit_cost.boranium
+                star.resources_on_hand.germanium -= unit_cost.germanium
+                order.partial_resources_spent = 0
+                order.quantity -= 1
+                built += 1
+
+                if star.resources_on_hand.energy <= 0 and order.quantity > 0:
+                    break
+
+            if built > 0:
                 item_messages = self._create_manufactured_items(
-                    order, star, empire, units_to_build
+                    order, star, empire, built
                 )
                 messages.extend(item_messages)
 
             if order.quantity <= 0:
-                completed.append(order)
+                completed_orders.append(order)
+
+            if star.resources_on_hand.energy <= 0:
+                break
 
         # Remove completed orders
-        for order in completed:
-            queue.queue.remove(order)
+        for order in completed_orders:
+            if order in queue.orders:
+                queue.orders.remove(order)
 
         return messages
 
-    def _get_order_cost(self, order, empire: 'EmpireData') -> int:
-        """Get resource cost for a production order."""
-        # Simplified - actual cost comes from the unit type
-        return getattr(order, 'cost', 100)
+    def _get_order_cost(self, order: ProductionOrder, star: 'Star',
+                        empire: 'EmpireData') -> Optional[Resources]:
+        """
+        Get the full unit cost for a production order.
 
-    def _create_manufactured_items(self, order, star: 'Star',
+        Returns:
+            Resources with energy (resource) and mineral costs,
+            or None if the order cannot be priced (unknown design).
+        """
+        race = empire.race
+
+        if order.production_type == ProductionType.FACTORY:
+            factory_cost = race.factory_cost if race else 10
+            return Resources(ironium=0, boranium=0, germanium=4, energy=factory_cost)
+
+        if order.production_type == ProductionType.MINE:
+            mine_cost = race.mine_cost if race else 5
+            return Resources(ironium=0, boranium=0, germanium=0, energy=mine_cost)
+
+        if order.production_type == ProductionType.DEFENSE:
+            return Resources(
+                ironium=DEFENSE_IRONIUM_COST,
+                boranium=DEFENSE_BORANIUM_COST,
+                germanium=DEFENSE_GERMANIUM_COST,
+                energy=DEFENSE_ENERGY_COST
+            )
+
+        if order.production_type in (ProductionType.SHIP, ProductionType.STARBASE):
+            design = empire.designs.get(order.design_key)
+            if design is None:
+                return None
+            cost = getattr(design, 'cost', None)
+            if cost is None:
+                return None
+            return Resources(
+                ironium=cost.ironium,
+                boranium=cost.boranium,
+                germanium=cost.germanium,
+                energy=cost.energy
+            )
+
+        return None
+
+    def _create_manufactured_items(self, order: ProductionOrder, star: 'Star',
                                    empire: 'EmpireData',
                                    count: int) -> List[Message]:
         """Create manufactured items and return messages."""
         messages: List[Message] = []
 
-        item_type = getattr(order, 'unit_type', 'Unknown')
+        if order.production_type == ProductionType.FACTORY:
+            star.factories += count
+            messages.append(Message(
+                audience=star.owner,
+                text=f"{star.name} has built {count} factor"
+                     f"{'ies' if count > 1 else 'y'}",
+                message_type="Star"
+            ))
+
+        elif order.production_type == ProductionType.MINE:
+            star.mines += count
+            messages.append(Message(
+                audience=star.owner,
+                text=f"{star.name} has built {count} mine{'s' if count > 1 else ''}",
+                message_type="Star"
+            ))
+
+        elif order.production_type == ProductionType.DEFENSE:
+            star.defenses = min(star.defenses + count, MAX_DEFENSES)
+            messages.append(Message(
+                audience=star.owner,
+                text=f"{star.name} has built {count} defense"
+                     f"{'s' if count > 1 else ''}",
+                message_type="Star"
+            ))
+
+        elif order.production_type in (ProductionType.SHIP, ProductionType.STARBASE):
+            messages.extend(self._build_ships(order, star, empire, count))
+
+        return messages
+
+    def _build_ships(self, order: ProductionOrder, star: 'Star',
+                     empire: 'EmpireData', count: int) -> List[Message]:
+        """Build ships from a design and place them in a new fleet at the star."""
+        from ...core.game_objects.fleet import Fleet
+        from ...services.ship_specs import make_token
+
+        messages: List[Message] = []
+
+        design = empire.designs.get(order.design_key)
+        if design is None:
+            return messages
+
+        token = make_token(design, quantity=count)
+
+        if order.production_type == ProductionType.STARBASE or getattr(design, 'is_starbase', False):
+            # Starbase orbits the star directly
+            fleet = Fleet()
+            fleet.key = empire.get_next_fleet_key()
+            fleet.name = design.name
+            fleet.position = star.position.copy()
+            fleet.in_orbit_name = star.name
+            fleet.tokens[token.design_key] = token
+            fleet.fuel_available = 0
+            empire.owned_fleets[fleet.key] = fleet
+            star.starbase_key = fleet.key
+            messages.append(Message(
+                audience=star.owner,
+                text=f"{star.name} has built a new {design.name}",
+                message_type="Star"
+            ))
+            return messages
+
+        fleet = Fleet()
+        fleet.key = empire.get_next_fleet_key()
+        fleet.name = f"{design.name} #{fleet.id}"
+        fleet.position = star.position.copy()
+        fleet.in_orbit_name = star.name
+        fleet.tokens[token.design_key] = token
+        fleet.fuel_available = fleet.total_fuel_capacity
+        empire.owned_fleets[fleet.key] = fleet
 
         messages.append(Message(
             audience=star.owner,
-            text=f"{star.name} has produced {count} {item_type}",
-            message_type="Star"
+            text=f"{star.name} has built {count} new {design.name}"
+                 f"{'s' if count > 1 else ''}",
+            message_type="Star",
+            fleet_key=fleet.key
         ))
 
         return messages

@@ -85,29 +85,15 @@ if settings.static_files and frontend_path.exists():
 
 @app.get("/")
 async def root(request: Request):
-    """Serve the main page or API info."""
+    """Serve the main page or API info.
+
+    The page locates its own base URL client-side from the address the
+    browser used (see the inline script in index.html), so no proxy
+    headers or server-side prefix configuration are needed.
+    """
     index_path = frontend_path / "index.html"
     if index_path.exists():
-        # Read HTML and inject base tag for proxy support
-        html_content = index_path.read_text()
-
-        # Auto-detect root path from proxy headers or request scope
-        # Priority: X-Forwarded-Prefix header > request.scope['root_path'] > settings.root_path
-        root_path = (
-            request.headers.get("x-forwarded-prefix", "").rstrip("/") or
-            request.scope.get("root_path", "").rstrip("/") or
-            settings.root_path.rstrip("/")
-        )
-        base_url = root_path + "/" if root_path else "/"
-
-        # Inject <base> tag after <head> to handle proxy paths
-        if "<base " not in html_content:
-            html_content = html_content.replace(
-                "<head>",
-                f'<head>\n    <base href="{base_url}">'
-            )
-
-        return HTMLResponse(content=html_content)
+        return HTMLResponse(content=index_path.read_text())
     return {
         "name": settings.app_name,
         "version": settings.version,

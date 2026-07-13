@@ -1,14 +1,26 @@
 /**
  * Stars Nova Web - Game State Manager
  * Manages the current game state on the client side.
+ *
+ * State is loaded through the player-scoped endpoint so the client
+ * only sees what its empire knows (fog of war applied server-side).
  */
 
 const GameState = {
     // Current game data
     game: null,
-    stars: [],
-    fleets: [],
-    nebulae: null,  // Nebula field data from backend
+    empireId: 1,           // Single-player: human is always empire 1
+    stars: [],             // Player-visible view of every star
+    fleets: [],            // Own fleets, full detail
+    foreignFleets: [],     // Scanned foreign fleet contacts
+    nebulae: null,         // Nebula field data from backend
+    messages: [],          // Last turn's messages for this empire
+    research: null,        // Research budget/levels/progress
+    designs: [],           // Own ship designs
+    race: null,            // Own race definition
+    storms: [],            // Galactic storms (visible to all)
+    minefields: [],        // Minefields known to this empire
+    wormholes: [],         // Wormholes discovered by this empire
 
     // Selection state
     selectedStar: null,
@@ -23,8 +35,7 @@ const GameState = {
     async loadGame(gameId) {
         try {
             this.game = await ApiClient.getGame(gameId);
-            this.stars = await ApiClient.listStars(gameId);
-            this.fleets = await ApiClient.listFleets(gameId);
+            await this.refreshState();
             this.nebulae = await ApiClient.getNebulae(gameId);
             this.emit('gameLoaded', this.game);
         } catch (error) {
@@ -36,12 +47,10 @@ const GameState = {
     /**
      * Create a new game.
      */
-    async createGame(name, playerCount, universeSize, density, seed) {
+    async createGame(name, playerCount, universeSize, density, seed, race = null) {
         try {
-            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed);
-            // Load stars, fleets, and nebulae for the new game
-            this.stars = await ApiClient.listStars(this.game.id);
-            this.fleets = await ApiClient.listFleets(this.game.id);
+            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed, race);
+            await this.refreshState();
             this.nebulae = await ApiClient.getNebulae(this.game.id);
             this.emit('gameCreated', this.game);
             return this.game;
@@ -49,6 +58,42 @@ const GameState = {
             console.error('Failed to create game:', error);
             throw error;
         }
+    },
+
+    /**
+     * Reload the player-scoped state snapshot.
+     */
+    async refreshState() {
+        const state = await ApiClient.getPlayerState(this.game.id, this.empireId);
+        this.game.turn = state.turn_year;
+        this.stars = state.stars;
+        this.fleets = state.fleets;
+        this.foreignFleets = state.foreign_fleets || [];
+        this.messages = state.messages || [];
+        this.research = state.research;
+        this.designs = state.designs || [];
+        this.race = state.empire ? state.empire.race : null;
+        this.storms = state.storms || [];
+        this.minefields = state.minefields || [];
+        this.wormholes = state.wormholes || [];
+
+        // Keep selection pointing at fresh objects
+        if (this.selectedStar) {
+            this.selectedStar = this.stars.find(s => s.name === this.selectedStar.name) || null;
+        }
+        if (this.selectedFleet) {
+            this.selectedFleet = this.fleets.find(f => f.key === this.selectedFleet.key) || null;
+        }
+
+        this.emit('stateRefreshed', state);
+        return state;
+    },
+
+    /**
+     * All fleets to draw on the map (own + scanned contacts).
+     */
+    get allVisibleFleets() {
+        return [...this.fleets, ...this.foreignFleets];
     },
 
     /**
@@ -79,6 +124,19 @@ const GameState = {
     },
 
     /**
+     * Submit a command for the player's empire.
+     */
+    async submitCommand(commandType, commandData) {
+        const result = await ApiClient.submitCommand(
+            this.game.id, this.empireId, commandType, commandData
+        );
+        if (result.status === 'error') {
+            throw new Error(result.error || 'Command rejected');
+        }
+        return result;
+    },
+
+    /**
      * Generate next turn.
      */
     async generateTurn() {
@@ -87,11 +145,7 @@ const GameState = {
         try {
             const result = await ApiClient.generateTurn(this.game.id);
             this.game.turn = result.turn;
-
-            // Reload game data
-            this.stars = await ApiClient.listStars(this.game.id);
-            this.fleets = await ApiClient.listFleets(this.game.id);
-
+            await this.refreshState();
             this.emit('turnGenerated', this.game.turn);
         } catch (error) {
             console.error('Failed to generate turn:', error);

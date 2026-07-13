@@ -16,6 +16,7 @@ class GameCreate(BaseModel):
     player_count: int = 2
     universe_size: str = "medium"  # tiny, small, medium, large, huge
     seed: Optional[int] = None
+    race: Optional[dict] = None  # race wizard payload for the human player
 
 
 class GameResponse(BaseModel):
@@ -31,7 +32,7 @@ class GameResponse(BaseModel):
 class TurnResponse(BaseModel):
     """Response model for turn generation."""
     turn: int
-    messages: List[str]
+    messages: List[dict]
 
 
 class CommandSubmit(BaseModel):
@@ -64,7 +65,8 @@ async def create_game(game: GameCreate) -> GameResponse:
         name=game.name,
         player_count=game.player_count,
         universe_size=game.universe_size,
-        seed=game.seed
+        seed=game.seed,
+        race=game.race
     )
     return GameResponse(
         id=game_data["id"],
@@ -163,6 +165,23 @@ async def get_empire(game_id: str, empire_id: int) -> dict:
     return empire
 
 
+@router.get("/{game_id}/empires/{empire_id}/state")
+async def get_player_state(game_id: str, empire_id: int) -> dict:
+    """
+    Get the full game state as seen by one empire (fog of war applied).
+
+    This is the primary payload the game client renders from: owned
+    stars in full detail, scanned stars via intel reports, own fleets
+    with composition and orders, foreign fleet contacts, last turn's
+    messages, research state, and ship designs.
+    """
+    manager = get_game_manager()
+    state = manager.get_player_state(game_id, empire_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Game or empire not found")
+    return state
+
+
 @router.post("/{game_id}/empires/{empire_id}/commands", response_model=CommandResponse)
 async def submit_command(game_id: str, empire_id: int, command: CommandSubmit) -> CommandResponse:
     """Submit a command for an empire."""
@@ -184,6 +203,22 @@ async def submit_command(game_id: str, empire_id: int, command: CommandSubmit) -
         turn_year=result["turn_year"],
         status=result["status"]
     )
+
+
+@router.get("/{game_id}/empires/{empire_id}/battles")
+async def get_battles(game_id: str, empire_id: int) -> List[dict]:
+    """
+    Get the empire's battle reports from the last generated turn.
+
+    Each report carries the full battle timeline (movement, targeting,
+    weapon fire, destruction steps) plus participating stacks and
+    per-empire losses, for replay in the battle viewer.
+    """
+    manager = get_game_manager()
+    battles = manager.get_battle_reports(game_id, empire_id)
+    if battles is None:
+        raise HTTPException(status_code=404, detail="Game or empire not found")
+    return battles
 
 
 @router.get("/{game_id}/nebulae")

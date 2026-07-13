@@ -127,7 +127,20 @@ class ShipDesign(Item):
         if isinstance(hull_prop, Hull):
             return hull_prop
         # Reconstruct Hull from property values
-        return Hull.from_dict(hull_prop.values)
+        hull = Hull.from_dict(hull_prop.values)
+
+        # Allocated components serialize by name only (HullModule.to_dict);
+        # re-resolve them against the component catalog so aggregation
+        # in update() sees real Component objects
+        module_dicts = hull_prop.values.get("modules", [])
+        if module_dicts:
+            from .component_loader import get_component_loader
+            loader = get_component_loader()
+            for module, m_data in zip(hull.modules, module_dicts):
+                name = m_data.get("allocated_component")
+                if name and loader.is_loaded:
+                    module.allocated_component = loader.get_component(name)
+        return hull
 
     @property
     def mass(self) -> int:
@@ -296,6 +309,12 @@ class ShipDesign(Item):
         """Check if design can colonize planets."""
         self._ensure_updated()
         return "Colonizer" in self._summary_properties
+
+    @property
+    def gate(self) -> Optional[dict]:
+        """Fitted stargate values ({SafeHullMass, SafeRange}) or None."""
+        self._ensure_updated()
+        return self._summary_properties.get("Gate")
 
     @property
     def has_weapons(self) -> bool:
