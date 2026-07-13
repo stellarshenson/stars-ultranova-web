@@ -14,8 +14,11 @@ from backend.server.turn_steps import (
     BombingStep, PostBombingStep, ScanStep, StarUpdateStep
 )
 from backend.core.data_structures import EmpireData, Resources, TechLevel, NovaPoint
+from backend.core.data_structures.cargo import Cargo
+from backend.core.game_objects.fleet import Fleet, ShipToken
+from backend.core.game_objects.star import Star
 from backend.core.waypoints.waypoint import (
-    Waypoint, WaypointTask, get_task_type,
+    Waypoint, WaypointTask, get_task_type, CargoMode, InvadeTaskObj,
     NoTaskObj, CargoTaskObj, ColoniseTaskObj, ScrapTaskObj, SplitMergeTaskObj, LayMinesTaskObj
 )
 from backend.core.globals import STARTING_YEAR, NOBODY
@@ -123,6 +126,8 @@ class MockStar:
     mines: int = 0
     defenses: int = 0
     defense_coverage: float = 0.0
+    defense_type: str = "None"
+    scanner_type: str = "None"
     scan_range: int = 0
     pen_scan_range: int = 0
     resources_per_year: int = 0
@@ -151,6 +156,14 @@ class MockRace:
     name: str = "Mock Race"
     growth_rate: int = 15
     factory_output: int = 10
+    primary_trait: str = "JOAT"
+    traits: set = field(default_factory=set)
+    research_costs: dict = field(
+        default_factory=lambda: {
+            key: 100 for key in
+            ("Biotechnology", "Electronics", "Energy",
+             "Propulsion", "Weapons", "Construction")
+        })
 
     def has_trait(self, trait_code: str) -> bool:
         return False
@@ -411,6 +424,292 @@ class TestSplitFleetStep:
 
 
 # --------------------------------------------------------------------------
+# Waypoint CargoTask execution tests (CargoTask.cs:145-228 port)
+# --------------------------------------------------------------------------
+
+def _cargo_state(star_owner=1, capacity=200, minerals=(100, 100, 100),
+                 colonists=200000):
+    """ServerData with one star and one owned fleet in orbit."""
+    server_data = ServerData()
+
+    star = Star()
+    star.name = "Depot"
+    star.owner = star_owner
+    star.colonists = colonists
+    star.resources_on_hand.ironium = minerals[0]
+    star.resources_on_hand.boranium = minerals[1]
+    star.resources_on_hand.germanium = minerals[2]
+    star.position = NovaPoint(100.0, 100.0)
+    server_data.all_stars[star.name] = star
+
+    empire = EmpireData(id=1)
+    server_data.all_empires[1] = empire
+
+    fleet = Fleet()
+    fleet.key = empire.get_next_fleet_key()
+    fleet.name = "Hauler #1"
+    fleet.owner = 1
+    fleet.position = NovaPoint(100.0, 100.0)
+    fleet.in_orbit_name = star.name
+    fleet.tokens[1] = ShipToken(design_key=1, quantity=1,
+                                cargo_capacity=capacity)
+    empire.owned_fleets[fleet.key] = fleet
+
+    return server_data, star, fleet
+
+
+def _cargo_waypoint(mode, amount, destination="Depot",
+                    position=(100.0, 100.0)):
+    return Waypoint(
+        position_x=position[0], position_y=position[1],
+        destination=destination,
+        task=CargoTaskObj(mode=mode, amount=amount,
+                          target_name=destination))
+
+
+class TestCargoTaskExecution:
+    """Waypoint-zero CargoTask execution in SplitFleetStep."""
+
+    def test_wp0_load(self):
+        """LOAD moves minerals and colonists star -> fleet
+        (CargoTask.cs:216-228)."""
+        server_data, star, fleet = _cargo_state()
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.LOAD, Cargo(ironium=50, colonists_in_kilotons=10)))
+
+        messages = SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 50
+        assert fleet.cargo.colonists_in_kilotons == 10
+        assert star.resources_on_hand.ironium == 50
+        assert star.colonists == 200000 - 1000  # 10 kT x 100/kT
+        # Waypoint consumed; a NoTask placeholder remains
+        assert len(fleet.waypoints) == 1
+        assert get_task_type(fleet.waypoints[0].task) == WaypointTask.NO_TASK
+        assert any("has loaded cargo from Depot" in m.text
+                   for m in messages)
+
+    def test_wp0_unload(self):
+        """UNLOAD moves minerals and colonists fleet -> star
+        (CargoTask.cs:198-210), colonists as kT x 100 headcount."""
+        server_data, star, fleet = _cargo_state()
+        fleet.cargo = Cargo(ironium=30, colonists_in_kilotons=5)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.UNLOAD, Cargo(ironium=30, colonists_in_kilotons=5)))
+
+        messages = SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 0
+        assert fleet.cargo.colonists_in_kilotons == 0
+        assert star.resources_on_hand.ironium == 130
+        assert star.colonists == 200000 + 500
+        assert any("has unloaded its cargo at Depot" in m.text
+                   for m in messages)
+
+    def test_load_clamps_to_star_stock(self):
+        """Loading more than the star holds moves only the stock."""
+        server_data, star, fleet = _cargo_state(minerals=(100, 0, 0))
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.LOAD, Cargo(ironium=500)))
+
+        SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 100
+        assert star.resources_on_hand.ironium == 0
+
+    def test_load_clamps_to_free_capacity(self):
+        """Loading beyond capacity fills the hold exactly."""
+        server_data, star, fleet = _cargo_state(capacity=60)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.LOAD, Cargo(ironium=100)))
+
+        SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 60
+        assert fleet.cargo.mass == fleet.total_cargo_capacity
+        assert star.resources_on_hand.ironium == 40
+
+    def test_unload_clamps_to_hold(self):
+        """Unloading more than aboard moves only what is aboard."""
+        server_data, star, fleet = _cargo_state()
+        fleet.cargo = Cargo(ironium=10)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.UNLOAD, Cargo(ironium=50)))
+
+        SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 0
+        assert star.resources_on_hand.ironium == 110
+
+    def test_set_mode_loads_up(self):
+        """SET above the current hold loads the difference
+        (canonical rule - no C# equivalent)."""
+        server_data, star, fleet = _cargo_state()
+        fleet.cargo = Cargo(ironium=30)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.SET, Cargo(ironium=50)))
+
+        SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 50
+        assert star.resources_on_hand.ironium == 80
+
+    def test_set_mode_unloads_down(self):
+        """SET below the current hold unloads the difference."""
+        server_data, star, fleet = _cargo_state()
+        fleet.cargo = Cargo(ironium=30)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.SET, Cargo(ironium=10)))
+
+        SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 10
+        assert star.resources_on_hand.ironium == 120
+
+    def test_deep_space_produces_warning(self):
+        """CargoTask with no orbiting star warns and moves nothing
+        (CargoTask.cs:147-154)."""
+        server_data, star, fleet = _cargo_state()
+        fleet.in_orbit_name = None
+        fleet.position = NovaPoint(5.0, 5.0)
+        fleet.cargo = Cargo(ironium=10)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.UNLOAD, Cargo(ironium=10),
+            destination="Space at 5,5", position=(5.0, 5.0)))
+
+        messages = SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 10
+        assert star.resources_on_hand.ironium == 100
+        assert any("attempted to unload cargo while not in orbit"
+                   in m.text for m in messages)
+
+    def test_foreign_star_colonist_unload_becomes_invasion(self):
+        """Unloading colonists at a foreign star delegates to the
+        invade task (CargoTask.cs:159-173); PostBombingStep resolves
+        it with the invasion math (InvadeTask.cs:143-243)."""
+        server_data, star, fleet = _cargo_state(star_owner=2,
+                                                colonists=2000)
+        empire2 = EmpireData(id=2)
+        empire2.owned_stars[star.name] = star
+        server_data.all_empires[2] = empire2
+
+        fleet.cargo = Cargo(colonists_in_kilotons=100)  # 10000 troops
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.UNLOAD, Cargo(colonists_in_kilotons=100)))
+
+        SplitFleetStep().process(server_data)
+
+        # Task converted in place; the waypoint stays for PostBombingStep
+        assert get_task_type(fleet.waypoints[0].task) == WaypointTask.INVADE
+        assert fleet.cargo.colonists_in_kilotons == 100
+
+        PostBombingStep().process(server_data)
+
+        # 10000 troops x 1.1 vs 2000 defenders: attackers win with
+        # max(int((11000 - 2000) / 1.1), 100) colonists surviving
+        assert star.owner == 1
+        assert star.colonists == int((11000 - 2000) / 1.1)
+        assert fleet.cargo.colonists_in_kilotons == 0
+        assert star.name in server_data.all_empires[1].owned_stars
+
+    def test_foreign_star_mineral_load_refused(self):
+        """Mineral-only transfer at a foreign-owned star is refused."""
+        server_data, star, fleet = _cargo_state(star_owner=2,
+                                                colonists=2000)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.LOAD, Cargo(ironium=50)))
+
+        messages = SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 0
+        assert star.resources_on_hand.ironium == 100
+        assert any("owned by another empire" in m.text for m in messages)
+
+    def test_nobody_star_minerals_move_colonist_unload_refused(self):
+        """At an uninhabited star minerals transfer but colonist
+        unload is refused (colonization/invasion path)."""
+        server_data, star, fleet = _cargo_state(star_owner=NOBODY,
+                                                colonists=0)
+        fleet.cargo = Cargo(ironium=20, colonists_in_kilotons=5)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.UNLOAD, Cargo(ironium=20, colonists_in_kilotons=5)))
+
+        messages = SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 0
+        assert star.resources_on_hand.ironium == 120
+        assert fleet.cargo.colonists_in_kilotons == 5
+        assert star.colonists == 0
+        assert any("cannot unload colonists" in m.text for m in messages)
+
+    def test_nobody_star_colonist_load_clamps_to_zero(self):
+        """Loading colonists off an uninhabited star yields nothing."""
+        server_data, star, fleet = _cargo_state(star_owner=NOBODY,
+                                                colonists=0)
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.LOAD, Cargo(ironium=10, colonists_in_kilotons=5)))
+
+        SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.ironium == 10
+        assert fleet.cargo.colonists_in_kilotons == 0
+
+    def test_arrival_executes_and_clears_cargo_task(self):
+        """A cargo task on a travel waypoint executes on arrival and
+        the task is cleared to NoTask (TurnGenerator.cs:454-465)."""
+        server_data, star, fleet = _cargo_state()
+
+        dest = Star()
+        dest.name = "Outpost"
+        dest.owner = 1
+        dest.position = NovaPoint(150.0, 100.0)
+        server_data.all_stars[dest.name] = dest
+        server_data.all_empires[1].owned_stars[dest.name] = dest
+
+        fleet.cargo = Cargo(ironium=20)
+        fleet.fuel_available = 1000
+        fleet.waypoints.append(Waypoint(
+            position_x=100.0, position_y=100.0,
+            destination="Depot", task=NoTaskObj()))
+        fleet.waypoints.append(Waypoint(
+            position_x=150.0, position_y=100.0, warp_factor=9,
+            destination="Outpost",
+            task=CargoTaskObj(mode=CargoMode.UNLOAD,
+                              amount=Cargo(ironium=20),
+                              target_name="Outpost")))
+
+        TurnGenerator(server_data)._update_fleet(fleet)
+
+        assert fleet.in_orbit_name == "Outpost"
+        assert fleet.cargo.ironium == 0
+        assert dest.resources_on_hand.ironium == 20
+        assert get_task_type(fleet.waypoints[0].task) == WaypointTask.NO_TASK
+        assert any("has unloaded its cargo at Outpost" in m.text
+                   for m in server_data.all_messages)
+
+    def test_ai_shaped_load_order_executes(self):
+        """Regression: the AI appends its colonist/germanium LOAD
+        waypoint after the current-position waypoint; the old stub
+        silently dropped it every turn."""
+        server_data, star, fleet = _cargo_state()
+        fleet.waypoints.append(Waypoint(
+            position_x=100.0, position_y=100.0,
+            destination="Depot", task=NoTaskObj()))
+        fleet.waypoints.append(_cargo_waypoint(
+            CargoMode.LOAD, Cargo(germanium=25, colonists_in_kilotons=40)))
+
+        SplitFleetStep().process(server_data)
+
+        assert fleet.cargo.germanium == 25
+        assert fleet.cargo.colonists_in_kilotons == 40
+        assert star.resources_on_hand.germanium == 75
+        assert star.colonists == 200000 - 4000
+        assert len(fleet.waypoints) == 1
+        assert get_task_type(fleet.waypoints[0].task) == WaypointTask.NO_TASK
+
+
+# --------------------------------------------------------------------------
 # ScanStep tests
 # --------------------------------------------------------------------------
 
@@ -462,6 +761,264 @@ class TestScanStep:
 
         # Enemy fleet should be in empire0's reports
         assert (1 << 32) + 1 in empire0.fleet_reports
+
+
+# --------------------------------------------------------------------------
+# ScanStep cloaking and design learning tests
+# --------------------------------------------------------------------------
+
+@dataclass
+class SSRace:
+    """Race with the Super Stealth PRT for cloak tests."""
+    name: str = "Sneaks"
+
+    def has_trait(self, trait_code: str) -> bool:
+        return trait_code == "SS"
+
+
+@dataclass
+class ISBRace:
+    """Race with the Improved Starbases LRT."""
+    name: str = "Basers"
+
+    def has_trait(self, trait_code: str) -> bool:
+        return trait_code == "ISB"
+
+
+def _scan_fleet(key: int, owner: int, x: float, y: float,
+                scan_range: int = 0, cloak_units: int = 0,
+                tachyon_detectors: int = 0, mass: int = 25,
+                quantity: int = 1) -> Fleet:
+    """Real fleet with one token for cloak-detection tests."""
+    fleet = Fleet(name=f"Fleet #{key}", position=NovaPoint(x, y))
+    fleet._key = (owner << 32) | key
+    fleet.owner = owner
+    fleet.tokens[1] = ShipToken(
+        design_key=1, design_name="Testship", quantity=quantity,
+        mass=mass, armor=20, scan_range_normal=scan_range,
+        cloak_units=cloak_units, tachyon_detectors=tachyon_detectors,
+    )
+    return fleet
+
+
+def _scan_state(scanner: Fleet, target: Fleet,
+                target_race=None) -> 'ServerData':
+    data = ServerData()
+    data.turn_year = 2400
+    empire0 = EmpireData(id=1)
+    empire0.owned_fleets = {scanner.key: scanner}
+    empire1 = EmpireData(id=2)
+    empire1.race = target_race
+    empire1.owned_fleets = {target.key: target}
+    data.all_empires = {1: empire0, 2: empire1}
+    return data
+
+
+class TestScanStepCloaking:
+    """Cloak detection-range reduction, tachyon counter and design
+    learning (canonical Stars! rules - C# cloak is a stub,
+    ScanStep.cs:165)."""
+
+    def test_cloaked_fleet_evades_detection(self):
+        """35% cloak (70 u/kT) shrinks a 66 ly scanner to 42.9 ly."""
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66)
+        target = _scan_fleet(1, 2, 50, 0, cloak_units=70)
+        data = _scan_state(scanner, target)
+
+        ScanStep().process(data)
+        assert target.key not in data.all_empires[1].fleet_reports
+
+    def test_uncloaked_fleet_detected_at_same_distance(self):
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66)
+        target = _scan_fleet(1, 2, 50, 0, cloak_units=0)
+        data = _scan_state(scanner, target)
+
+        ScanStep().process(data)
+        assert target.key in data.all_empires[1].fleet_reports
+
+    def test_cloaked_fleet_always_detected_at_distance_zero(self):
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66)
+        target = _scan_fleet(1, 2, 0, 0, cloak_units=5000)
+        data = _scan_state(scanner, target)
+
+        ScanStep().process(data)
+        assert target.key in data.all_empires[1].fleet_reports
+
+    def test_cargo_dilutes_cloak(self):
+        """Cargo mass in the divisor halves the units/kT: the same
+        cloaked ship becomes detectable once loaded."""
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66)
+        # 70 u/kT on 60 kT ship: hidden at 50 ly (35% -> 42.9 ly)
+        target = _scan_fleet(1, 2, 50, 0, cloak_units=70, mass=60)
+        data = _scan_state(scanner, target)
+        ScanStep().process(data)
+        assert target.key not in data.all_empires[1].fleet_reports
+
+        # Loaded with 60 kT cargo: 70*60/120 = 35 u/kT = 17.5% ->
+        # effective range 54.45 ly, detected at 50 ly
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66)
+        target = _scan_fleet(1, 2, 50, 0, cloak_units=70, mass=60)
+        target.cargo = Cargo(ironium=60)
+        data = _scan_state(scanner, target)
+        ScanStep().process(data)
+        assert target.key in data.all_empires[1].fleet_reports
+
+    def test_ss_built_in_cloak_and_cargo_exclusion(self):
+        """SS ships have 300 u/kT (75%) built in; cargo does not
+        dilute SS cloak (PrimaryTraits.cs:54)."""
+        target = _scan_fleet(1, 2, 50, 0, cloak_units=0, mass=25)
+        target.cargo = Cargo(ironium=100)
+        data = _scan_state(_scan_fleet(1, 1, 0, 0, scan_range=66),
+                           target, target_race=SSRace())
+
+        step = ScanStep()
+        pct = step._fleet_cloak_percent(target, data.all_empires[2])
+        assert pct == pytest.approx(75.0)
+
+    def test_tachyon_detectors_counter_cloak(self):
+        """N detectors cut cloak by 0.95 ** (N ** 0.25): a target
+        hidden from a plain scanner is detected by one with 16
+        detectors (multiplier 0.95^2 = 0.9025)."""
+        # 35% cloak, scanner 66 ly, distance 44.5:
+        # N=1: 35 * 0.95 = 33.25% -> 44.05 ly, still hidden
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66,
+                              tachyon_detectors=1)
+        target = _scan_fleet(1, 2, 44.5, 0, cloak_units=70)
+        data = _scan_state(scanner, target)
+        ScanStep().process(data)
+        assert target.key not in data.all_empires[1].fleet_reports
+
+        # N=16: 35 * 0.9025 = 31.5875% -> 45.15 ly, detected
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66,
+                              tachyon_detectors=16)
+        target = _scan_fleet(1, 2, 44.5, 0, cloak_units=70)
+        data = _scan_state(scanner, target)
+        ScanStep().process(data)
+        assert target.key in data.all_empires[1].fleet_reports
+
+    def test_isb_starbase_cloak_floor(self):
+        """fleet.cloaked acts as a floor (Manufacture.cs:133)."""
+        target = _scan_fleet(1, 2, 50, 0, cloak_units=0)
+        target.cloaked = 20.0
+        data = _scan_state(_scan_fleet(1, 1, 0, 0, scan_range=66), target)
+
+        step = ScanStep()
+        pct = step._fleet_cloak_percent(target, data.all_empires[2])
+        assert pct == 20.0
+
+    def test_detection_teaches_hull_only_design(self):
+        """Port of ScanStep.cs:170-183: a detected fleet teaches the
+        observer a hull-only design record."""
+        from backend.services.ship_specs import SimpleDesign
+
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66)
+        target = _scan_fleet(1, 2, 50, 0)
+        data = _scan_state(scanner, target)
+        data.all_empires[2].designs[1] = SimpleDesign(
+            key=1, name="Testship", hull_name="Scout")
+
+        ScanStep().process(data)
+        empire0 = data.all_empires[1]
+        designs = empire0.empire_reports[2]["designs"]
+        record = designs[hex(1)]
+        assert record["scope"] == "hull"
+        assert record["name"] == "Testship"
+        assert record["hull_name"] == "Scout"
+        assert record["owner"] == 2
+        # Hull-only: no component payload on a scan record
+        assert "design" not in record
+
+        # Fleet report reveals composition (FleetIntel.cs:206-217)
+        report = empire0.fleet_reports[target.key]
+        assert report["composition"] == [
+            {"design_key": hex(1), "design_name": "Testship",
+             "quantity": 1}
+        ]
+
+    def test_known_full_record_not_downgraded(self):
+        """An existing (battle-learned) full record survives a scan."""
+        scanner = _scan_fleet(1, 1, 0, 0, scan_range=66)
+        target = _scan_fleet(1, 2, 50, 0)
+        data = _scan_state(scanner, target)
+        empire0 = data.all_empires[1]
+        empire0.empire_reports[2] = {
+            "designs": {hex(1): {"key": hex(1), "scope": "full"}}
+        }
+
+        ScanStep().process(data)
+        assert empire0.empire_reports[2]["designs"][hex(1)]["scope"] == "full"
+
+
+class TestStarbaseCloakISB:
+    """ISB starbases are built 20% cloaked (Manufacture.cs:126-134)."""
+
+    def _build_starbase(self, race):
+        from backend.core.production.production_queue import (
+            ProductionOrder, ProductionType
+        )
+        from backend.services.ship_specs import SimpleDesign
+
+        empire = EmpireData(id=1)
+        empire.race = race
+        design = SimpleDesign(key=7, name="Starbase", is_starbase=True)
+        empire.designs[7] = design
+        star = MockStar(name="Home", owner=1)
+        order = ProductionOrder(production_type=ProductionType.STARBASE,
+                                quantity=1, name="Starbase", design_key=7)
+
+        StarUpdateStep()._build_ships(order, star, empire, 1)
+        return next(iter(empire.owned_fleets.values()))
+
+    def test_isb_starbase_built_cloaked(self):
+        fleet = self._build_starbase(ISBRace())
+        assert fleet.cloaked == 20
+
+    def test_non_isb_starbase_not_cloaked(self):
+        fleet = self._build_starbase(MockRace())
+        assert fleet.cloaked == 0
+
+
+class TestEmpireReportsPersistence:
+    """empire_reports (learned enemy designs) survive the game
+    manager's serialize/deserialize round-trip."""
+
+    def test_empire_reports_roundtrip(self, tmp_path):
+        import backend.services.game_manager as gm_module
+        import backend.persistence.database as db_module
+        from backend.services.game_manager import GameManager
+        from backend.services.ship_specs import SimpleDesign
+
+        gm_module._game_manager = None
+        db_module._database = None
+        try:
+            manager = GameManager(str(tmp_path / "reports.db"))
+            game = manager.create_game("Reports Test", 2, "small",
+                                       seed=424242)
+            server_data = manager._load_game_state(game["id"])
+
+            design = SimpleDesign(key=(2 << 32) | 1, name="Raider",
+                                  hull_name="Scout")
+            server_data.all_empires[1].empire_reports = {
+                2: {"designs": {
+                    hex(design.key): {
+                        "key": hex(design.key), "name": "Raider",
+                        "hull_name": "Scout", "owner": 2,
+                        "scope": "full", "year": 2400,
+                        "design": design.to_dict(),
+                    }
+                }}
+            }
+
+            restored = manager._deserialize_state(
+                manager._serialize_state(server_data))
+            reports = restored.all_empires[1].empire_reports
+            assert 2 in reports  # int keys restored
+            record = reports[2]["designs"][hex(design.key)]
+            assert record["scope"] == "full"
+            assert record["design"]["name"] == "Raider"
+        finally:
+            gm_module._game_manager = None
+            db_module._database = None
 
 
 # --------------------------------------------------------------------------
@@ -554,11 +1111,54 @@ class TestBombingStep:
         from backend.server.turn_steps.bombing_step import (
             compute_defense_coverage
         )
-        star = MockStar(name="D", owner=1, colonists=1000, defenses=50)
+        star = MockStar(name="D", owner=1, colonists=1000, defenses=50,
+                        defense_type="SDI")
         cov = compute_defense_coverage(star)
         expected = 1.0 - (1.0 - 0.0099) ** 50
         assert cov["population"] == pytest.approx(expected)
         assert cov["buildings"] == pytest.approx(expected * 0.5)
+
+    def test_defense_type_none_gives_zero_coverage_bombing(self):
+        """The star's CURRENT defense type feeds bombing: identical
+        defenses with type "None" take the full kill, with "SDI" a
+        reduced one (Defenses.cs:60-72)."""
+        from backend.core.components.ship_design import Bomb
+
+        @dataclass
+        class BomberDesign:
+            key: int = 1
+            conventional_bombs: object = None
+            smart_bombs: object = None
+
+        survivors = {}
+        for defense_type in ("None", "SDI"):
+            data = ServerData()
+            star = MockStar(name="Target", owner=1, colonists=100000,
+                            defenses=100, defense_type=defense_type)
+            data.all_stars = {"Target": star}
+
+            empire0 = EmpireData(id=0)
+            empire0.designs[1] = BomberDesign(
+                conventional_bombs=Bomb(pop_kill=2.5, installations=0,
+                                        minimum_kill=0, is_smart=False),
+                smart_bombs=Bomb(is_smart=True),
+            )
+            fleet = MockFleet(key=1, owner=0, in_orbit=star,
+                              has_bombers=True,
+                              tokens={1: MockFleetToken(quantity=2,
+                                                        design_key=1)})
+            empire0.owned_fleets = {1: fleet}
+            data.all_empires = {0: empire0, 1: EmpireData(id=1)}
+
+            BombingStep().process(data)
+            survivors[defense_type] = star.colonists
+
+        # "None": full 5% kill; "SDI": kill reduced by pop coverage
+        assert survivors["None"] == 95000
+        pop_coverage = 1.0 - (1.0 - 0.0099) ** 100
+        expected_dead = int(100000 * 0.05 * (1.0 - pop_coverage))
+        assert survivors["SDI"] == 100000 - expected_dead
+        assert survivors["SDI"] > survivors["None"]
 
 
 # --------------------------------------------------------------------------
@@ -705,3 +1305,301 @@ class TestWaypointTaskHelpers:
             task=ColoniseTaskObj()
         )
         assert get_task_type(wp.task) == WaypointTask.COLONIZE
+
+
+# --------------------------------------------------------------------------
+# RegenerateFleet tests (repair/refuel)
+# Port of: ServerState/TurnGenerator.cs RegenerateFleet (lines 301-380)
+# --------------------------------------------------------------------------
+
+class TestRegenerateFleet:
+    """Tests for the situational repair table and starbase refuel."""
+
+    def _make_fleet(self, key=1, owner=1, armor=100, quantity=1,
+                    fuel_capacity=100, heals_others_percent=0,
+                    is_bomber=False):
+        """Build a minimal real fleet with one token."""
+        fleet = Fleet(name=f"Fleet #{key}", position=NovaPoint(100, 100))
+        fleet.owner = owner
+        fleet.id = key
+        fleet.tokens[1] = ShipToken(
+            design_key=1, design_name="Testship", quantity=quantity,
+            mass=10, armor=armor, fuel_capacity=fuel_capacity,
+            heals_others_percent=heals_others_percent,
+            is_bomber=is_bomber,
+        )
+        fleet.fuel_available = fuel_capacity
+        return fleet
+
+    def _make_starbase(self, key=100, owner=1, can_refuel=True,
+                       damage_percent=0.0):
+        """Build a starbase fleet (dock decides can_refuel)."""
+        sb = Fleet(name="Starbase #1", position=NovaPoint(100, 100))
+        sb.owner = owner
+        sb.id = key
+        sb.tokens[1] = ShipToken(
+            design_key=2, design_name="Starbase", quantity=1,
+            armor=500, is_starbase=True, can_refuel=can_refuel,
+            dock_capacity=200 if can_refuel else 0,
+            damage_percent=damage_percent,
+        )
+        return sb
+
+    def _make_star(self, name="Home", owner=NOBODY):
+        star = Star(name=name, position=NovaPoint(100, 100))
+        if owner != NOBODY:
+            star.owner = owner
+        return star
+
+    def _make_state(self, *fleets, stars=()):
+        data = ServerData()
+        for fleet in fleets:
+            eid = fleet.owner
+            if eid not in data.all_empires:
+                data.all_empires[eid] = EmpireData(id=eid)
+            data.all_empires[eid].owned_fleets[fleet.key] = fleet
+        for star in stars:
+            data.all_stars[star.name] = star
+        return data
+
+    def _orbit(self, fleet, star):
+        fleet.in_orbit = star
+        fleet.in_orbit_name = star.name
+        fleet.position = NovaPoint(star.position.x, star.position.y)
+
+    # -- rate table (TurnGenerator.cs:323-367) --------------------------
+
+    def test_rate_moving_through_space(self):
+        fleet = self._make_fleet()
+        fleet.waypoints.append(Waypoint(
+            position_x=500, position_y=500,
+            destination="Space at 500,500", task=NoTaskObj()))
+        gen = TurnGenerator(self._make_state(fleet))
+        assert gen._get_repair_rate(fleet, None) == 1
+
+    def test_rate_stopped_in_space(self):
+        fleet = self._make_fleet()
+        gen = TurnGenerator(self._make_state(fleet))
+        assert gen._get_repair_rate(fleet, None) == 2
+
+    def test_rate_orbiting_foreign_planet(self):
+        fleet = self._make_fleet(owner=1)
+        star = self._make_star(owner=2)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 3
+
+    def test_rate_orbiting_unowned_planet(self):
+        fleet = self._make_fleet(owner=1)
+        star = self._make_star(owner=NOBODY)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 3
+
+    def test_rate_own_planet_no_starbase(self):
+        fleet = self._make_fleet(owner=1)
+        star = self._make_star(owner=1)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 5
+
+    def test_rate_own_planet_starbase_no_dock(self):
+        fleet = self._make_fleet(owner=1)
+        sb = self._make_starbase(owner=1, can_refuel=False)
+        star = self._make_star(owner=1)
+        star.starbase_key = sb.key
+        gen = TurnGenerator(self._make_state(fleet, sb, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 8
+
+    def test_rate_own_planet_starbase_with_dock(self):
+        fleet = self._make_fleet(owner=1)
+        sb = self._make_starbase(owner=1, can_refuel=True)
+        star = self._make_star(owner=1)
+        star.starbase_key = sb.key
+        gen = TurnGenerator(self._make_state(fleet, sb, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 20
+
+    def test_rate_zero_while_bombing_enemy_planet(self):
+        """0% while bombing (TurnGenerator.cs:290 remark, canonical)."""
+        fleet = self._make_fleet(owner=1, is_bomber=True)
+        star = self._make_star(owner=2)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 0
+
+    def test_rate_bomber_over_unowned_planet_repairs(self):
+        """A bomber over an unowned planet is not bombing - 3%."""
+        fleet = self._make_fleet(owner=1, is_bomber=True)
+        star = self._make_star(owner=NOBODY)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 3
+
+    # -- heals-others bonus (TurnGenerator.cs:297 remark, canonical) ----
+
+    def test_heal_bonus_stopped_in_space(self):
+        fleet = self._make_fleet(heals_others_percent=5)
+        gen = TurnGenerator(self._make_state(fleet))
+        assert gen._get_repair_rate(fleet, None) == 7
+
+    def test_heal_bonus_orbiting_own_planet_with_dock(self):
+        fleet = self._make_fleet(owner=1, heals_others_percent=5)
+        sb = self._make_starbase(owner=1, can_refuel=True)
+        star = self._make_star(owner=1)
+        star.starbase_key = sb.key
+        gen = TurnGenerator(self._make_state(fleet, sb, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 25
+
+    def test_heal_bonus_not_applied_while_moving(self):
+        fleet = self._make_fleet(heals_others_percent=10)
+        fleet.waypoints.append(Waypoint(
+            position_x=500, position_y=500,
+            destination="Space at 500,500", task=NoTaskObj()))
+        gen = TurnGenerator(self._make_state(fleet))
+        assert gen._get_repair_rate(fleet, None) == 1
+
+    def test_heal_bonus_not_applied_while_bombing(self):
+        fleet = self._make_fleet(owner=1, is_bomber=True,
+                                 heals_others_percent=10)
+        star = self._make_star(owner=2)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+        assert gen._get_repair_rate(fleet, star) == 0
+
+    # -- repair application (TurnGenerator.cs:370-379) ------------------
+
+    def test_repair_at_own_dock_reduces_damage_by_20_points(self):
+        fleet = self._make_fleet(owner=1)
+        fleet.tokens[1].damage_percent = 50.0
+        sb = self._make_starbase(owner=1, can_refuel=True)
+        star = self._make_star(owner=1)
+        star.starbase_key = sb.key
+        self._orbit(fleet, star)
+        gen = TurnGenerator(self._make_state(fleet, sb, stars=(star,)))
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.tokens[1].damage_percent == 30.0
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.tokens[1].damage_percent == 10.0
+
+        # Never goes negative - floors at 0.0
+        gen._regenerate_fleet(fleet)
+        assert fleet.tokens[1].damage_percent == 0.0
+
+    def test_repair_minimum_one_armor_point(self):
+        """C# repairs at least 1 armor point: 100/armor percent."""
+        fleet = self._make_fleet(armor=20)
+        fleet.tokens[1].damage_percent = 50.0
+        fleet.waypoints.append(Waypoint(
+            position_x=500, position_y=500,
+            destination="Space at 500,500", task=NoTaskObj()))
+        gen = TurnGenerator(self._make_state(fleet))
+
+        # Rate 1 (moving) would be 1 point of 20 armor = 5 percent
+        gen._regenerate_fleet(fleet)
+        assert fleet.tokens[1].damage_percent == 45.0
+
+    def test_repair_leaves_undamaged_token_unchanged(self):
+        fleet = self._make_fleet(owner=1)
+        star = self._make_star(owner=1)
+        self._orbit(fleet, star)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.tokens[1].damage_percent == 0.0
+
+    def test_repair_does_not_mutate_cached_design_stats(self):
+        fleet = self._make_fleet(owner=1, armor=100)
+        fleet.tokens[1].shields = 40
+        fleet.tokens[1].damage_percent = 50.0
+        star = self._make_star(owner=1)
+        self._orbit(fleet, star)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.tokens[1].armor == 100
+        assert fleet.tokens[1].shields == 40
+
+    # -- refuel (TurnGenerator.cs:316-319) -------------------------------
+
+    def test_refuel_at_own_starbase_with_dock(self):
+        fleet = self._make_fleet(owner=1, fuel_capacity=100)
+        fleet.fuel_available = 10
+        sb = self._make_starbase(owner=1, can_refuel=True)
+        star = self._make_star(owner=1)
+        star.starbase_key = sb.key
+        self._orbit(fleet, star)
+        gen = TurnGenerator(self._make_state(fleet, sb, stars=(star,)))
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.fuel_available == fleet.total_fuel_capacity == 100
+
+    def test_no_refuel_at_foreign_starbase(self):
+        fleet = self._make_fleet(owner=1, fuel_capacity=100)
+        fleet.fuel_available = 10
+        sb = self._make_starbase(owner=2, can_refuel=True)
+        star = self._make_star(owner=2)
+        star.starbase_key = sb.key
+        self._orbit(fleet, star)
+        gen = TurnGenerator(self._make_state(fleet, sb, stars=(star,)))
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.fuel_available == 10
+
+    def test_no_refuel_at_own_planet_without_starbase(self):
+        fleet = self._make_fleet(owner=1, fuel_capacity=100)
+        fleet.fuel_available = 10
+        star = self._make_star(owner=1)
+        self._orbit(fleet, star)
+        gen = TurnGenerator(self._make_state(fleet, stars=(star,)))
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.fuel_available == 10
+
+    def test_no_refuel_at_own_starbase_without_dock(self):
+        fleet = self._make_fleet(owner=1, fuel_capacity=100)
+        fleet.fuel_available = 10
+        sb = self._make_starbase(owner=1, can_refuel=False)
+        star = self._make_star(owner=1)
+        star.starbase_key = sb.key
+        self._orbit(fleet, star)
+        gen = TurnGenerator(self._make_state(fleet, sb, stars=(star,)))
+
+        gen._regenerate_fleet(fleet)
+        assert fleet.fuel_available == 10
+
+    # -- starbase self-repair through generate() -------------------------
+
+    def test_starbase_self_repairs_during_generate(self):
+        """generate() regenerates starbases too (TurnGenerator.cs:115-117):
+        a damaged dock starbase at its own planet repairs 20%/yr."""
+        sb = self._make_starbase(owner=1, can_refuel=True,
+                                 damage_percent=40.0)
+        star = self._make_star(owner=1)
+        star.starbase_key = sb.key
+        self._orbit(sb, star)
+
+        data = self._make_state(sb, stars=(star,))
+        data.all_empires[1].race = MockRace()
+
+        gen = TurnGenerator(data)
+        gen.generate()
+
+        assert sb.tokens[1].damage_percent == 20.0
+
+    # -- out-of-fuel notice (TurnGenerator.cs:270-279) --------------------
+
+    def test_out_of_fuel_notice(self):
+        fleet = self._make_fleet(owner=1, fuel_capacity=100)
+        fleet.fuel_available = 0
+        data = self._make_state(fleet)
+        gen = TurnGenerator(data)
+
+        gen._process_fleet(fleet)
+        assert any(m.audience == 1 and "has run out of fuel" in m.text
+                   for m in data.all_messages)
+
+    def test_no_out_of_fuel_notice_for_starbase(self):
+        sb = self._make_starbase(owner=1)
+        sb.fuel_available = 0
+        data = self._make_state(sb)
+        gen = TurnGenerator(data)
+
+        gen._process_fleet(sb)
+        assert not any("has run out of fuel" in m.text
+                       for m in data.all_messages)

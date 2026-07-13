@@ -425,6 +425,10 @@ class ServerData:
     # Current turn year
     turn_year: int = STARTING_YEAR
 
+    # Seed the game was created with (None = unseeded). Web extension:
+    # used to make turn generation reproducible (see GameManager.generate_turn)
+    game_seed: Optional[int] = None
+
     # Game folder path (for file-based persistence)
     game_folder: Optional[str] = None
     state_path_name: Optional[str] = None
@@ -551,6 +555,10 @@ class ServerData:
             )
         except (KeyError, AttributeError):
             fleet.in_orbit = None
+        # Keep the persisted orbit name in sync with the runtime
+        # reference (movement previously left in_orbit_name stale at
+        # the departure star)
+        fleet.in_orbit_name = fleet.in_orbit.name if fleet.in_orbit else None
 
     def get_star_at_position(self, x: float, y: float) -> Optional['Star']:
         """
@@ -602,6 +610,7 @@ class ServerData:
             "game_in_progress": self.game_in_progress,
             "use_ron_battle_engine": self.use_ron_battle_engine,
             "turn_year": self.turn_year,
+            "game_seed": self.game_seed,
             "game_folder": self.game_folder,
             "state_path_name": self.state_path_name,
             "all_tech_levels": self.all_tech_levels,
@@ -639,6 +648,7 @@ class ServerData:
             game_in_progress=data.get("game_in_progress", False),
             use_ron_battle_engine=data.get("use_ron_battle_engine", True),
             turn_year=data.get("turn_year", STARTING_YEAR),
+            game_seed=data.get("game_seed"),
             game_folder=data.get("game_folder"),
             state_path_name=data.get("state_path_name")
         )

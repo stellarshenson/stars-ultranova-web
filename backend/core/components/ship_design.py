@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from ..game_objects.item import Item, ItemType
 from ..data_structures.resources import Resources
-from ..globals import BEAM_RATING_MULTIPLIER
+from ..globals import BEAM_RATING_MULTIPLIER, MAX_CLOAK_PERCENT
 
 if TYPE_CHECKING:
     from ..race.race import Race
@@ -19,6 +19,51 @@ from .hull import Hull
 from .hull_module import HullModule
 from .engine import Engine
 from .component import Component, ComponentProperty
+
+
+# Canonical Stars! cloaking curve. The C# reference is a stub: the
+# design-level "Cloak" summary (probability-stacked percent,
+# ShipDesign.cs:621 / ProbabilityProperty.cs:117-121) is never read by
+# any game logic, and fleet detection ignores cloak entirely
+# (ScanStep.cs:165). Cloaking devices are canonically rated in cloak
+# UNITS per kT; Nova's components.xml stores each device's single-ship
+# percent, so the inverse table recovers the unit rating.
+
+def cloak_units_from_percent(pct: float) -> float:
+    """
+    Percent -> cloak units per kT (inverse of the canonical curve).
+
+    The component catalog maxes at 85%, so three branches suffice:
+    Stealth Cloak 35%->70u, Super-Stealth 55%->140u, Transport
+    Cloaking 75%->300u, Ultra-Stealth 85%->540u.
+    """
+    if pct <= 50:
+        return 2 * pct
+    if pct <= 75:
+        return 100 + 8 * (pct - 50)
+    return 300 + 24 * (pct - 75)
+
+
+def cloak_percent_from_units(units: float) -> float:
+    """
+    Cloak units per kT -> cloak percent (canonical piecewise curve).
+
+    Anchors: 70->35, 140->55, 300->75, 540->85. Result capped at
+    MAX_CLOAK_PERCENT (documented Stars! maximum of 98%).
+    """
+    if units <= 100:
+        pct = units / 2.0
+    elif units <= 300:
+        pct = 50 + (units - 100) / 8.0
+    elif units <= 612:
+        pct = 75 + (units - 300) / 24.0
+    elif units <= 1124:
+        pct = 88 + (units - 612) / 64.0
+    elif units <= 1892:
+        pct = 96 + (units - 1124) / 256.0
+    else:
+        pct = 99.0
+    return min(pct, MAX_CLOAK_PERCENT)
 
 
 @dataclass
@@ -323,16 +368,53 @@ class ShipDesign(Item):
         return len(self.weapons) > 0
 
     @property
+    def orbital_adjuster(self) -> int:
+        """Summed Orbital Adjuster value (negative = Retro Bombs)."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Orbital Adjuster")
+        if prop is None:
+            return 0
+        return prop.get("Value", 0)
+
+    @property
+    def cloak_units(self) -> int:
+        """Cloak units per kT rating of one ship (canonical curve)."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Cloak")
+        if prop is None:
+            return 0
+        return int(prop.get("Units", 0))
+
+    @property
+    def tachyon_detectors(self) -> int:
+        """Number of Tachyon Detector devices fitted."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Tachyon Detector")
+        if prop is None:
+            return 0
+        return prop.get("Count", 0)
+
+    @property
     def is_bomber(self) -> bool:
         """Check if design can bomb planets."""
         self._ensure_updated()
-        return self.conventional_bombs.pop_kill > 0 or self.smart_bombs.pop_kill > 0
+        # A negative Orbital Adjuster (Retro Bomb) must reach the
+        # bombing step even without pop-kill bombs
+        return (self.conventional_bombs.pop_kill > 0
+                or self.smart_bombs.pop_kill > 0
+                or self.orbital_adjuster < 0)
 
     @property
     def mine_count(self) -> int:
         """Standard mine laying rate."""
         self._ensure_updated()
         return self.standard_mines.layer_rate
+
+    @property
+    def mining_rate(self) -> int:
+        """Remote mining rate (kT per mineral per year at 100%)."""
+        self._ensure_updated()
+        return self._get_int_property("Mining Robot")
 
     @property
     def power_rating(self) -> int:
@@ -515,12 +597,59 @@ class ShipDesign(Item):
             if prop_type not in self._summary_properties:
                 self._summary_properties[prop_type] = dict(values)
 
+        elif prop_type == "Orbital Adjuster":
+            # Summable (ShipDesign.cs:628; IntegerProperty.Add sums),
+            # so a stack of N Retro Bombs = adjuster value -N
+            value = values.get("Value", 0) * count
+            if "Orbital Adjuster" in self._summary_properties:
+                self._summary_properties["Orbital Adjuster"]["Value"] += value
+            else:
+                self._summary_properties["Orbital Adjuster"] = {"Value": value}
+
         elif prop_type == "Battle Movement":
             value = values.get("Value", 0) * count
             if "Battle Movement" in self._summary_properties:
                 self._summary_properties["Battle Movement"]["Value"] += value
             else:
                 self._summary_properties["Battle Movement"] = {"Value": value}
+
+        elif prop_type == "Mining Robot":
+            # kT of EACH mineral mined per year at 100% concentration.
+            # C# intended to sum this via SumProperty case "Robot"
+            # (ShipDesign.cs:630), but Component.cs:362 stores the
+            # property under the raw xml key "Mining Robot", so the C#
+            # case never fires - dead code. We aggregate correctly
+            # under the stored key (documented deviation). The Orbital
+            # Adjuster has no "Mining Robot" property despite its
+            # MiningRobot item type, so it contributes 0 here.
+            value = values.get("Value", 0) * count
+            if "Mining Robot" in self._summary_properties:
+                self._summary_properties["Mining Robot"]["Value"] += value
+            else:
+                self._summary_properties["Mining Robot"] = {"Value": value}
+
+        elif prop_type == "Cloak":
+            # Cloak UNITS stack linearly across devices (canonical
+            # Stars! rule: 2 Stealth Cloaks = 140u -> 55%). Documented
+            # deviation from the C# probability stacking
+            # (ShipDesign.cs:621, ProbabilityProperty.cs:117-121, which
+            # would give 57.75%) - that summary was never consumed:
+            # fleet detection ignores cloak (ScanStep.cs:165 stub)
+            units = cloak_units_from_percent(values.get("Value", 0)) * count
+            if "Cloak" in self._summary_properties:
+                self._summary_properties["Cloak"]["Units"] += units
+            else:
+                self._summary_properties["Cloak"] = {"Units": units}
+
+        elif prop_type == "Tachyon Detector":
+            # Aggregate the device COUNT, not the XML value (5 =
+            # percent effectiveness cut per detector, applied with
+            # 4th-root damping at scan time). C# never aggregates this
+            # property (no case in ShipDesign.cs SumProperty:615-646)
+            if "Tachyon Detector" in self._summary_properties:
+                self._summary_properties["Tachyon Detector"]["Count"] += count
+            else:
+                self._summary_properties["Tachyon Detector"] = {"Count": count}
 
         # Ignore Hull, Hull Affinity, Transport Ships Only in summary
 

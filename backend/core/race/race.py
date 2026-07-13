@@ -4,14 +4,18 @@ Port of: Common/RaceDefinition/Race.cs (partial - key methods for Star operation
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Set, Optional, TYPE_CHECKING
+from typing import Dict, Set, Optional, TYPE_CHECKING
 
+from ..data_structures.tech_level import RESEARCH_KEYS
 from ..globals import (
     NOMINAL_MAXIMUM_PLANETARY_POPULATION,
     COLONISTS_PER_OPERABLE_FACTORY_UNIT,
     COLONISTS_PER_OPERABLE_MINING_UNIT,
     FACTORIES_PER_FACTORY_PRODUCTION_UNIT,
-    MINES_PER_MINE_PRODUCTION_UNIT
+    MINES_PER_MINE_PRODUCTION_UNIT,
+    STARTING_COLONISTS,
+    STARTING_COLONISTS_ACCELERATED_BBS,
+    LOW_STARTING_POPULATION_FACTOR
 )
 
 if TYPE_CHECKING:
@@ -51,6 +55,14 @@ class Race:
     radiation_min: int = 15
     radiation_max: int = 85
 
+    # Environment immunities (EnvironmentTolerance.cs:44 Immune flag).
+    # The wizard flattens an immune dimension's min/max to 0/100 for the
+    # simplified hab_value below; the advantage-point calculator needs
+    # the real flag (RaceAdvantagePointCalculator.cs:95, Race.cs:598-610)
+    immune_gravity: bool = False
+    immune_temperature: bool = False
+    immune_radiation: bool = False
+
     # AI production proclivities (C# Race AI weighting knobs)
     # 50 = neutral weighting for the interceptor ratio (divided by 50)
     ai_proclivities_interceptors: int = 50
@@ -58,11 +70,45 @@ class Race:
     ai_proclivities_escorts: float = 1.0
     ai_proclivities_starbases: float = 1.0
 
+    # Per-field research cost factor as an integer percent, keyed by
+    # RESEARCH_KEYS field name. Port of Race.cs:44 ResearchCosts (a
+    # TechLevel of percents); the race designer writes 50 (cheap),
+    # 100 (standard) or 175 (expensive) per ControlLibrary/
+    # ResearchCost.cs:160-176; legacy value 150 is also expensive
+    # (ResearchCost.cs:210-211).
+    research_costs: Dict[str, int] = field(
+        default_factory=lambda: {key: 100 for key in RESEARCH_KEYS})
+
     # Traits
     traits: Set[str] = field(default_factory=set)
 
     # Primary racial trait (PRT) - one of: HE, SS, WM, CA, IS, SD, PP, IT, AR, JOAT
     primary_trait: str = "JOAT"
+
+    # Leftover advantage-point spend at game start.
+    # Target strings match Race.cs LeftoverPointTarget (default
+    # "Surface minerals", Race.cs:436-438); the point budget is
+    # clamp(advantage points, 0, 50) per Race.cs GetLeftoverAdvantagePoints
+    # (lines 215-221), computed server-side from the ported
+    # RaceAdvantagePointCalculator (backend/services/race_points.py)
+    # at game creation.
+    leftover_point_target: str = "Surface minerals"
+    leftover_points: int = 0
+
+    def get_starting_population(self, accelerated: bool = False) -> int:
+        """
+        Starting homeworld population for this race.
+
+        Port of: Race.cs GetStartingPopulation (lines 340-355).
+        Normal 25000, accelerated BBS 100000; LSP multiplies by 0.7
+        (truncated): 17500 / 70000.
+        """
+        population = STARTING_COLONISTS
+        if accelerated:
+            population = STARTING_COLONISTS_ACCELERATED_BBS
+        if self.has_trait("LSP"):
+            population = int(population * LOW_STARTING_POPULATION_FACTOR)
+        return population
 
     def has_trait(self, trait: str) -> bool:
         """Check if race has a specific trait."""
@@ -153,8 +199,14 @@ class Race:
             "temperature_max": self.temperature_max,
             "radiation_min": self.radiation_min,
             "radiation_max": self.radiation_max,
+            "immune_gravity": self.immune_gravity,
+            "immune_temperature": self.immune_temperature,
+            "immune_radiation": self.immune_radiation,
+            "research_costs": dict(self.research_costs),
             "traits": list(self.traits),
-            "primary_trait": self.primary_trait
+            "primary_trait": self.primary_trait,
+            "leftover_point_target": self.leftover_point_target,
+            "leftover_points": self.leftover_points
         }
 
     @classmethod
@@ -177,6 +229,16 @@ class Race:
         race.temperature_max = data.get("temperature_max", 85)
         race.radiation_min = data.get("radiation_min", 15)
         race.radiation_max = data.get("radiation_max", 85)
+        race.immune_gravity = data.get("immune_gravity", False)
+        race.immune_temperature = data.get("immune_temperature", False)
+        race.immune_radiation = data.get("immune_radiation", False)
+        race.research_costs = {
+            key: int(data.get("research_costs", {}).get(key, 100))
+            for key in RESEARCH_KEYS
+        }
         race.traits = set(data.get("traits", []))
         race.primary_trait = data.get("primary_trait", "JOAT")
+        race.leftover_point_target = data.get(
+            "leftover_point_target", "Surface minerals")
+        race.leftover_points = data.get("leftover_points", 0)
         return race

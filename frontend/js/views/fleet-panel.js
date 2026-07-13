@@ -343,6 +343,7 @@ const FleetPanel = {
                 <h3>Actions</h3>
                 <div class="action-buttons">
                     <button class="btn-small" id="btn-transfer-cargo">Cargo</button>
+                    <button class="btn-small" id="btn-transfer-fleet">Xfer Fleet</button>
                     <button class="btn-small" id="btn-rename-fleet">Rename</button>
                     <button class="btn-small" id="btn-split-fleet">Split</button>
                     <button class="btn-small" id="btn-merge-fleet">Merge</button>
@@ -386,6 +387,11 @@ const FleetPanel = {
         const cargoBtn = document.getElementById('btn-transfer-cargo');
         if (cargoBtn) {
             cargoBtn.addEventListener('click', () => this.showCargoDialog());
+        }
+
+        const fleetXferBtn = document.getElementById('btn-transfer-fleet');
+        if (fleetXferBtn) {
+            fleetXferBtn.addEventListener('click', () => this.showFleetTransferDialog());
         }
 
         const scrapBtn = document.getElementById('btn-scrap-fleet');
@@ -532,17 +538,50 @@ const FleetPanel = {
         if (warpStr === null) return;
         const warp = Math.max(1, Math.min(10, parseInt(warpStr) || 6));
 
-        const tasks = ['None', 'Colonise', 'Lay Mines', 'Scrap'];
+        const tasks = ['None', 'Colonise', 'Lay Mines', 'Transfer Cargo', 'Scrap'];
+        // Remote mining is only offered to fleets carrying mining robots
+        if ((fleet.mining_rate || 0) > 0) {
+            tasks.splice(3, 0, 'Remote Mining');
+        }
         const taskIdx = await Dialogs.selectOption('Waypoint Task', 'Task on arrival:', tasks);
         if (taskIdx === null) return;
 
-        this.addWaypoint(target, warp, tasks[taskIdx]);
+        // A cargo task needs a mode and per-commodity amounts
+        // (CargoTaskObj.from_dict schema)
+        let taskPayload = null;
+        if (tasks[taskIdx] === 'Transfer Cargo') {
+            const modeIdx = await Dialogs.selectOption(
+                'Cargo Task', 'Cargo operation:',
+                ['Load', 'Unload', 'Set Amount To']);
+            if (modeIdx === null) return;
+
+            const amount = {};
+            for (const [label, key] of [
+                    ['Ironium', 'ironium'],
+                    ['Boranium', 'boranium'],
+                    ['Germanium', 'germanium'],
+                    ['Colonists', 'colonists_in_kilotons']]) {
+                const value = await Dialogs.promptText(
+                    'Cargo Amount', `${label} (kT):`, '0');
+                if (value === null) return;
+                amount[key] = Math.max(0, parseInt(value) || 0);
+            }
+
+            taskPayload = {
+                type: 'Cargo',
+                mode: ['LOAD', 'UNLOAD', 'SET'][modeIdx],
+                amount: amount,
+                target_name: target.name
+            };
+        }
+
+        this.addWaypoint(target, warp, tasks[taskIdx], taskPayload);
     },
 
     /**
      * Add a waypoint (canonical waypoint command).
      */
-    async addWaypoint(targetStar, warpFactor, task) {
+    async addWaypoint(targetStar, warpFactor, task, taskPayload = null) {
         if (!this.currentFleet || !GameState.game) return;
 
         try {
@@ -555,8 +594,10 @@ const FleetPanel = {
                     position_y: targetStar.position_y,
                     warp_factor: warpFactor,
                     destination: targetStar.name,
-                    task: { type: task === 'None' ? 'NoTask'
+                    task: taskPayload ||
+                          { type: task === 'None' ? 'NoTask'
                                  : task === 'Lay Mines' ? 'LayMines'
+                                 : task === 'Remote Mining' ? 'RemoteMine'
                                  : task }
                 }
             });
@@ -687,6 +728,99 @@ const FleetPanel = {
                 await GameState.refreshState();
                 this.refresh();
                 if (window.StarPanel) StarPanel.refresh();
+                ApiClient.showStatus('Cargo transferred', 'info');
+            } catch (error) {
+                ApiClient.showStatus('Transfer failed: ' + error.message, 'error');
+            }
+        });
+    },
+
+    /**
+     * Cargo/fuel transfer with another owned fleet at this location
+     * (counterparty rules as in FleetDetail.cs fleetsAtLocation).
+     */
+    async showFleetTransferDialog() {
+        const fleet = this.currentFleet;
+        if (!fleet || !GameState.game) return;
+
+        const candidates = GameState.fleets.filter(f =>
+            f.key !== fleet.key &&
+            !f.is_starbase &&
+            Math.hypot(f.position_x - fleet.position_x,
+                       f.position_y - fleet.position_y) < 1.0);
+
+        if (!candidates.length) {
+            ApiClient.showStatus('No other fleet here to transfer with', 'info');
+            return;
+        }
+
+        const idx = await Dialogs.selectOption(
+            'Transfer With Fleet',
+            `Transfer cargo/fuel between ${fleet.name} and:`,
+            candidates.map(f => `${f.name} (cargo ${f.cargo_mass || 0}/${f.cargo_capacity || 0} kT)`)
+        );
+        if (idx === null) return;
+        const other = candidates[idx];
+
+        const cargo = fleet.cargo || {};
+        const otherCargo = other.cargo || {};
+        const free = (fleet.cargo_capacity || 0) - (fleet.cargo_mass || 0);
+        const html = `
+            <div class="dialog-header">
+                <h2>Transfer Cargo - ${fleet.name}</h2>
+                <button class="btn-close" id="btn-fxfer-cancel-x">X</button>
+            </div>
+            <div class="dialog-body">
+                <p class="info-text">Positive loads into this fleet from ${other.name},
+                   negative unloads. Free capacity: ${free} kT</p>
+                <div class="form-group">
+                    <label>Ironium (${other.name}: ${otherCargo.ironium || 0}, aboard: ${cargo.ironium || 0})</label>
+                    <input type="number" id="fxfer-ironium" class="form-input" value="0">
+                </div>
+                <div class="form-group">
+                    <label>Boranium (${other.name}: ${otherCargo.boranium || 0}, aboard: ${cargo.boranium || 0})</label>
+                    <input type="number" id="fxfer-boranium" class="form-input" value="0">
+                </div>
+                <div class="form-group">
+                    <label>Germanium (${other.name}: ${otherCargo.germanium || 0}, aboard: ${cargo.germanium || 0})</label>
+                    <input type="number" id="fxfer-germanium" class="form-input" value="0">
+                </div>
+                <div class="form-group">
+                    <label>Colonists (${other.name}: ${otherCargo.colonists || 0}, aboard: ${cargo.colonists || 0},
+                           in units of 100)</label>
+                    <input type="number" id="fxfer-colonists" class="form-input" value="0" step="100">
+                </div>
+                <div class="form-group">
+                    <label>Fuel (${other.name}: ${Math.floor(other.fuel_available || 0)},
+                           aboard: ${Math.floor(fleet.fuel_available || 0)})</label>
+                    <input type="number" id="fxfer-fuel" class="form-input" value="0">
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn-primary" id="btn-fxfer-confirm">Transfer</button>
+                <button class="btn-secondary" id="btn-fxfer-cancel">Cancel</button>
+            </div>
+        `;
+
+        Dialogs.show(html);
+
+        const close = () => Dialogs.close();
+        document.getElementById('btn-fxfer-cancel')?.addEventListener('click', close);
+        document.getElementById('btn-fxfer-cancel-x')?.addEventListener('click', close);
+        document.getElementById('btn-fxfer-confirm')?.addEventListener('click', async () => {
+            const delta = {
+                ironium: parseInt(document.getElementById('fxfer-ironium')?.value) || 0,
+                boranium: parseInt(document.getElementById('fxfer-boranium')?.value) || 0,
+                germanium: parseInt(document.getElementById('fxfer-germanium')?.value) || 0,
+                colonists: parseInt(document.getElementById('fxfer-colonists')?.value) || 0,
+                fuel: parseInt(document.getElementById('fxfer-fuel')?.value) || 0
+            };
+            Dialogs.close();
+            try {
+                await ApiClient.transferCargoFleet(
+                    GameState.game.id, fleet.key, GameState.empireId, other.key, delta);
+                await GameState.refreshState();
+                this.refresh();
                 ApiClient.showStatus('Cargo transferred', 'info');
             } catch (error) {
                 ApiClient.showStatus('Transfer failed: ' + error.message, 'error');

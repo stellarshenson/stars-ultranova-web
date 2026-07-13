@@ -34,6 +34,9 @@ class ProductionOrder:
     name: str = ""
     # Partial completion tracking
     partial_resources_spent: int = 0
+    # Auto-build orders are skipped without blocking the queue when they
+    # cannot be built (ProductionOrder.cs:44-48, IsBlocking at 96-99)
+    is_auto_build: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -42,7 +45,8 @@ class ProductionOrder:
             "quantity": self.quantity,
             "design_key": hex(self.design_key) if self.design_key else None,
             "name": self.name,
-            "partial_resources_spent": self.partial_resources_spent
+            "partial_resources_spent": self.partial_resources_spent,
+            "is_auto_build": self.is_auto_build
         }
 
     @classmethod
@@ -57,6 +61,8 @@ class ProductionOrder:
             order.design_key = int(key_str, 16) if isinstance(key_str, str) else key_str
         order.name = data.get("name", "")
         order.partial_resources_spent = data.get("partial_resources_spent", 0)
+        # Default False keeps saved games from before the flag loading
+        order.is_auto_build = bool(data.get("is_auto_build", False))
         return order
 
 

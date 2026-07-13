@@ -8,33 +8,33 @@ Status legend: **[C# ok]** implemented in reference / **[C# stub]** present but 
 
 - Galaxy generation: star density/separation/uniformity params, named stars, homeworld selection `StarMapGenerator/StarMapInitialiser` [C# ok] →web: done (own generator, richer)
 - Game settings: map size, victory conditions (8 tunable `EnabledValue` targets: planets-owned 60%, tech 22 in N fields, total score, 2nd-place margin, production capacity, capital ships, highest-score-for-N-years; `TargetsToMeet`, `MinimumGameTime` 50) `GameSettings.cs:51-71` [C# ok] →web: **partial** (only 60% stars + last-standing; no settings UI, no multi-target victory)
-- Starting conditions: PRT-based starting tech (`GameInitialiser.ProcessPrimaryTraits`), starting fleets per PRT, accelerated-BBS start, leftover advantage points → surface minerals/pop/factories (`HomeStarLeftoverpointsAdjuster`) [C# ok] →web: **partial** (fixed scout+colony+starbase; no PRT tech grants, no leftover-points spend)
+- Starting conditions: PRT-based starting tech (`GameInitialiser.ProcessPrimaryTraits`), starting fleets per PRT, accelerated-BBS start, leftover advantage points → surface minerals/pop/factories (`HomeStarLeftoverpointsAdjuster`) [C# ok] →web: done (PRT starting tech + IFE/ExtraTech grants; per-PRT starting fleets from the canonical table left as C# comments; leftover-points spend on all 5 targets; accelerated-BBS flag on game creation; starting pop 25000/100000 with LSP ×0.7; homeworld minerals 300-500 rng, concentration 50-100, hab at race optimum. Still C#-comment-only stubs: PP/IT second planet + stargates, CA orbital terraformer)
 
 ## 2. Planets and economy
 
 - Population growth: growth rate, hab-value scaling, crowding factor 16/9, max pop by PRT (HE 0.5×, JOAT 1.2×, OBRM 1.1×) [C# ok] →web: done
 - Resources: colonists/factories rate, `GetResourceRate/GetFutureResourceRate`, factories-in-use vs operable [C# ok] →web: done
 - Mining: `GetMiningRate(concentration)`, concentration depletion [C# ok] →web: done
-- Defenses: type-graded (SDI/Missile/Laser/Planet/Neutron, base coverage 0.0099→0.0379), pop/building/invasion/smart-bomb coverage `Defenses.cs` [C# ok] →web: done (bombing); **missing**: defense *type* research upgrade path, invasion coverage use
-- Planetary scanner types (`ScannerType` string, pen-scan TODO in C#) [C# stub-ish] →web: partial (fixed Viewer 50)
-- Terraforming: `TerraformProductionUnit` **[C# stub - all NotImplementedException]**; Gravity/Temp/Rad ±N components exist in components.xml; `OriginalGravity/Temperature/Radiation` fields for retro-bomb reversal →web: **missing** (production item + hab mod + CA instaforming + Retro Bomb)
-- Mineral alchemy: `AlchemyProductionUnit` [C# ok-ish] →web: **missing**
-- Remote mining: Robot Miner hulls/components (7+ components, `Mining Robot` type; miner hulls Midget→Ultra) - no server step found [C# stub] →web: **missing**
+- Defenses: type-graded (SDI/Missile/Laser/Planet/Neutron, base coverage 0.0099→0.0379), pop/building/invasion/smart-bomb coverage `Defenses.cs` [C# ok] →web: done (`backend/core/defenses.py` - exact `Defenses.cs:58-85` port incl. invasion + summary coverage; defense type auto-upgrades on Energy level-up per the components.xml ladder [canonical - C# never upgrades `DefenseType` past the homeworld's SDI, `StarMapInitialiser.cs:463` TODO]; colonize/invade assign the owner's best researched type; invasion consumes `InvasionCoverage` per the `InvadeTask.cs:143-243` port incl. WM/IS bonuses, 100-colonist floor, tie-wipe, queue clear, starbase cancel; XML race restrictions honored - AR none, WM capped at Missile Battery)
+- Planetary scanner types (`ScannerType` string, pen-scan TODO in C#) [C# stub-ish] →web: done (research level-up sweeps every owned star to the best usable planetary scanner with scan_range + pen_scan_range following the type, per `StarUpdateStep.cs:200-236` TechLevelUp with the canonical fixes - best-type selection, NAS/AR filtering, ranges updated; homeworld starts at the best type the starting tech unlocks; star pen scan uses the type's PenetratingScan [canonical fix of the `ScanStep.cs:106` stub], so Viewers/Scopers no longer deep-scan at a distance)
+- Terraforming: `TerraformProductionUnit` **[C# stub - all NotImplementedException]**; Gravity/Temp/Rad ±N components exist in components.xml; `OriginalGravity/Temperature/Radiation` fields for retro-bomb reversal →web: done (canonical rules in `backend/services/terraforming.py` - Terraform production item shifts the worst variable 1 click per 100 res toward the race optimum, 70 res for TT via Total components, gated by best terraform component tech and capped at original ±max; original_* seeded at galaxy gen; CA instaforming 1 free click/variable/year; Retro Bomb reverses toward original in the bombing step)
+- Mineral alchemy: `AlchemyProductionUnit` **[C# stub - all NotImplementedException]** →web: done (canonical rules in `star_update_step.py` - Alchemy queue item: 100 res → 1 kT of each surface mineral, 25 res with the MA LRT per `GameInitialiser.cs:315-318`; zero mineral cost, partial progress carries)
+- Remote mining: Robot Miner hulls/components (7+ components, `Mining Robot` type; miner hulls Midget→Ultra) - no server step found [C# stub] →web: done (canonical rules in `backend/server/turn_steps/remote_mine_step.py` - RemoteMine waypoint task at an UNINHABITED star extracts int(robot_rate x concentration/100) per mineral onto the planet surface, depletes concentration with the planetary rule `Star.cs:443-476`, runs before StarUpdateStep; `ShipDesign.mining_rate` sums the `Mining Robot` property, ARM/OBRM hull gating enforced in the design builder; freighters load the ore via cargo transfer at NOBODY-owned stars)
 
 ## 3. Production queue
 
-- Order types: Factory, Mine, Defense, Ship, Starbase, Alchemy, Terraform, NoOp units; partial-build cost carry (`RemainingCost`); **auto-build flag** with skip logic (`IsAutoBuild`, `IsSkipped`) `ProductionOrder.cs` [C# ok exc. terraform] →web: partial (factory/mine/defense/ship/starbase with partial progress; **missing**: alchemy, terraform, auto-build items, queue reorder UI)
+- Order types: Factory, Mine, Defense, Ship, Starbase, Alchemy, Terraform, NoOp units; partial-build cost carry (`RemainingCost`); **auto-build flag** with skip logic (`IsAutoBuild`, `IsSkipped`) `ProductionOrder.cs` [C# ok exc. terraform] →web: done (factory/mine/defense/ship/starbase/terraform/alchemy with partial progress; per-unit `IsSkipped` ported per type incl. operable factory/mine caps and MaxDefenses; auto-build orders skip without blocking and persist, non-auto skipped orders block the queue per `Manufacture.cs:56-61`; queue reorder via web `Move` command + dialog up/down buttons; CF factory germanium 3 per `Race.cs:275-279`; deviation: web banks energy-only partial progress, C# banks per-resource `RemainingCost`)
 - `OnlyLeftover` star research flag [C# ok] →web: done (flag exists)
 
 ## 4. Research
 
-- 6 fields × 26 levels, budget %, allocated + leftover research contribution, tech-level-up messages, next-cost formula, race research-cost multipliers (50/100/175%) [C# ok] →web: partial (**missing**: race cost multipliers, spillover rules, "start at level 3" LRT)
+- 6 fields × 26 levels, budget %, allocated + leftover research contribution, tech-level-up messages, next-cost formula, race research-cost multipliers (50/100/175%) [C# ok] →web: done (exact `Research.cs` cost port with per-field race multipliers, cumulative-bank spillover, leftover contribution from every star, "start at level 3" ExtraTech grant)
 
 ## 5. Race design
 
-- Full wizard params: 3 hab tolerances (min/max/immune), growth 3-20, pop/resource, factory cost/output/operable (+CF germanium discount), mine cost/rate/operable, research costs, PRT (10) + LRTs (14), leftover-point target [C# ok] →web: **missing server-side** (frontend wizard exists, localStorage only)
-- Advantage-point budget: start 1650, /3 at end; PRT costs (HE 40… JOAT -66), LRT costs (IFE -235… NAS 325), hab integration with TT correction, growth-rate curve, factory/mine piecewise penalties, science cost table `RaceAdvantagePointCalculator.cs:204-394` [C# ok] →web: **missing**
-- PRT effects: only starting-tech implemented in C#; LRT effects: only IFE fuel ×0.85, CE 10% engine-fail, ExtraTech [C# mostly stub] →web: same subset (IFE formula ported, CE ported)
+- Full wizard params: 3 hab tolerances (min/max/immune), growth 3-20, pop/resource, factory cost/output/operable (+CF germanium discount), mine cost/rate/operable, research costs, PRT (10) + LRTs (14), leftover-point target [C# ok] →web: **partial server-side** (hab/growth/economy/PRT/LRTs incl. immunity flags, research costs, start-at-level-3 and leftover-point target mapped in `_race_from_wizard`; leftover budget computed server-side from the ported advantage-point calculator, clamped 0-50; **missing**: CF germanium discount)
+- Advantage-point budget: start 1650, /3 at end; PRT costs (HE 40… JOAT -66), LRT costs (IFE -235… NAS 325), hab integration with TT correction, growth-rate curve, factory/mine piecewise penalties, science cost table `RaceAdvantagePointCalculator.cs:204-394` [C# ok] →web: done (exact port in `backend/services/race_points.py`; `POST /api/races/validate` scores wizard payloads; over-budget races rejected at game creation with 422; wizard footer shows the live server-computed total)
+- PRT effects: only starting-tech implemented in C#; LRT effects: only IFE fuel ×0.85, CE 10% engine-fail, ExtraTech [C# mostly stub] →web: same subset (IFE fuel formula + starting tech ported, CE ported, ExtraTech ported)
 
 ## 6. Ship design and components
 
@@ -45,13 +45,13 @@ Status legend: **[C# ok]** implemented in reference / **[C# stub]** present but 
 ## 7. Fleets and movement
 
 - warp² ly/yr, multi-leg with `availableTime`, fuel = (mass+cargo)×table×warp²/200, IFE ×0.85, warp-1 fuel generation, out-of-fuel drop to free-warp, ram-scoop coasting [C# ok] →web: **partial - live pipeline uses simplified fuel (mass×warp/200/ly) and ignores engine fuel tables; the faithful `Fleet.move()` port exists but is bypassed** - acceptance-critical
-- Fleet ops: split/merge (overflow cargo spill), rename command, scrap (waypoint + at-starbase mineral recovery %), refuel at starbase, repair rates (0/1/2/3/5/8/20% by situation `RegenerateFleet`) [C# ok] →web: split/merge/rename/scrap done; repair/refuel partial (flat rules)
-- Cargo transfer task (load/unload/set amounts, waypoint-based) + immediate dialog [C# ok] →web: immediate transfer only; **missing**: waypoint cargo task execution
+- Fleet ops: split/merge (overflow cargo spill), rename command, scrap (waypoint + at-starbase mineral recovery %), refuel at starbase, repair rates (0/1/2/3/5/8/20% by situation `RegenerateFleet`) [C# ok] →web: split/merge/rename/scrap done; repair/refuel done (situational RegenerateFleet table + heals-others bonus + starbase self-repair)
+- Cargo transfer task (load/unload/set amounts, waypoint-based) + immediate dialog [C# ok] →web: done - waypoint CargoTask executes at waypoint zero (SplitFleetStep) and on arrival (_update_fleet), exact CargoTask.cs:145-228 port with defensive server clamps + canonical SET mode; colonists included (covers own-world pop transfer); foreign-star colonist unload delegates to InvadeTask per CargoTask.cs:159-173; fleet↔fleet immediate transfer incl. fuel via POST /fleets/{key}/transfer (client-side only in C#, FleetDetail.cs:766-786)
 - Salvage from scrapping/battles decaying 30%/yr →web: done (cleanup_fleets)
 
 ## 8. Waypoint tasks
 
-- NoTask, CargoTask, ColoniseTask, InvadeTask (1.1 attacker bonus, defense coverage 0.75×pop-coverage), LayMinesTask, ScrapTask, SplitMergeTask [C# ok exc. laying stub] →web: all present; invade ported; **verify invasion defense coverage + troop math against InvadeTask.cs:162**
+- NoTask, CargoTask, ColoniseTask, InvadeTask (1.1 attacker bonus, defense coverage 0.75×pop-coverage), LayMinesTask, ScrapTask, SplitMergeTask [C# ok exc. laying stub] →web: all present and executing (CargoTask at wp0/on arrival, §7); invade is an exact `InvadeTask.cs:66-243` port (troops-aboard/own-planet/unowned/starbase pre-checks, invasion coverage on troops landed, WM ×1.5 / IS ×2.0 bonuses, 100-colonist floor, ownership transfer with queue clear, mutual-annihilation wipe; Friend/Neutral cancel awaits Wave 4 relations)
 
 ## 9. Minefields
 
@@ -85,7 +85,7 @@ Status legend: **[C# ok]** implemented in reference / **[C# stub]** present but 
 
 ## 15. Client features (parity targets)
 
-- Star map (scanner overlays, minefield circles, paths), planet/fleet detail+summary panels, production dialog (auto-build items, % edits), research dialog, ship design dialog + Design Manager, battle plans dialog, player relations dialog, cargo transfer dialog (fleet↔fleet too - web is fleet↔planet only), split fleets dialog, rename dialog, reports: planets/fleets/battles/score, battle viewer replay, race designer, launcher/new-game wizard [C# ok] →web: most done; **missing**: fleet↔fleet cargo, battle plans UI, relations UI, score report
+- Star map (scanner overlays, minefield circles, paths), planet/fleet detail+summary panels, production dialog (auto-build items, % edits), research dialog, ship design dialog + Design Manager, battle plans dialog, player relations dialog, cargo transfer dialog (fleet↔fleet too), split fleets dialog, rename dialog, reports: planets/fleets/battles/score, battle viewer replay, race designer, launcher/new-game wizard [C# ok] →web: most done incl. fleet↔fleet cargo; **missing**: battle plans UI, relations UI, score report
 - Multi-fleet same-location picker, waypoint edit (insert/modify legs, per-leg warp incl. gate/warp-10) →web: partial (append/delete only)
 
 ## 16. AI and turn model
@@ -95,11 +95,15 @@ Status legend: **[C# ok]** implemented in reference / **[C# stub]** present but 
 
 ## 17. Absent in the C# reference (canonical Stars! - implement from rules if wanted)
 
-- Wormholes (done in web), mineral packets and mass drivers (web has a `_move_mineral_packets` remnant - flesh out or cut), mystery trader (only a TODO comment), random events (comet strikes etc.), tachyon detection, mine sweeping, pop transfers between own worlds via waypoints, diplomacy beyond 3-state relations
+- Wormholes (done in web), mineral packets and mass drivers (web has a `_move_mineral_packets` remnant - flesh out or cut), mystery trader (only a TODO comment), random events (comet strikes etc.), tachyon detection, mine sweeping, pop transfers between own worlds via waypoints (done in web - waypoint CargoTask colonist amounts), diplomacy beyond 3-state relations
 
 ## 18. Web-only extensions (regression-test targets)
 
 - Dust nebulae slow ships (≤40%) and dampen scanners (≤50%), emission/filament nebulae visual-only, galactic storms (drift, hull damage, ship loss), proxy-free self-locating client
+- Galactic storm hazards (user directive 2026-07-13): warp risk - moving through a storm above a safe warp gives an intensity-scaled mishap chance (extra hull damage, fleet stopped in the storm, minefield-strike analogue); detection limits - scanner range dampened for scans into/out of a storm, stronger than the dust penalty, intensity-scaled; colonist attrition - ships carrying colonists inside a storm lose an intensity-scaled fraction per turn; all with Storm messages, unit tests and a seeded e2e scenario →web: **missing** (scheduled Wave 3)
+- Galactic storm shape and presentation (user directive 2026-07-13): storms are non-circular - an irregular blob boundary (radial-noise perimeter) rendered as a dashed red outline surrounding the storm; intensity is a radial field ramping up from the boundary to the core and back down (all gameplay effects - damage, warp risk, detection, colonist attrition - scale with LOCAL intensity at the fleet position, not a uniform value); storms preferentially spawn inside dust/emission nebulae; map hover tooltip explains the phenomenon and links to its encyclopedia entry →web: **missing** (scheduled Wave 3)
+- In-game encyclopedia (user directive 2026-07-13): Help menu opens an Encyclopedia dialog with entries for spatial phenomena (dust nebulae, emission nebulae, galactic storms, wormholes, minefields) describing gameplay effects with numbers; map tooltips for phenomena link into the matching entry →web: **missing** (scheduled Wave 3)
+- Zoom-out clamp (user directive 2026-07-13): the galaxy map cannot zoom out beyond ~20% over the game board best-fit (min zoom = fit-to-board zoom / 1.2); zoom-in behavior unchanged →web: **missing** (scheduled Wave 3)
 
 ## Priority gaps
 
@@ -108,7 +112,5 @@ Biggest fidelity deltas surfaced by the scout:
 1. Fuel-table movement not wired into live pipeline (§7) - acceptance-critical
 2. Player relations + battle plans
 3. Score + full victory conditions
-4. Race wizard / advantage points server-side
-5. Cloaking effect on detection
-6. Terraforming + alchemy + auto-build production items
-7. Fleet↔fleet cargo transfer
+4. Cloaking effect on detection
+5. Auto-build production items (terraforming and alchemy done)

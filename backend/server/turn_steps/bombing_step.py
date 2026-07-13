@@ -10,47 +10,13 @@ from typing import List, Optional, TYPE_CHECKING
 
 from .base import ITurnStep
 from ...core.commands.base import Message
+# Coverage math lives in core.defenses (shared with invasion and the
+# API); re-exported here for existing importers
+from ...core.defenses import DEFENSE_BASE_COVERAGE, compute_defense_coverage
 from ...core.globals import NOBODY
 
 if TYPE_CHECKING:
     from ..server_data import ServerData
-
-
-# Base defense coverage per installed defense unit, by defense type.
-# Ported from Defenses.cs ComputeDefenseCoverage (lines 46-85).
-DEFENSE_BASE_COVERAGE = {
-    "SDI": 0.0099,
-    "Missile Battery": 0.0199,
-    "Laser Battery": 0.0239,
-    "Planetary Shield": 0.0299,
-    "Neutron Shield": 0.0379,
-    "None": 0.0,
-}
-
-
-def compute_defense_coverage(star) -> dict:
-    """
-    Compute a star's defense coverage factors.
-
-    Ported from Defenses.cs:
-        PopulationCoverage = 1 - (1 - base)^defenses
-        BuildingCoverage   = PopulationCoverage * 0.5
-        SmartBombCoverage  uses half the base level
-    """
-    defenses = min(100, getattr(star, 'defenses', 0))
-    defense_type = getattr(star, 'defense_type', "SDI")
-    base = DEFENSE_BASE_COVERAGE.get(defense_type, 0.0099)
-
-    if defenses <= 0 or base <= 0:
-        return {"population": 0.0, "buildings": 0.0, "smart": 0.0}
-
-    population = 1.0 - (1.0 - base) ** defenses
-    smart = 1.0 - (1.0 - base * 0.5) ** defenses
-    return {
-        "population": population,
-        "buildings": population * 0.5,
-        "smart": smart,
-    }
 
 
 class BombingStep(ITurnStep):
@@ -141,11 +107,32 @@ class BombingStep(ITurnStep):
                 smart[0] += s.pop_kill * token.quantity
         return conv, smart
 
+    def _fleet_retro_points(self, fleet, server_state: 'ServerData') -> int:
+        """
+        Retro Bomb points: the fleet's summed negative Orbital Adjuster
+        value (Retro Bomb carries "Orbital Adjuster" Value -1,
+        components.xml; SimpleDesign lacks the attribute - default 0).
+        """
+        empire = server_state.all_empires.get(fleet.owner)
+        designs = empire.designs if empire else {}
+
+        points = 0
+        for token in fleet.tokens.values():
+            design = designs.get(token.design_key)
+            if design is None:
+                continue
+            adjuster = getattr(design, 'orbital_adjuster', 0)
+            if adjuster < 0:
+                points += -adjuster * token.quantity
+        return points
+
     def _bomb(self, fleet, star, server_state: 'ServerData') -> List[Message]:
         """Perform bombing. Ported from Bombing.cs Bomb()."""
         messages: List[Message] = []
         coverage = compute_defense_coverage(star)
         conv, smart = self._fleet_bombs(fleet, server_state)
+        retro_points = self._fleet_retro_points(fleet, server_state)
+        defender = star.owner
 
         dead = 0
         # Conventional bombs: kill % reduced by population coverage,
@@ -164,9 +151,44 @@ class BombingStep(ITurnStep):
                         * (1.0 - coverage["smart"]))
 
         dead = min(dead, star.colonists)
-        if dead <= 0 and conv[1] <= 0:
+        if dead <= 0 and conv[1] <= 0 and retro_points <= 0:
             return messages
 
+        if dead > 0 or conv[1] > 0:
+            messages.extend(
+                self._apply_kill_bombing(fleet, star, coverage, conv, dead))
+
+        # Retro Bombs (canonical - C# has no implementation): each
+        # point moves the environment variable with the largest
+        # |current - original| 1 click back toward its original value;
+        # no population or installation damage, and defenses do not
+        # reduce it (it is not a kill weapon)
+        if retro_points > 0:
+            from ...services.terraforming import retro_terraform_one_point
+            moved = 0
+            for _ in range(retro_points):
+                if retro_terraform_one_point(star) is None:
+                    break
+                moved += 1
+            if moved > 0:
+                messages.append(Message(
+                    audience=fleet.owner,
+                    text=f"{fleet.name} has un-terraformed {star.name} "
+                         f"back toward its original environment.",
+                    message_type="Bombing", fleet_key=fleet.key))
+                messages.append(Message(
+                    audience=defender,
+                    text=f"Enemy fleet {fleet.name} has un-terraformed "
+                         f"{star.name} back toward its original "
+                         f"environment.",
+                    message_type="Bombing"))
+
+        return messages
+
+    def _apply_kill_bombing(self, fleet, star, coverage, conv,
+                            dead: int) -> List[Message]:
+        """Apply population/installation losses and report them."""
+        messages: List[Message] = []
         star.colonists -= dead
 
         # Installations: same damage percent applied to defenses,

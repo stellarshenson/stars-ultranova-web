@@ -30,6 +30,9 @@ const RaceWizard = {
         mineNumberPer10k: 10,
         colonistsPerResource: 1000,
         canOperateOtherRaces: false,
+        // Where leftover advantage points are spent on the homeworld
+        // (Race.cs LeftoverPointTarget, default "Surface minerals")
+        leftoverPointTarget: 'Surface minerals',
 
         // Environment settings
         gravityMin: 15,
@@ -52,41 +55,49 @@ const RaceWizard = {
             electronics: 'normal',
             biotechnology: 'normal'
         },
-        startAtLevel3: true
+        startAtLevel3: false
     },
 
-    // Advantage points (must be >= 0 to save)
-    advantagePoints: 25,
+    // Advantage points (must be >= 0 to save); null until the server
+    // has scored the current design
+    advantagePoints: null,
 
-    // Trait data with point costs
+    // Points still pending a server response
+    _validateTimer: null,
+    _validateSeq: 0,
+
+    // Trait data with point gains/costs: raw C# table value / 3
+    // (RaceAdvantagePointCalculator.cs:26-52), gain convention -
+    // positive means the trait gives points back. The footer total is
+    // the authoritative server-computed value.
     primaryTraits: {
-        HE: { name: 'Hyper Expansion', points: 0, description: 'Faster population growth, cheaper colonizers' },
-        SS: { name: 'Super Stealth', points: -66, description: 'Better cloaking and stealth abilities' },
-        WM: { name: 'War Monger', points: -12, description: 'Better weapons and combat bonuses' },
-        CA: { name: 'Claim Adjuster', points: 16, description: 'Terraform planets for other races' },
-        IS: { name: 'Inner Strength', points: 36, description: 'Natural defenses and regeneration' },
-        SD: { name: 'Space Demolition', points: -8, description: 'Expert at minelaying and bombs' },
-        PP: { name: 'Packet Physics', points: -5, description: 'Efficient mass drivers and packets' },
-        IT: { name: 'Interstellar Traveler', points: 0, description: 'Stargates and wormhole specialists' },
-        AR: { name: 'Alternate Reality', points: -12, description: 'Orbital habitats instead of planets' },
-        JOAT: { name: 'Jack of All Trades', points: 66, description: 'Balanced abilities in all areas' }
+        HE: { name: 'Hyper Expansion', points: -13, description: 'Faster population growth, cheaper colonizers' },
+        SS: { name: 'Super Stealth', points: -31, description: 'Better cloaking and stealth abilities' },
+        WM: { name: 'War Monger', points: -15, description: 'Better weapons and combat bonuses' },
+        CA: { name: 'Claim Adjuster', points: -3, description: 'Terraform planets for other races' },
+        IS: { name: 'Inner Strength', points: 33, description: 'Natural defenses and regeneration' },
+        SD: { name: 'Space Demolition', points: 50, description: 'Expert at minelaying and bombs' },
+        PP: { name: 'Packet Physics', points: -40, description: 'Efficient mass drivers and packets' },
+        IT: { name: 'Interstellar Traveler', points: -60, description: 'Stargates and wormhole specialists' },
+        AR: { name: 'Alternate Reality', points: -30, description: 'Orbital habitats instead of planets' },
+        JOAT: { name: 'Jack of All Trades', points: 22, description: 'Balanced abilities in all areas' }
     },
 
     lesserTraits: {
-        IFE: { name: 'Improved Fuel Efficiency', points: -44, description: 'Ships use less fuel' },
-        TT: { name: 'Total Terraforming', points: -53, description: '30% terraforming ability' },
-        ARM: { name: 'Advanced Remote Mining', points: -49, description: 'Better remote mining robots' },
-        ISB: { name: 'Improved Starbases', points: -26, description: 'Cheaper, better starbases' },
-        GR: { name: 'Generalized Research', points: -15, description: 'Research applies to all fields' },
-        UR: { name: 'Ultimate Recycling', points: -10, description: 'Recover more from scrapped ships' },
-        MA: { name: 'Mineral Alchemy', points: -17, description: 'Convert minerals between types' },
+        IFE: { name: 'Improved Fuel Efficiency', points: -78, description: 'Ships use less fuel' },
+        TT: { name: 'Total Terraforming', points: -8, description: '30% terraforming ability' },
+        ARM: { name: 'Advanced Remote Mining', points: -53, description: 'Better remote mining robots' },
+        ISB: { name: 'Improved Starbases', points: -67, description: 'Cheaper, better starbases' },
+        GR: { name: 'Generalized Research', points: 13, description: 'Research applies to all fields' },
+        UR: { name: 'Ultimate Recycling', points: -80, description: 'Recover more from scrapped ships' },
+        MA: { name: 'Mineral Alchemy', points: -51, description: 'Convert minerals between types' },
         NRSE: { name: 'No Ram Scoop Engines', points: 53, description: 'Cannot use ram scoop engines' },
-        OBRM: { name: 'Only Basic Remote Mining', points: 35, description: 'Limited remote mining tech' },
-        CE: { name: 'Cheap Engines', points: -30, description: 'Engines cost less to build' },
-        NAS: { name: 'No Advanced Scanners', points: 35, description: 'Cannot use advanced scanners' },
-        LSP: { name: 'Low Starting Population', points: 63, description: 'Start with fewer colonists' },
-        BET: { name: 'Bleeding Edge Technology', points: -26, description: 'New tech is more powerful but expensive' },
-        RS: { name: 'Regenerating Shields', points: -18, description: 'Shields regenerate in combat' }
+        OBRM: { name: 'Only Basic Remote Mining', points: 85, description: 'Limited remote mining tech' },
+        CE: { name: 'Cheap Engines', points: 80, description: 'Engines cost less to build' },
+        NAS: { name: 'No Advanced Scanners', points: 108, description: 'Cannot use advanced scanners' },
+        LSP: { name: 'Low Starting Population', points: 60, description: 'Start with fewer colonists' },
+        BET: { name: 'Bleeding Edge Technology', points: 23, description: 'New tech is more powerful but expensive' },
+        RS: { name: 'Regenerating Shields', points: 10, description: 'Shields regenerate in combat' }
     },
 
     /**
@@ -153,6 +164,7 @@ const RaceWizard = {
             mineNumberPer10k: 10,
             colonistsPerResource: 1000,
             canOperateOtherRaces: false,
+            leftoverPointTarget: 'Surface minerals',
             gravityMin: 15,
             gravityMax: 85,
             temperatureMin: 15,
@@ -171,7 +183,7 @@ const RaceWizard = {
                 electronics: 'normal',
                 biotechnology: 'normal'
             },
-            startAtLevel3: true
+            startAtLevel3: false
         };
     },
 
@@ -196,13 +208,13 @@ const RaceWizard = {
             </div>
 
             <div class="race-wizard-footer">
-                <div class="advantage-points ${this.advantagePoints >= 0 ? 'valid' : 'invalid'}">
-                    Advantage Points: <strong>${this.advantagePoints}</strong>
+                <div class="advantage-points ${this.advantagePoints !== null && this.advantagePoints < 0 ? 'invalid' : 'valid'}">
+                    Advantage Points: <strong>${this.advantagePoints === null ? '...' : this.advantagePoints}</strong>
                 </div>
                 <div class="wizard-buttons">
                     <button class="btn-small" onclick="RaceWizard.prevTab()" ${this.currentTab === 0 ? 'disabled' : ''}>Previous</button>
                     <button class="btn-small" onclick="RaceWizard.nextTab()" ${this.currentTab === this.tabs.length - 1 ? 'disabled' : ''}>Next</button>
-                    <button class="btn-small btn-primary" onclick="RaceWizard.saveRace()" ${this.advantagePoints < 0 ? 'disabled' : ''}>Save Race</button>
+                    <button class="btn-small btn-primary" onclick="RaceWizard.saveRace()" ${this.advantagePoints === null || this.advantagePoints < 0 ? 'disabled' : ''}>Save Race</button>
                     <button class="btn-small" onclick="RaceWizard.hide()">Cancel</button>
                 </div>
             </div>
@@ -389,6 +401,21 @@ const RaceWizard = {
                            onchange="RaceWizard.updateField('canOperateOtherRaces', this.checked)">
                     <span>Colonists can operate other races' factories and mines</span>
                 </label>
+            </div>
+
+            <div class="wizard-section">
+                <h3>Leftover Advantage Points</h3>
+                <p class="section-desc">Spend unused advantage points on your homeworld at game start.</p>
+
+                <div class="form-group">
+                    <select onchange="RaceWizard.updateField('leftoverPointTarget', this.value)">
+                        ${['Surface minerals', 'Mineral concentration', 'Mines', 'Factories', 'Defenses'].map(target => `
+                            <option value="${target}" ${this.raceData.leftoverPointTarget === target ? 'selected' : ''}>
+                                ${target}
+                            </option>
+                        `).join('')}
+                    </select>
+                </div>
             </div>
         `;
     },
@@ -609,66 +636,32 @@ const RaceWizard = {
     },
 
     /**
-     * Calculate advantage points.
+     * Recalculate advantage points via the server's exact port of the
+     * C# RaceAdvantagePointCalculator (POST /api/races/validate),
+     * debounced so slider drags do not flood the server. The result
+     * lands asynchronously in updatePointsDisplay, mirroring the C#
+     * race designer's live "Advantage Points:" label
+     * (RaceDesigner.cs ShowAvailablePoints, lines 1566-1571).
      */
     calculatePoints() {
-        let points = 25;  // Base points
+        this.advantagePoints = null;
+        clearTimeout(this._validateTimer);
+        this._validateTimer = setTimeout(() => this.fetchPoints(), 150);
+    },
 
-        // PRT cost
-        const prtData = this.primaryTraits[this.raceData.prt];
-        if (prtData) {
-            points += prtData.points;
+    /**
+     * Fetch the authoritative point total from the server.
+     */
+    async fetchPoints() {
+        const seq = ++this._validateSeq;
+        try {
+            const result = await ApiClient.validateRace(this.raceData);
+            if (seq !== this._validateSeq) return;  // stale response
+            this.advantagePoints = result.points;
+            this.updatePointsDisplay();
+        } catch (error) {
+            // Server unreachable - leave the total pending
         }
-
-        // LRT costs
-        for (const lrt of this.raceData.lrts) {
-            const lrtData = this.lesserTraits[lrt];
-            if (lrtData) {
-                points += lrtData.points;
-            }
-        }
-
-        // Production costs (simplified)
-        // Cheaper factories/mines cost points
-        points -= (10 - this.raceData.factoryCost) * 2;
-        points -= (10 - this.raceData.factoryEfficiency) * 3;
-        points -= (this.raceData.factoryNumberPer10k - 10) * 2;
-        points -= (5 - this.raceData.mineCost) * 2;
-        points -= (10 - this.raceData.mineEfficiency) * 2;
-        points -= (this.raceData.mineNumberPer10k - 10) * 2;
-        points -= (1000 - this.raceData.colonistsPerResource) / 100;
-
-        // Environment costs
-        // Wider habitat ranges cost points
-        const gravRange = this.raceData.immuneGravity ? 100 : (this.raceData.gravityMax - this.raceData.gravityMin);
-        const tempRange = this.raceData.immuneTemperature ? 100 : (this.raceData.temperatureMax - this.raceData.temperatureMin);
-        const radRange = this.raceData.immuneRadiation ? 100 : (this.raceData.radiationMax - this.raceData.radiationMin);
-
-        points -= (gravRange - 70) / 5;
-        points -= (tempRange - 70) / 5;
-        points -= (radRange - 70) / 5;
-
-        // Immunity is expensive
-        if (this.raceData.immuneGravity) points -= 20;
-        if (this.raceData.immuneTemperature) points -= 20;
-        if (this.raceData.immuneRadiation) points -= 20;
-
-        // Growth rate cost
-        points -= (this.raceData.growthRate - 15) * 3;
-
-        // Research costs
-        const researchCostMod = { cheap: -15, normal: 0, expensive: 10 };
-        for (const field of Object.keys(this.raceData.researchCosts)) {
-            const cost = this.raceData.researchCosts[field];
-            points += researchCostMod[cost] || 0;
-        }
-
-        // Starting tech cost
-        if (this.raceData.startAtLevel3) {
-            points -= 10;
-        }
-
-        this.advantagePoints = Math.round(points);
     },
 
     /**
@@ -677,17 +670,19 @@ const RaceWizard = {
     updatePointsDisplay() {
         const pointsEl = this.container.querySelector('.advantage-points strong');
         const containerEl = this.container.querySelector('.advantage-points');
+        const pending = this.advantagePoints === null;
+        const invalid = !pending && this.advantagePoints < 0;
         if (pointsEl) {
-            pointsEl.textContent = this.advantagePoints;
+            pointsEl.textContent = pending ? '...' : this.advantagePoints;
         }
         if (containerEl) {
-            containerEl.classList.toggle('valid', this.advantagePoints >= 0);
-            containerEl.classList.toggle('invalid', this.advantagePoints < 0);
+            containerEl.classList.toggle('valid', !invalid);
+            containerEl.classList.toggle('invalid', invalid);
         }
         // Update save button
         const saveBtn = this.container.querySelector('.btn-primary');
         if (saveBtn) {
-            saveBtn.disabled = this.advantagePoints < 0;
+            saveBtn.disabled = pending || invalid;
         }
     },
 
@@ -705,7 +700,9 @@ const RaceWizard = {
             errors.push('Plural name is required');
         }
 
-        if (this.advantagePoints < 0) {
+        if (this.advantagePoints === null) {
+            errors.push('Advantage points are still being calculated');
+        } else if (this.advantagePoints < 0) {
             errors.push(`You are ${-this.advantagePoints} points over budget`);
         }
 
@@ -727,6 +724,9 @@ const RaceWizard = {
             const races = JSON.parse(localStorage.getItem('customRaces') || '[]');
             races.push({
                 ...this.raceData,
+                // Display-only; the server recomputes the budget from
+                // its own calculator at game creation (create_game)
+                advantagePoints: this.advantagePoints,
                 id: Date.now(),
                 created: new Date().toISOString()
             });

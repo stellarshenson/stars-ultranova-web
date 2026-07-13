@@ -24,6 +24,8 @@ class TestCommandMode:
         assert CommandMode.EDIT.value == "Edit"
         assert CommandMode.DELETE.value == "Delete"
         assert CommandMode.INSERT.value == "Insert"
+        # Web addition for production queue reorder (no C# equivalent)
+        assert CommandMode.MOVE.value == "Move"
 
 
 class TestMessage:
@@ -258,6 +260,81 @@ class TestResearchCommand:
         cmd2 = ResearchCommand.from_dict(data)
         assert cmd2.budget == 75
         assert cmd2.topics.levels["Construction"] == 1
+
+
+class TestProductionCommand:
+    """Tests for ProductionCommand."""
+
+    @pytest.fixture
+    def empire_with_star(self):
+        """Create empire owning a star with a three-item queue."""
+        from backend.core.game_objects.star import Star
+        from backend.core.production.production_queue import ProductionType
+
+        empire = EmpireData(id=1)
+        star = Star()
+        star.name = "Homeworld"
+        star.owner = 1
+        for name, ptype in (("Factory", ProductionType.FACTORY),
+                            ("Mine", ProductionType.MINE),
+                            ("Defense", ProductionType.DEFENSE)):
+            star.manufacturing_queue.add(ProductionOrder(
+                production_type=ptype, quantity=1, name=name))
+        empire.owned_stars["Homeworld"] = star
+        return empire
+
+    def test_command_move_mode(self, empire_with_star):
+        """Test Move reorders the queue (web deviation - C# reorders
+        via two Edit commands, ProductionDialog.cs:365-406)."""
+        cmd = ProductionCommand(mode=CommandMode.MOVE,
+                                star_key="Homeworld", index=2, to_index=0)
+        valid, msg = cmd.is_valid(empire_with_star)
+        assert valid is True
+
+        result = cmd.apply_to_state(empire_with_star)
+        assert result is None
+        queue = empire_with_star.owned_stars["Homeworld"].manufacturing_queue
+        assert [o.name for o in queue.orders] == [
+            "Defense", "Factory", "Mine"]
+
+    def test_command_move_out_of_range(self, empire_with_star):
+        """Test Move with out-of-range indices fails validation."""
+        for index, to_index in ((3, 0), (0, 3), (-1, 0), (0, -1)):
+            cmd = ProductionCommand(mode=CommandMode.MOVE,
+                                    star_key="Homeworld",
+                                    index=index, to_index=to_index)
+            valid, msg = cmd.is_valid(empire_with_star)
+            assert valid is False
+            assert msg is not None
+
+    def test_command_move_serialization_roundtrip(self):
+        """Test Move to_dict/from_dict carries to_index."""
+        cmd = ProductionCommand(mode=CommandMode.MOVE,
+                                star_key="Homeworld", index=1, to_index=2)
+        cmd2 = ProductionCommand.from_dict(cmd.to_dict())
+        assert cmd2.mode == CommandMode.MOVE
+        assert cmd2.index == 1
+        assert cmd2.to_index == 2
+
+    def test_command_add_rejects_prebuilt(self, empire_with_star):
+        """Test Add rejects orders arriving with banked progress
+        (ProductionCommand.cs:140-143 'Don't add cheated pre-built
+        units')."""
+        from backend.core.production.production_queue import ProductionType
+
+        order = ProductionOrder(production_type=ProductionType.FACTORY,
+                                quantity=1, name="Factory",
+                                partial_resources_spent=9)
+        cmd = ProductionCommand(mode=CommandMode.ADD,
+                                production_order=order,
+                                star_key="Homeworld", index=0)
+        valid, msg = cmd.is_valid(empire_with_star)
+        assert valid is False
+        assert "pre-built" in msg.text
+
+        order.partial_resources_spent = 0
+        valid, msg = cmd.is_valid(empire_with_star)
+        assert valid is True
 
 
 class TestEmpireData:

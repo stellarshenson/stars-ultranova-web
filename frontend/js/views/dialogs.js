@@ -112,6 +112,13 @@ const Dialogs = {
                 </div>
 
                 <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="accelerated-start">
+                        Accelerated BBS play (start with 100,000 colonists)
+                    </label>
+                </div>
+
+                <div class="form-group">
                     <label for="player-race">Your Race</label>
                     <select id="player-race" class="form-select">
                         <option value="">Default (Humanoids)</option>
@@ -141,13 +148,14 @@ const Dialogs = {
             const universeSize = document.getElementById('universe-size').value || 'medium';
             const density = document.getElementById('star-density').value || 'normal';
             const seed = document.getElementById('game-seed').value || null;
+            const acceleratedStart = document.getElementById('accelerated-start').checked;
 
             const raceIdx = document.getElementById('player-race').value;
             const race = raceIdx === '' ? null
                 : (this.getCustomRaces()[parseInt(raceIdx)] || null);
 
             try {
-                await GameState.createGame(name, playerCount, universeSize, density, seed, race);
+                await GameState.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart);
                 this.close();
             } catch (error) {
                 alert('Failed to create game: ' + error.message);

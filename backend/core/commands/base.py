@@ -24,6 +24,10 @@ class CommandMode(Enum):
     EDIT = "Edit"
     DELETE = "Delete"
     INSERT = "Insert"
+    # Web addition (no C# equivalent): queue reorder as a single
+    # server-side move. C# reorders via two Edit commands carrying full
+    # client-side orders (ProductionDialog.cs:365-406, QueueList.cs:113-132)
+    MOVE = "Move"
 
 
 @dataclass

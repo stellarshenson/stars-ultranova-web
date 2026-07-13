@@ -63,6 +63,16 @@ DEFENSE_BORANIUM_COST = 5
 DEFENSE_GERMANIUM_COST = 5
 DEFENSE_ENERGY_COST = 15
 
+# Mineral alchemy. The C# AlchemyProductionUnit.cs is a stub (all
+# methods throw NotImplementedException), so these are the canonical
+# Stars! values: 100 resources per unit, 25 with the Mineral Alchemy
+# LRT (GameInitialiser.cs:315-318 "One instance of mineral alchemy
+# costs 25 resources instead of 100"; SecondaryTraits.cs:66 "four
+# times more efficiently"), producing 1 kT of EACH mineral per unit
+ALCHEMY_RESOURCE_COST = 100
+ALCHEMY_RESOURCE_COST_MA = 25
+ALCHEMY_MINERALS_PER_UNIT = 1
+
 # Research constants
 DEFAULT_RESEARCH_PERCENTAGE = 10
 
@@ -87,6 +97,15 @@ UNSET = -10000
 # Minefield
 MINE_FIELD_SNAP_TO_GRID_SIZE = 5
 MINEFIELD_SNAP_TO_GRID_SIZE = 5  # Alias for consistency
+
+# Cloaking and tachyon detection
+# Canonical Stars! rules - the C# reference is a stub: Fleet.Cloaked is
+# only ever SET for ISB starbases (Manufacture.cs:126-134) and no
+# detection logic reads it (ScanStep.cs:165 has no cloak term)
+MAX_CLOAK_PERCENT = 98           # documented Stars! maximum cloak
+SS_BUILT_IN_CLOAK_UNITS = 300    # SS ships: 75% built-in cloak (PrimaryTraits.cs:54)
+ISB_STARBASE_CLOAK = 20          # ISB starbases 20% cloaked (Manufacture.cs:133)
+TACHYON_DETECTOR_FACTOR = 0.95   # 5% cloak-effectiveness cut per detector (canonical, C# absent)
 
 # Spatial phenomena (web extension - not in original Stars!)
 # Dust nebulae impede travel and dampen sensors; galactic storms damage ships

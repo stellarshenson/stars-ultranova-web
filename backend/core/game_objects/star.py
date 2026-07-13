@@ -59,6 +59,11 @@ class Star(Mappable):
     mines: int = 0
     research_allocation: int = 0
     scan_range: int = 0
+    # Penetrating scan range of the planetary scanner. Not in Star.cs -
+    # the C# scan step reuses ScanRange for pen scan (ScanStep.cs:106
+    # TODO stub); canonically only Snooper scanners pen-scan, so the
+    # range is tracked separately and stays 0 for Viewers/Scopers
+    pen_scan_range: int = 0
     defense_type: str = "None"
     scanner_type: str = "None"
 
@@ -563,6 +568,7 @@ class Star(Mappable):
             "mines": self.mines,
             "research_allocation": self.research_allocation,
             "scan_range": self.scan_range,
+            "pen_scan_range": self.pen_scan_range,
             "defense_type": self.defense_type,
             "scanner_type": self.scanner_type,
             "gravity": self.gravity,
@@ -620,15 +626,20 @@ class Star(Mappable):
         star.mines = data.get("mines", 0)
         star.research_allocation = data.get("research_allocation", 0)
         star.scan_range = data.get("scan_range", 0)
+        star.pen_scan_range = data.get("pen_scan_range", 0)
         star.defense_type = data.get("defense_type", "None")
         star.scanner_type = data.get("scanner_type", "None")
 
         star.gravity = data.get("gravity", 0)
         star.radiation = data.get("radiation", 0)
         star.temperature = data.get("temperature", 0)
-        star.original_gravity = data.get("original_gravity", 0)
-        star.original_radiation = data.get("original_radiation", 0)
-        star.original_temperature = data.get("original_temperature", 0)
+        # Migration guard: saves from before terraforming lack the
+        # original_* keys - default them to the current environment so
+        # 0 is never treated as the pristine value
+        star.original_gravity = data.get("original_gravity", star.gravity)
+        star.original_radiation = data.get("original_radiation", star.radiation)
+        star.original_temperature = data.get(
+            "original_temperature", star.temperature)
 
         if "owner" in data:
             star.owner = data["owner"]

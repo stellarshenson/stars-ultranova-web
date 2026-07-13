@@ -55,8 +55,14 @@ class ShipToken:
     mine_count: int = 0
     heavy_mine_count: int = 0
     speed_bump_mine_count: int = 0
+    mining_rate: int = 0
     dock_capacity: int = 0
     heals_others_percent: int = 0
+
+    # Cloak units per kT and Tachyon Detector count (canonical
+    # cloaking rules; cached from the design like the fields above)
+    cloak_units: int = 0
+    tachyon_detectors: int = 0
 
     # Stargate (starbases with a Gate component); -1 means unlimited
     has_gate: bool = False
@@ -93,8 +99,11 @@ class ShipToken:
             "mine_count": self.mine_count,
             "heavy_mine_count": self.heavy_mine_count,
             "speed_bump_mine_count": self.speed_bump_mine_count,
+            "mining_rate": self.mining_rate,
             "dock_capacity": self.dock_capacity,
             "heals_others_percent": self.heals_others_percent,
+            "cloak_units": self.cloak_units,
+            "tachyon_detectors": self.tachyon_detectors,
             "has_gate": self.has_gate,
             "gate_mass": self.gate_mass,
             "gate_range": self.gate_range,
@@ -128,8 +137,11 @@ class ShipToken:
         token.mine_count = data.get("mine_count", 0)
         token.heavy_mine_count = data.get("heavy_mine_count", 0)
         token.speed_bump_mine_count = data.get("speed_bump_mine_count", 0)
+        token.mining_rate = data.get("mining_rate", 0)
         token.dock_capacity = data.get("dock_capacity", 0)
         token.heals_others_percent = data.get("heals_others_percent", 0)
+        token.cloak_units = data.get("cloak_units", 0)
+        token.tachyon_detectors = data.get("tachyon_detectors", 0)
         token.has_gate = data.get("has_gate", False)
         token.gate_mass = data.get("gate_mass", 0)
         token.gate_range = data.get("gate_range", 0)
@@ -265,6 +277,17 @@ class Fleet(Mappable):
         """Return total speed bump mines fleet can lay."""
         # Port of: Fleet.cs lines 348-361
         return sum(token.speed_bump_mine_count for token in self.tokens.values())
+
+    @property
+    def total_mining_rate(self) -> int:
+        """Total remote mining rate (kT per mineral per year at 100%).
+
+        No C# equivalent (remote mining is a stub in the reference);
+        canonical Stars! rule: every robot on every ship mines, so the
+        per-ship design rate multiplies by ship quantity.
+        """
+        return sum(token.mining_rate * token.quantity
+                   for token in self.tokens.values())
 
     @property
     def speed(self) -> int:

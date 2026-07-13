@@ -6,6 +6,7 @@ Central service for game lifecycle management.
 
 import json
 import logging
+import random
 from typing import Dict, List, Optional, Any
 
 from ..persistence.database import Database, get_database
@@ -13,7 +14,9 @@ from ..persistence.game_repository import GameRepository
 from ..server.server_data import ServerData
 from ..server.turn_generator import TurnGenerator
 from ..core.data_structures.empire_data import EmpireData
-from ..core.data_structures.tech_level import RESEARCH_KEYS
+from ..core.data_structures.tech_level import RESEARCH_KEYS, ResearchField
+from ..core.defenses import compute_defense_coverage
+from ..core.research import research_cost
 from ..core.game_objects.star import Star
 from ..core.game_objects.fleet import Fleet
 from ..core.race.race import Race
@@ -24,6 +27,7 @@ from ..core.commands.production import ProductionCommand
 from ..core.commands.research import ResearchCommand
 from ..core.globals import NOBODY, NEBULA_SCAN_PENALTY
 from .galaxy_generator import GalaxyGenerator
+from .race_points import calculate_advantage_points
 from .ship_specs import design_from_dict
 
 logger = logging.getLogger(__name__)
@@ -38,12 +42,18 @@ COMMAND_TYPES = {
 }
 
 
+# Wizard research cost choices -> integer percent (the race designer
+# radio buttons, ControlLibrary/ResearchCost.cs:160-176)
+_RESEARCH_COST_PERCENTS = {"cheap": 50, "normal": 100, "expensive": 175}
+
+
 def _race_from_wizard(data: dict) -> Race:
     """
     Build a Race from the race wizard's payload.
 
-    Wizard fields map onto the Race dataclass (RaceDefinition/Race.cs);
-    per-field research cost multipliers are not yet modelled.
+    Wizard fields map onto the Race dataclass (RaceDefinition/Race.cs),
+    including per-field research cost multipliers and the "start at
+    level 3" ExtraTech pseudo-trait.
     """
     race = Race(
         name=data.get("name") or "Custom",
@@ -67,11 +77,40 @@ def _race_from_wizard(data: dict) -> Race:
         else int(data.get("radiationMin", 15)),
         radiation_max=100 if data.get("immuneRadiation")
         else int(data.get("radiationMax", 85)),
+        immune_gravity=bool(data.get("immuneGravity")),
+        immune_temperature=bool(data.get("immuneTemperature")),
+        immune_radiation=bool(data.get("immuneRadiation")),
         primary_trait=data.get("prt", "JOAT"),
-        traits=set(data.get("lrts") or []),
+        # The wizard uses "NRSE" for No Ram Scoop Engines; the C#
+        # trait code is "NRS" (RaceAdvantagePointCalculator.cs:46)
+        traits={"NRS" if t == "NRSE" else t
+                for t in (data.get("lrts") or [])},
     )
     race.plural_name = data.get("pluralName") or race.name
     race.icon = data.get("icon") or "humanoid"
+
+    # Per-field research cost percents; wizard keys are lowercase
+    # field names with 'cheap'/'normal'/'expensive' values
+    wizard_costs = data.get("researchCosts") or {}
+    race.research_costs = {
+        key: _RESEARCH_COST_PERCENTS.get(
+            wizard_costs.get(key.lower(), "normal"), 100)
+        for key in RESEARCH_KEYS
+    }
+
+    # "All extra cost technologies start at level 3" checkbox maps to
+    # the ExtraTech pseudo-trait (RaceDesigner.cs:1824-1827)
+    if data.get("startAtLevel3"):
+        race.traits.add("ExtraTech")
+
+    # Leftover advantage-point spend (Race.cs:64 LeftoverPointTarget,
+    # default "Surface minerals"). The budget itself is computed
+    # server-side from the ported RaceAdvantagePointCalculator at game
+    # creation (create_game below), as in C# Race.cs:215-221 - any
+    # wizard-supplied point total is ignored.
+    race.leftover_point_target = data.get(
+        "leftoverPointTarget", "Surface minerals")
+
     return race
 
 
@@ -129,7 +168,8 @@ class GameManager:
         player_count: int = 2,
         universe_size: str = "medium",
         seed: Optional[int] = None,
-        race: Optional[dict] = None
+        race: Optional[dict] = None,
+        accelerated_start: bool = False
     ) -> dict:
         """
         Create a new game.
@@ -141,19 +181,37 @@ class GameManager:
             seed: Random seed for galaxy generation.
             race: Optional custom race definition from the race wizard
                 (used for the human player, empire 1).
+            accelerated_start: Accelerated BBS play (GameSettings.cs:63).
 
         Returns:
             Game metadata dict.
         """
+        # Validate the custom race against the advantage-point budget
+        # BEFORE the game record is created, so an over-budget race
+        # leaves no orphan row. This is the web equivalent of the C#
+        # race designer's Finish_Click gate (RaceDesigner.cs:1712-1719,
+        # "You are not allowed to generate a race file when you have
+        # less than zero Advantage Points").
+        player_race = _race_from_wizard(race) if race else None
+        if player_race is not None:
+            points = calculate_advantage_points(player_race)
+            if points < 0:
+                raise ValueError(
+                    f"Race exceeds the advantage point budget by "
+                    f"{-points} points")
+            # Leftover budget spent on the homeworld, clamped to
+            # [0, 50] (Race.cs GetLeftoverAdvantagePoints, lines 215-221)
+            player_race.leftover_points = min(50, points)
+
         # Create game record
         game_record = self.repository.create_game(name, player_count, universe_size)
         game_id = game_record["id"]
 
         # Generate galaxy
         generator = GalaxyGenerator(seed)
-        player_race = _race_from_wizard(race) if race else None
         server_data = generator.generate(player_count, universe_size,
-                                         player_race=player_race)
+                                         player_race=player_race,
+                                         accelerated_start=accelerated_start)
 
         # Initial scan so empires start with intel about their surroundings
         TurnGenerator(server_data).assemble_empire_data()
@@ -257,6 +315,20 @@ class GameManager:
         server_data = self._load_game_state(game_id)
         if not server_data:
             return {"error": "Game not found"}
+
+        # Deterministic turn generation (web extension; the original C#
+        # server used unseeded Random). When the game was created with a
+        # seed, re-seed Python's global random module from
+        # (game_seed, turn_year) so every randomness source this turn -
+        # TurnGenerator.rand, the battle engines' Random instances (both
+        # derive their seeds from the global module) and nova_point's
+        # module-level calls - is reproducible: same seed + same
+        # submitted commands produce identical state. A fixed integer
+        # mix is used instead of hash() so results do not depend on
+        # PYTHONHASHSEED.
+        if server_data.game_seed is not None:
+            random.seed((server_data.game_seed * 1000003
+                         + server_data.turn_year) & 0xFFFFFFFF)
 
         # Fresh message list and command stacks for this turn
         server_data.all_messages = []
@@ -569,10 +641,19 @@ class GameManager:
                 "position_y": report.get("position_y"),
                 "ship_count": report.get("ship_count", 0),
                 "report_year": report.get("year"),
+                "composition": report.get("composition", []),
                 "intel": "scanned",
             }
             for report in empire.fleet_reports.values()
             if (report.get("key", 0) >> 32) != empire_id
+        ]
+
+        # Learned enemy designs (hull-only from scanning, full from
+        # battles) - the player's earned intel
+        enemy_designs = [
+            record
+            for report in empire.empire_reports.values()
+            for record in report.get("designs", {}).values()
         ]
 
         # Messages from the last generated turn, audience-filtered
@@ -589,8 +670,10 @@ class GameManager:
             "progress": empire.research_resources.to_dict().get("levels", {}),
             "topics": empire.research_topics.to_dict().get("levels", {}),
             "next_costs": {
-                key: int(50 * (1.75 ** (empire.research_levels.levels.get(key, 0) + 1)))
-                for key in RESEARCH_KEYS
+                key: research_cost(
+                    ResearchField(i), empire.race, empire.research_levels,
+                    empire.research_levels.levels.get(key, 0) + 1)
+                for i, key in enumerate(RESEARCH_KEYS)
             },
         }
 
@@ -661,6 +744,7 @@ class GameManager:
             "stars": stars,
             "fleets": fleets,
             "foreign_fleets": foreign_fleets,
+            "enemy_designs": enemy_designs,
             "messages": messages,
             "research": research,
             "designs": designs,
@@ -688,7 +772,12 @@ class GameManager:
             "germanium": star.resources_on_hand.germanium,
             "resources_per_year": star.resources_per_year,
             "scan_range": star.scan_range,
+            "pen_scan_range": star.pen_scan_range,
             "scanner_type": star.scanner_type,
+            "defense_type": star.defense_type,
+            # SummaryCoverage percent shown by the original planet
+            # detail (PlanetDetail.cs:174-178)
+            "defense_coverage": compute_defense_coverage(star)["summary"],
             "starbase_key": star.starbase_key,
             "production_queue": [
                 order.to_dict() for order in star.manufacturing_queue.orders
@@ -1033,7 +1122,10 @@ class GameManager:
         star = server_data.all_stars.get(fleet.in_orbit_name or "")
         if star is None:
             return {"error": "Fleet is not orbiting a star"}
-        if star.owner != empire_id:
+        # Canonical Stars!: freighters load remote-mined minerals from
+        # (and may drop minerals on) uninhabited worlds; only stars
+        # OWNED by another empire refuse cargo transfer
+        if star.owner != empire_id and star.owner != NOBODY:
             return {"error": "Cannot transfer cargo at a foreign star"}
 
         d_iron = int(cargo_delta.get("ironium", 0))
@@ -1041,6 +1133,12 @@ class GameManager:
         d_germ = int(cargo_delta.get("germanium", 0))
         d_col = int(cargo_delta.get("colonists", 0))
         d_col_kt = d_col // 100
+
+        # Colonist transfer at an uninhabited world is colonization or
+        # invasion, not cargo transfer
+        if star.owner == NOBODY and d_col != 0:
+            return {"error": "Cannot transfer colonists at an "
+                             "uninhabited star"}
 
         # Validate availability on both sides
         if d_iron > star.resources_on_hand.ironium or -d_iron > fleet.cargo.ironium:
@@ -1071,6 +1169,116 @@ class GameManager:
             "status": "ok",
             "fleet": self._fleet_to_dict(fleet),
             "star": self._star_to_dict(star),
+        }
+
+    def transfer_cargo_between_fleets(
+        self,
+        game_id: str,
+        empire_id: int,
+        fleet_key: int,
+        other_fleet_key: int,
+        delta: dict
+    ) -> dict:
+        """
+        Transfer cargo and fuel between two co-located owned fleets.
+
+        In the C# reference this exists only client-side
+        (FleetDetail.cs ButtonCargoXfer_Click, lines 766-786, directly
+        assigns both fleets' Cargo/FuelAvailable; no command object is
+        sent to the server - a known C# incompleteness). The
+        server-authoritative web port implements it as an immediate
+        server operation, like transfer_cargo. Counterparty rules
+        follow FleetDetail.cs fleetsAtLocation (lines 495-503): own
+        fleets only, exact same location, no starbases, not self.
+        The C# dialog's ReJigValues clamping (CargoTransferDialog.cs:
+        58-90) is client-side UX; the server rejects invalid orders
+        instead of silently clamping.
+
+        Args:
+            game_id: Game identifier.
+            empire_id: Acting empire.
+            fleet_key: Fleet on the receiving side of positive deltas.
+            other_fleet_key: Counterparty fleet.
+            delta: {ironium, boranium, germanium, colonists, fuel}.
+                Positive moves other -> this fleet; negative reverses.
+                colonists is in colonist headcount (100 per kT).
+
+        Returns:
+            Result with both updated fleets, or error.
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return {"error": "Game not found"}
+
+        empire = server_data.all_empires.get(empire_id)
+        if empire is None:
+            return {"error": "Empire not found"}
+
+        fleet = empire.owned_fleets.get(fleet_key)
+        other = empire.owned_fleets.get(other_fleet_key)
+        if fleet is None or other is None:
+            return {"error": "Fleet not found or not owned"}
+        if fleet is other:
+            return {"error": "Cannot transfer cargo with the same fleet"}
+        if getattr(fleet, 'is_starbase', False) or \
+                getattr(other, 'is_starbase', False):
+            return {"error": "Starbases cannot transfer cargo"}
+
+        # Fleets must be at the same location (merge tolerance)
+        dx = fleet.position.x - other.position.x
+        dy = fleet.position.y - other.position.y
+        if (dx * dx + dy * dy) > 1.0:
+            return {"error": "Fleets must be at the same location "
+                             "to transfer cargo"}
+
+        d_iron = int(delta.get("ironium", 0))
+        d_bor = int(delta.get("boranium", 0))
+        d_germ = int(delta.get("germanium", 0))
+        d_col = int(delta.get("colonists", 0))
+        d_col_kt = d_col // 100
+        d_fuel = int(delta.get("fuel", 0))
+
+        # Giver must have the goods (positive: other gives; negative:
+        # this fleet gives)
+        if d_iron > other.cargo.ironium or -d_iron > fleet.cargo.ironium:
+            return {"error": "Not enough ironium"}
+        if d_bor > other.cargo.boranium or -d_bor > fleet.cargo.boranium:
+            return {"error": "Not enough boranium"}
+        if d_germ > other.cargo.germanium or \
+                -d_germ > fleet.cargo.germanium:
+            return {"error": "Not enough germanium"}
+        if d_col_kt > other.cargo.colonists_in_kilotons or \
+                -d_col_kt > fleet.cargo.colonists_in_kilotons:
+            return {"error": "Not enough colonists"}
+        if d_fuel > other.fuel_available or -d_fuel > fleet.fuel_available:
+            return {"error": "Not enough fuel"}
+
+        # Receiver must have room
+        moved_mass = d_iron + d_bor + d_germ + d_col_kt
+        if fleet.cargo.mass + moved_mass > fleet.total_cargo_capacity or \
+                other.cargo.mass - moved_mass > other.total_cargo_capacity:
+            return {"error": "Cargo capacity exceeded"}
+        if fleet.fuel_available + d_fuel > fleet.total_fuel_capacity or \
+                other.fuel_available - d_fuel > other.total_fuel_capacity:
+            return {"error": "Fuel capacity exceeded"}
+
+        fleet.cargo.ironium += d_iron
+        other.cargo.ironium -= d_iron
+        fleet.cargo.boranium += d_bor
+        other.cargo.boranium -= d_bor
+        fleet.cargo.germanium += d_germ
+        other.cargo.germanium -= d_germ
+        fleet.cargo.colonists_in_kilotons += d_col_kt
+        other.cargo.colonists_in_kilotons -= d_col_kt
+        fleet.fuel_available += d_fuel
+        other.fuel_available -= d_fuel
+
+        self._save_game_state(game_id, server_data)
+
+        return {
+            "status": "ok",
+            "fleet": self._fleet_to_dict(fleet),
+            "other_fleet": self._fleet_to_dict(other),
         }
 
     # =========================================================================
@@ -1183,6 +1391,11 @@ class GameManager:
             empire_dict["fleet_reports"] = {
                 str(k): v for k, v in empire.fleet_reports.items()
             }
+            # Learned enemy-design intel (plain dicts from ScanStep /
+            # battle engines)
+            empire_dict["empire_reports"] = {
+                str(k): v for k, v in empire.empire_reports.items()
+            }
             empire_dict["battle_plans"] = {
                 name: (plan.to_dict() if hasattr(plan, 'to_dict') else plan)
                 for name, plan in empire.battle_plans.items()
@@ -1248,6 +1461,10 @@ class GameManager:
             empire.fleet_reports = {
                 int(k): v
                 for k, v in empire_dict.get("fleet_reports", {}).items()
+            }
+            empire.empire_reports = {
+                int(k): v
+                for k, v in empire_dict.get("empire_reports", {}).items()
             }
             from ..server.battle.battle_plan import BattlePlan
             empire.battle_plans = {
@@ -1348,6 +1565,7 @@ class GameManager:
             "in_orbit": fleet.in_orbit_name,
             "is_starbase": fleet.is_starbase,
             "can_colonize": fleet.can_colonize,
+            "mining_rate": fleet.total_mining_rate,
             "warp_factor": warp,
             "tokens": [
                 {
@@ -1356,6 +1574,7 @@ class GameManager:
                     "quantity": token.quantity,
                     "armor": token.armor,
                     "shields": token.shields,
+                    "damage_percent": token.damage_percent,
                     "mass": token.mass,
                 }
                 for token in fleet.tokens.values()

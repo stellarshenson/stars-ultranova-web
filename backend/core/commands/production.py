@@ -20,7 +20,14 @@ class ProductionCommand(Command):
     """
     Command to modify a planet's production queue.
 
-    Supports Add, Edit, Delete operations on production orders.
+    Supports Add, Edit, Delete and Move operations on production
+    orders. Move is a web deviation: C# reorders via two Edit commands
+    carrying full client-side orders (ProductionDialog.cs:365-406,
+    QueueList.cs:113-132); the web applies commands directly to server
+    state at submission, so Move avoids trusting a client-echoed
+    partial_resources_spent (the C# Edit anti-tamper checks at
+    ProductionCommand.cs:152-162 have no faithful equivalent in the
+    web's single-int progress model).
 
     Ported from ProductionCommand.cs.
     """
@@ -28,24 +35,28 @@ class ProductionCommand(Command):
     mode: CommandMode = CommandMode.ADD
     index: int = 0
     star_key: str = ""
+    to_index: int = 0
 
     def __init__(self, mode: CommandMode = CommandMode.ADD,
                  production_order: Optional[ProductionOrder] = None,
                  star_key: str = "",
-                 index: int = 0):
+                 index: int = 0,
+                 to_index: int = 0):
         """
         Initialize production command.
 
         Args:
-            mode: Command mode (Add, Edit, Delete)
+            mode: Command mode (Add, Edit, Delete, Move)
             production_order: Production order to add/edit
             star_key: Name of the star (planet) to modify
-            index: Queue index for edit/delete
+            index: Queue index for edit/delete/move source
+            to_index: Queue index the order moves to (Move only)
         """
         self.mode = mode
         self.production_order = production_order
         self.star_key = star_key
         self.index = index
+        self.to_index = to_index
 
     def is_valid(self, empire: 'EmpireData') -> tuple[bool, Optional[Message]]:
         """
@@ -79,6 +90,17 @@ class ProductionCommand(Command):
                 )
                 return False, msg
 
+            # Don't add cheated pre-built units (ProductionCommand.cs:140-143:
+            # Unit.Cost must equal Unit.RemainingCost; the web's progress
+            # model is the single banked int, which must arrive at zero)
+            if self.production_order.partial_resources_spent != 0:
+                msg = Message(
+                    audience=empire.id,
+                    text="Cannot add a pre-built production order",
+                    message_type="Invalid Command"
+                )
+                return False, msg
+
             # Cost validation would check against design/factory/mine costs
             # Simplified for now - full validation done when processing
 
@@ -96,6 +118,18 @@ class ProductionCommand(Command):
                 msg = Message(
                     audience=empire.id,
                     text=f"Queue index {self.index} out of range",
+                    message_type="Invalid Command"
+                )
+                return False, msg
+
+        elif self.mode == CommandMode.MOVE:
+            queue_len = len(star.manufacturing_queue.orders)
+            if (self.index < 0 or self.index >= queue_len
+                    or self.to_index < 0 or self.to_index >= queue_len):
+                msg = Message(
+                    audience=empire.id,
+                    text=f"Queue move {self.index} -> {self.to_index} "
+                         f"out of range",
                     message_type="Invalid Command"
                 )
                 return False, msg
@@ -146,6 +180,12 @@ class ProductionCommand(Command):
                 queue.pop(self.index)
             return None
 
+        elif self.mode == CommandMode.MOVE:
+            if self.index < len(queue) and self.to_index < len(queue):
+                order = queue.pop(self.index)
+                queue.insert(self.to_index, order)
+            return None
+
         return None
 
     def to_dict(self) -> dict:
@@ -156,6 +196,8 @@ class ProductionCommand(Command):
             "star_key": self.star_key,
             "index": self.index
         }
+        if self.mode == CommandMode.MOVE:
+            result["to_index"] = self.to_index
         if self.production_order:
             result["production_order"] = self.production_order.to_dict()
         return result
@@ -171,5 +213,6 @@ class ProductionCommand(Command):
             mode=mode,
             production_order=order,
             star_key=data.get("star_key", ""),
-            index=data.get("index", 0)
+            index=data.get("index", 0),
+            to_index=data.get("to_index", 0)
         )

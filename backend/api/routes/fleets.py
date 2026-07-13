@@ -170,3 +170,42 @@ async def transfer_cargo(game_id: str, fleet_key: int, transfer: CargoTransfer) 
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+class FleetToFleetTransfer(BaseModel):
+    """Request model for cargo/fuel transfer between two fleets."""
+    empire_id: int
+    target_fleet_key: int
+    ironium: int = 0
+    boranium: int = 0
+    germanium: int = 0
+    colonists: int = 0
+    fuel: int = 0
+
+
+@router.post("/{fleet_key}/transfer")
+async def transfer_cargo_between_fleets(
+        game_id: str, fleet_key: int,
+        transfer: FleetToFleetTransfer) -> dict:
+    """
+    Transfer cargo and fuel between two co-located owned fleets.
+
+    Positive values load target fleet -> this fleet; negative reverse.
+    """
+    manager = get_game_manager()
+    result = manager.transfer_cargo_between_fleets(
+        game_id,
+        transfer.empire_id,
+        fleet_key,
+        transfer.target_fleet_key,
+        {
+            "ironium": transfer.ironium,
+            "boranium": transfer.boranium,
+            "germanium": transfer.germanium,
+            "colonists": transfer.colonists,
+            "fuel": transfer.fuel,
+        }
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result

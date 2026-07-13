@@ -71,13 +71,6 @@ class MockWeapon:
 
 
 @dataclass
-class MockEmpireReport:
-    """Mock empire intel report."""
-    relation: str = "Enemy"
-    designs: Dict = field(default_factory=dict)
-
-
-@dataclass
 class MockEmpire:
     """Mock EmpireData for testing."""
     id: int = 0
@@ -609,7 +602,7 @@ class TestBattleIntegration:
         for i in range(2):
             empire = MockEmpire(id=i)
             empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
-            empire.empire_reports[1 - i] = MockEmpireReport()
+            empire.empire_reports[1 - i] = {"relation": "Enemy"}
 
             fleet = Fleet()
             fleet.key = empire.get_next_fleet_key()
@@ -675,3 +668,83 @@ class TestBattleIntegration:
         assert len(stacks) == 1
         assert stacks[0].token.quantity == 3
         assert stacks[0].token.battle_speed == 1.5
+
+
+# =============================================================================
+# Battle design learning (BattleEngine.cs:347-368)
+# =============================================================================
+
+class TestBattleDesignLearning:
+    """Battles reveal FULL enemy designs to every participant."""
+
+    def _make_setup(self, engine_cls):
+        from backend.services.ship_specs import SimpleDesign
+
+        server = MockServerData()
+        stacks = []
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            design = SimpleDesign(key=(i << 32) | 1, name=f"Warship {i}",
+                                  hull_name="Destroyer", armor=100)
+            empire.designs[design.key] = design
+            server.all_empires[i] = empire
+
+            stack = Stack()
+            stack.owner = i
+            stack.token = StackToken(design_key=design.key,
+                                     design_name=design.name,
+                                     quantity=2, armor=200.0)
+            stack.token.design = design
+            stacks.append(stack)
+
+        engine = engine_cls(server, [])
+        return server, engine, stacks
+
+    @pytest.mark.parametrize("engine_cls", [BattleEngine, RonBattleEngine])
+    def test_battle_records_full_designs(self, engine_cls):
+        server, engine, stacks = self._make_setup(engine_cls)
+        engine._update_intel_designs(stacks, {0: 0, 1: 1})
+
+        for i in range(2):
+            enemy = 1 - i
+            designs = server.all_empires[i].empire_reports[enemy]["designs"]
+            record = designs[hex((enemy << 32) | 1)]
+            assert record["scope"] == "full"
+            assert record["name"] == f"Warship {enemy}"
+            assert record["hull_name"] == "Destroyer"
+            assert record["owner"] == enemy
+            # Full record carries the design payload
+            assert record["design"]["name"] == f"Warship {enemy}"
+
+    @pytest.mark.parametrize("engine_cls", [BattleEngine, RonBattleEngine])
+    def test_battle_upgrades_hull_record_to_full(self, engine_cls):
+        server, engine, stacks = self._make_setup(engine_cls)
+        key = hex((1 << 32) | 1)
+        server.all_empires[0].empire_reports[1] = {
+            "designs": {key: {"key": key, "scope": "hull"}}
+        }
+
+        engine._update_intel_designs(stacks, {0: 0, 1: 1})
+        record = server.all_empires[0].empire_reports[1]["designs"][key]
+        assert record["scope"] == "full"
+
+    @pytest.mark.parametrize("engine_cls", [BattleEngine, RonBattleEngine])
+    def test_are_enemies_with_populated_reports(self, engine_cls):
+        """Regression for the dict-shaped empire_reports: target
+        selection reads relation with a default of Enemy."""
+        server, engine, stacks = self._make_setup(engine_cls)
+        server.all_empires[0].battle_plans["Default"] = BattlePlan(
+            attack="Enemies")
+        stacks[0].token.has_weapons = True
+
+        # Populated dict record
+        server.all_empires[0].empire_reports[1] = {"relation": "Enemy"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is True
+
+        # Unknown empire defaults to Enemy
+        server.all_empires[0].empire_reports.clear()
+        assert engine._are_enemies(stacks[0], stacks[1]) is True
+
+        # Friendly relation is not attacked
+        server.all_empires[0].empire_reports[1] = {"relation": "Friend"}
+        assert engine._are_enemies(stacks[0], stacks[1]) is False

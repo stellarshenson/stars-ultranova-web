@@ -19,7 +19,8 @@ from .turn_steps import (
     PostBombingStep,
     StarUpdateStep,
     SplitFleetStep,
-    ScrapFleetStep
+    ScrapFleetStep,
+    RemoteMineStep
 )
 from ..core.commands.base import Message
 from ..core.globals import (
@@ -35,6 +36,10 @@ if TYPE_CHECKING:
 
 # Turn step ordering constants (from TurnGenerator.cs)
 FIRST_STEP = 0
+# Web extension (no C# step): remote mining runs just before the star
+# update, mirroring the canonical order of events where remote mining
+# precedes planetary mining/production
+REMOTE_MINE_STEP = 11
 STAR_STEP = 12
 BOMBING_STEP = 19
 COLONISE_STEP = 92
@@ -72,10 +77,15 @@ class TurnGenerator:
             server_state: The game state to process.
         """
         self.server_state = server_state
-        self.rand = random.Random()
+        # Seed derived from the global random module: seeded games
+        # re-seed the module per turn (GameManager.generate_turn), which
+        # makes this instance deterministic too; unseeded games keep
+        # the original random behaviour.
+        self.rand = random.Random(random.getrandbits(64))
 
         # Turn steps ordered by priority
         self.turn_steps: Dict[int, ITurnStep] = OrderedDict()
+        self.turn_steps[REMOTE_MINE_STEP] = RemoteMineStep()
         self.turn_steps[STAR_STEP] = StarUpdateStep()
         self.turn_steps[BOMBING_STEP] = BombingStep()
         self.turn_steps[COLONISE_STEP] = PostBombingStep()
@@ -110,6 +120,11 @@ class TurnGenerator:
             if fleet.name == "Mineral Packet":
                 continue
             if getattr(fleet, 'is_starbase', False):
+                # C# TurnGenerator.cs:115-117 runs ProcessFleet for every
+                # fleet, starbases included - a starbase repairs itself
+                # via the same RegenerateFleet table. Movement and
+                # minefields stay skipped since starbases cannot move.
+                self._regenerate_fleet(fleet)
                 continue
 
             start_x, start_y = fleet.position.x, fleet.position.y
@@ -245,6 +260,15 @@ class TurnGenerator:
         # Refuel and repair
         self._regenerate_fleet(fleet)
 
+        # Check for no fuel (TurnGenerator.cs:270-279; original text
+        # reads "has ran out of fuel" - normalized to match the web's
+        # existing fuel message style)
+        if fleet.fuel_available == 0 and not fleet.is_starbase:
+            self.server_state.all_messages.append(Message(
+                audience=fleet.owner,
+                text=f"{fleet.name} has run out of fuel.",
+                message_type="Fuel", fleet_key=fleet.key))
+
         return False
 
     def _update_fleet(self, fleet: 'Fleet') -> bool:
@@ -318,6 +342,7 @@ class TurnGenerator:
             )
             fleet.waypoints.insert(0, new_position)
             fleet.in_orbit = None
+            fleet.in_orbit_name = None
         else:
             # Arrived
             self.server_state.set_fleet_orbit(fleet)
@@ -326,6 +351,25 @@ class TurnGenerator:
                 fleet.waypoints[0].position_x = fleet.in_orbit.position.x
                 fleet.waypoints[0].position_y = fleet.in_orbit.position.y
                 fleet.waypoints[0].destination = fleet.in_orbit.name
+
+            # Execute a cargo task on arrival, then clear it
+            # (TurnGenerator.cs:454-465: Task.IsValid/Perform followed
+            # by `waypointZero.Task = new NoTask();`). Other task types
+            # keep their dedicated turn steps.
+            if get_task_type(fleet.waypoints[0].task) == \
+                    WaypointTask.TRANSFER_CARGO:
+                from .turn_steps.split_fleet_step import perform_cargo_task
+                star = None
+                if fleet.in_orbit is not None:
+                    star = self.server_state.all_stars.get(
+                        fleet.in_orbit.name)
+                self.server_state.all_messages.extend(perform_cargo_task(
+                    self.server_state, fleet, fleet.waypoints[0], star))
+                # The foreign-star colonist delegation leaves an
+                # InvadeTaskObj in place for PostBombingStep to pop
+                if get_task_type(fleet.waypoints[0].task) == \
+                        WaypointTask.TRANSFER_CARGO:
+                    fleet.waypoints[0].task = NoTaskObj()
 
         # Update bearing for next waypoint
         if len(fleet.waypoints) > 1:
@@ -479,9 +523,16 @@ class TurnGenerator:
         if fleet is None:
             return
 
+        # Resolve the orbited star (TurnGenerator.cs:308-313). The C#
+        # keeps fleet.InOrbit linked at all times; the web's runtime
+        # in_orbit reference is only set on arrival or on deserialize,
+        # so fall back to the persisted in_orbit_name for fleets that
+        # have been parked since the state was created or cached.
         star = fleet.in_orbit
         if star is not None:
             star = self.server_state.all_stars.get(star.name)
+        elif fleet.in_orbit_name:
+            star = self.server_state.all_stars.get(fleet.in_orbit_name)
 
         # Refuel if at friendly starbase with dock
         starbase = self._get_starbase(star)
@@ -491,22 +542,26 @@ class TurnGenerator:
                 starbase.can_refuel):
             fleet.fuel_available = fleet.total_fuel_capacity
 
-        # Repair
+        # Repair (TurnGenerator.cs:370-379). The C# restores
+        # token.Shields to full every turn (line 372); the web ShipToken
+        # caches shields as an immutable design stat and no shield
+        # damage persists between turns, so that restore is a no-op
+        # here. Armor: C# repairs max(maxArmor * rate / 100, 1)
+        # absolute points of the token's total armor per year, capped
+        # at max. The web tracks damage as damage_percent (percent of
+        # max armor), so the reduction is repair_rate percentage points
+        # with a floor equal to the C# 1-point minimum
+        # (100 / token.armor, the cached token-total design armor).
         repair_rate = self._get_repair_rate(fleet, star)
 
-        for token in fleet.tokens.values():
-            # Restore shields fully
-            # Note: ShipToken stores cached design values directly (armor, shields)
-            # Without linked design object, we skip regeneration for now
-            design = getattr(token, 'design', None)
-            if design is not None:
-                token.shields = design.shield * token.quantity
-
-                # Repair armor
-                if repair_rate > 0:
-                    max_armor = design.armor * token.quantity
-                    repair_amount = max(max_armor * repair_rate // 100, 1)
-                    token.armor = min(token.armor + repair_amount, max_armor)
+        if repair_rate > 0:
+            for token in fleet.tokens.values():
+                if token.damage_percent <= 0:
+                    continue
+                reduction = max(float(repair_rate),
+                                100.0 / max(1, token.armor))
+                token.damage_percent = max(
+                    0.0, token.damage_percent - reduction)
 
     def _get_repair_rate(self, fleet: 'Fleet', star) -> int:
         """
@@ -518,20 +573,39 @@ class TurnGenerator:
 
         Returns:
             Repair rate percentage.
+
+        Port of: TurnGenerator.cs RegenerateFleet lines 323-367
+        (situation table documented in the remarks at lines 283-300:
+        0/1/2/3/5/8/20, "+repair% if stopped or orbiting").
         """
         if star is not None:
             if star.owner == fleet.owner:
                 starbase = self._get_starbase(star)
                 if starbase is not None:
                     if starbase.can_refuel:
-                        return 20  # Orbiting own planet with dock
-                    return 8  # Orbiting own planet with starbase but no dock
-                return 5  # Orbiting own planet, no starbase
-            return 3  # Orbiting enemy planet
+                        rate = 20  # Orbiting own planet with dock
+                    else:
+                        rate = 8  # Own planet with starbase but no dock
+                else:
+                    rate = 5  # Orbiting own planet, no starbase
+            else:
+                # 0% while bombing: C# remark TurnGenerator.cs:290,
+                # left as a TODO in the body at :349; canonical Stars!
+                # rule - a fleet bombing an enemy planet repairs nothing
+                if star.owner != NOBODY and fleet.has_bombers:
+                    return 0
+                rate = 3  # Orbiting enemy planet, not bombing
         else:
             if len(fleet.waypoints) == 0:
-                return 2  # Stopped in space
-            return 1  # Moving through space
+                rate = 2  # Stopped in space
+            else:
+                return 1  # Moving through space - no heal bonus
+
+        # "+repair% if stopped or orbiting" (C# remark
+        # TurnGenerator.cs:297, unimplemented in the C# body).
+        # Canonical Stars!: Fuel Transport +5%/yr, Super-Fuel Xport
+        # +10%/yr, encoded as HealsOthersPercent in components.xml.
+        return rate + fleet.heals_others_percent
 
     def _get_starbase(self, star) -> Optional['Fleet']:
         """Resolve the starbase fleet orbiting a star, if any."""

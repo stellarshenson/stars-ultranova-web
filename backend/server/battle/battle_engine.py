@@ -72,7 +72,10 @@ class BattleEngine:
         self.battles = battle_reports
         self.stack_id = 0
         self.battle_round = 0
-        self._random = random.Random()
+        # Seed derived from the global random module so seeded games
+        # (re-seeded per turn in GameManager.generate_turn) get
+        # deterministic battles; unseeded games stay random.
+        self._random = random.Random(random.getrandbits(64))
 
     def run(self) -> None:
         """
@@ -230,7 +233,16 @@ class BattleEngine:
     def _update_intel_designs(
         self, battling_stacks: List[Stack], empires: Dict[int, int]
     ) -> None:
-        """Update known enemy ship designs after battle."""
+        """
+        Update known enemy ship designs after battle.
+
+        Port of BattleEngine.cs:347-368: every participating empire
+        records the FULL design (components included) of every enemy
+        stack, add-or-replace into EmpireReports[owner].Designs - a
+        battle upgrades any hull-only record learned by scanning.
+        Records are plain dicts under empire_reports[owner]["designs"]
+        keyed by hex design key.
+        """
         for empire_id in empires.values():
             if empire_id not in self.server_state.all_empires:
                 continue
@@ -239,14 +251,24 @@ class BattleEngine:
             for stack in battling_stacks:
                 if stack.owner == empire_id:
                     continue
-                if stack.owner not in empire.empire_reports:
-                    continue
                 if not stack.token or not stack.token.design:
                     continue
 
-                report = empire.empire_reports[stack.owner]
                 design = stack.token.design
-                report.designs[design.key] = design
+                reports = empire.empire_reports.setdefault(stack.owner, {})
+                designs = reports.setdefault("designs", {})
+                designs[hex(design.key)] = {
+                    "key": hex(design.key),
+                    "name": getattr(design, 'name', ''),
+                    "hull_name": getattr(design, 'hull_name', '') or (
+                        design.blueprint.name
+                        if getattr(design, 'blueprint', None) else ''),
+                    "owner": stack.owner,
+                    "scope": "full",
+                    "year": self.server_state.turn_year,
+                    "design": (design.to_dict()
+                               if hasattr(design, 'to_dict') else None),
+                }
 
     def _do_battle(
         self, battling_stacks: List[Stack], battle: BattleReport
@@ -322,11 +344,13 @@ class BattleEngine:
         elif plan.target_id == lamb.owner:
             return True
         elif plan.attack == "Enemies":
-            # Check relation
-            if lamb.owner in wolf_data.empire_reports:
-                relation = wolf_data.empire_reports[lamb.owner].relation
-                if relation == "Enemy":
-                    return True
+            # Check relation - empire_reports holds plain dicts;
+            # unknown empires default to Enemy (relations proper are
+            # a later gap)
+            relation = wolf_data.empire_reports.get(
+                lamb.owner, {}).get("relation", "Enemy")
+            if relation == "Enemy":
+                return True
 
         return False
 

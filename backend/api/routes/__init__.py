@@ -2,5 +2,7 @@ from .games import router as games_router
 from .stars import router as stars_router
 from .fleets import router as fleets_router
 from .designs import router as designs_router
+from .races import router as races_router
 
-__all__ = ["games_router", "stars_router", "fleets_router", "designs_router"]
+__all__ = ["games_router", "stars_router", "fleets_router",
+           "designs_router", "races_router"]

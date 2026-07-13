@@ -327,6 +327,139 @@ class TestShipDesign:
         assert d2.blueprint is not None
 
 
+class TestCloaking:
+    """Cloak unit curve and design aggregation (canonical Stars!
+    rules - the C# reference stores cloak values but never applies
+    them, ScanStep.cs:165)."""
+
+    @pytest.fixture(scope="class")
+    def loader(self):
+        # ShipDesign.hull resolves allocated components through the
+        # module-level loader singleton, so load that one
+        from backend.core.components.component_loader import (
+            get_component_loader, load_components
+        )
+        loader = get_component_loader()
+        if not loader.is_loaded:
+            load_components("backend/data/components.xml")
+        return loader
+
+    def _cloaked_design(self, loader, allocations):
+        """Design on a fabricated hull with catalog components
+        allocated by name: allocations = [(slot_type, name, count)]."""
+        c = Component()
+        c.name = "Cloak Test Hull"
+        c.item_type = ItemType.HULL
+        c.mass = 25
+        c.cost = Resources(4, 2, 4, 10)
+        hull_prop = ComponentProperty()
+        hull_prop.property_type = "Hull"
+        hull_prop.values = {
+            "fuel_capacity": 50,
+            "armor_strength": 20,
+            "modules": [
+                {"cell_number": i + 1, "component_maximum": 4,
+                 "component_type": slot_type,
+                 "allocated_component": name,
+                 "component_count": count}
+                for i, (slot_type, name, count) in enumerate(allocations)
+            ],
+        }
+        c.add_property(hull_prop)
+        design = ShipDesign(blueprint=c)
+        design.name = "Cloak Test"
+        design.update()
+        return design
+
+    def test_cloak_percent_from_units_anchors(self):
+        from backend.core.components.ship_design import (
+            cloak_percent_from_units
+        )
+        assert cloak_percent_from_units(0) == 0
+        assert cloak_percent_from_units(70) == 35
+        assert cloak_percent_from_units(100) == 50
+        assert cloak_percent_from_units(140) == 55
+        assert cloak_percent_from_units(300) == 75
+        assert cloak_percent_from_units(540) == 85
+        # Cap at the documented Stars! maximum of 98%
+        assert cloak_percent_from_units(5000) == 98
+
+    def test_cloak_units_from_percent_anchors(self):
+        from backend.core.components.ship_design import (
+            cloak_units_from_percent
+        )
+        assert cloak_units_from_percent(35) == 70    # Stealth Cloak
+        assert cloak_units_from_percent(55) == 140   # Super-Stealth
+        assert cloak_units_from_percent(75) == 300   # Transport Cloaking
+        assert cloak_units_from_percent(85) == 540   # Ultra-Stealth
+        assert cloak_units_from_percent(20) == 40    # Chameleon Scanner
+        assert cloak_units_from_percent(25) == 50    # Depleted Neutronium
+
+    def test_single_stealth_cloak(self, loader):
+        design = self._cloaked_design(loader, [
+            ("Electrical", "Stealth Cloak", 1),
+        ])
+        assert design.cloak_units == 70
+
+    def test_cloak_units_stack_linearly(self, loader):
+        """2 Stealth Cloaks = 140u (canonical linear unit stacking),
+        NOT the C# probability stacking (57.75% -> 162u) whose result
+        was never consumed."""
+        design = self._cloaked_design(loader, [
+            ("Electrical", "Stealth Cloak", 2),
+        ])
+        assert design.cloak_units == 140
+
+    def test_shadow_shield_contributes_shield_and_cloak(self, loader):
+        design = self._cloaked_design(loader, [
+            ("Shield", "Shadow Shield", 1),
+        ])
+        assert design.shield == 75
+        assert design.cloak_units == 70
+
+    def test_tachyon_detector_count(self, loader):
+        """Aggregation records the device COUNT, not the XML value 5."""
+        design = self._cloaked_design(loader, [
+            ("Electrical", "Tachyon Detector", 2),
+        ])
+        assert design.tachyon_detectors == 2
+
+    def test_build_ship_design_cloaked_scout(self, loader):
+        """Full builder path: Scout hull + engine + Stealth Cloak."""
+        from backend.core.data_structures import EmpireData, TechLevel
+        from backend.services.design_builder import build_ship_design
+
+        empire = EmpireData(id=1)
+        empire.research_levels = TechLevel.from_level(10)
+        design, error = build_ship_design(empire, "Cloaked Scout", "Scout", [
+            {"cell_number": 11, "component": "Quick Jump 5", "count": 1},
+            {"cell_number": 12, "component": "Stealth Cloak", "count": 1},
+        ])
+        assert error is None
+        assert design.cloak_units == 70
+        assert design.tachyon_detectors == 0
+
+    def test_make_token_caches_cloak_fields(self):
+        from backend.services.ship_specs import SimpleDesign, make_token
+        from backend.core.game_objects.fleet import ShipToken
+
+        design = SimpleDesign(key=5, name="Sneak", mass=25,
+                              cloak_units=70, tachyon_detectors=2)
+        token = make_token(design, quantity=3)
+        assert token.cloak_units == 70
+        assert token.tachyon_detectors == 2
+
+        # ShipToken round-trips the cached fields
+        token2 = ShipToken.from_dict(token.to_dict())
+        assert token2.cloak_units == 70
+        assert token2.tachyon_detectors == 2
+
+        # SimpleDesign round-trips the new fields
+        design2 = SimpleDesign.from_dict(design.to_dict())
+        assert design2.cloak_units == 70
+        assert design2.tachyon_detectors == 2
+
+
 class TestComponentLoaderHullEngine:
     """Tests for component loader Hull/Engine parsing."""
 

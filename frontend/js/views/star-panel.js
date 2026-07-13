@@ -20,7 +20,10 @@ const StarPanel = {
     infraCosts: {
         FACTORY: { ironium: 0, boranium: 0, germanium: 4, resources: 10 },
         MINE: { ironium: 0, boranium: 0, germanium: 0, resources: 5 },
-        DEFENSE: { ironium: 5, boranium: 5, germanium: 5, resources: 15 }
+        DEFENSE: { ironium: 5, boranium: 5, germanium: 5, resources: 15 },
+        // Per point; 70 for Total Terraforming races (set in
+        // showProductionDialog)
+        TERRAFORM: { ironium: 0, boranium: 0, germanium: 0, resources: 100 }
     },
 
     /**
@@ -396,7 +399,11 @@ const StarPanel = {
                 </div>
                 <div class="stat-row">
                     <span>Defenses:</span>
-                    <span class="stat-value">${star.defenses || 0}</span>
+                    <span class="stat-value">${star.defenses || 0} (${star.defense_type || 'None'}, ${star.defense_coverage || 0}%)</span>
+                </div>
+                <div class="stat-row">
+                    <span>Scanner:</span>
+                    <span class="stat-value">${star.scanner_type || 'None'} (${star.scan_range || 0} ly)</span>
                 </div>
             </div>
 
@@ -498,6 +505,11 @@ const StarPanel = {
      */
     getItemCost(item) {
         const ptype = item.production_type || '';
+        if (ptype === 'ALCHEMY') {
+            // Race-dependent: 25 resources with the MA LRT, else 100
+            const hasMA = ((GameState.race || {}).traits || []).includes('MA');
+            return { ironium: 0, boranium: 0, germanium: 0, resources: hasMA ? 25 : 100 };
+        }
         if (this.infraCosts[ptype]) return this.infraCosts[ptype];
         // Ship or starbase - look up the design cost
         let key = item.design_key;
@@ -599,14 +611,39 @@ const StarPanel = {
                     completionText = `<span class="queue-status">Year ${completion.startYear}-${completion.endYear}</span>`;
                 }
 
+                // Auto-build orders are skipped without blocking when
+                // unaffordable and persist in the queue (server-side
+                // ProductionOrder.IsAutoBuild semantics)
+                const autoSuffix = item.is_auto_build
+                    ? ' <span class="queue-auto">(Auto Build)</span>' : '';
+
+                // Percent complete for partially built items. Web
+                // adaptation of ProductionDialog.cs:823-846 whose
+                // max-over-resources formula needs the per-resource
+                // RemainingCost the web does not track - the web banks
+                // resources (energy) only
+                let percentText = '';
+                const cost = this.getItemCost(item);
+                if ((item.partial_resources_spent || 0) > 0 && cost.resources > 0) {
+                    const pct = Math.round(
+                        100 * item.partial_resources_spent / cost.resources);
+                    percentText = `<span class="queue-percent">${pct}% done</span>`;
+                }
+
                 queueHtml += `
                     <li class="queue-item ${statusClass}">
                         <div class="queue-item-main">
-                            <span class="queue-name">${item.name || item.type}</span>
+                            <span class="queue-name">${item.name || item.type}${autoSuffix}</span>
                             <span class="queue-quantity">x${item.quantity}</span>
+                            <span class="queue-item-buttons">
+                                <button class="btn-small btn-queue-up" data-index="${i}" ${i === 0 ? 'disabled' : ''}>&#9650;</button>
+                                <button class="btn-small btn-queue-down" data-index="${i}" ${i === queue.length - 1 ? 'disabled' : ''}>&#9660;</button>
+                                <button class="btn-small btn-queue-remove" data-index="${i}">&#10005;</button>
+                            </span>
                         </div>
                         <div class="queue-item-details">
                             ${completionText}
+                            ${percentText}
                         </div>
                     </li>
                 `;
@@ -651,6 +688,69 @@ const StarPanel = {
         if (clearBtn) {
             clearBtn.addEventListener('click', () => this.clearProductionQueue());
         }
+
+        // Per-item reorder and remove buttons
+        this.container.querySelectorAll('.btn-queue-up').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const i = parseInt(btn.dataset.index);
+                this.moveQueueItem(i, i - 1);
+            });
+        });
+        this.container.querySelectorAll('.btn-queue-down').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const i = parseInt(btn.dataset.index);
+                this.moveQueueItem(i, i + 1);
+            });
+        });
+        this.container.querySelectorAll('.btn-queue-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.removeQueueItem(parseInt(btn.dataset.index));
+            });
+        });
+    },
+
+    /**
+     * Move a queue item to a new position. The server performs the
+     * move on its own state (single Move command) - a deviation from
+     * C#, which swaps rows via two Edit commands carrying full
+     * client-side orders (ProductionDialog.cs:365-406).
+     */
+    async moveQueueItem(index, toIndex) {
+        if (!this.currentStar || !GameState.game) return;
+        const queue = this.currentStar.production_queue || [];
+        if (toIndex < 0 || toIndex >= queue.length) return;
+
+        try {
+            await GameState.submitCommand('production', {
+                mode: 'Move',
+                star_key: this.currentStar.name,
+                index: index,
+                to_index: toIndex
+            });
+            await GameState.refreshState();
+            this.refresh();
+        } catch (error) {
+            ApiClient.showStatus('Failed to move item: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Remove a queue item entirely.
+     */
+    async removeQueueItem(index) {
+        if (!this.currentStar || !GameState.game) return;
+
+        try {
+            await GameState.submitCommand('production', {
+                mode: 'Delete',
+                star_key: this.currentStar.name,
+                index: index
+            });
+            await GameState.refreshState();
+            this.refresh();
+        } catch (error) {
+            ApiClient.showStatus('Failed to remove item: ' + error.message, 'error');
+        }
     },
 
     /**
@@ -673,6 +773,47 @@ const StarPanel = {
             { label: 'Mine (5 res)', production_type: 'MINE', name: 'Mine' },
             { label: 'Defense (5 Ir, 5 Bo, 5 Ge, 15 res)', production_type: 'DEFENSE', name: 'Defense' }
         ];
+        // Alchemy: 100 resources -> 1 kT of each mineral, 25 with the
+        // Mineral Alchemy LRT (server-authoritative values mirrored)
+        const alchemyCost = ((GameState.race || {}).traits || []).includes('MA') ? 25 : 100;
+        items.push({
+            label: `Alchemy (${alchemyCost} res, +1 kT each mineral)`,
+            production_type: 'ALCHEMY', name: 'Alchemy'
+        });
+        // Auto-build variants: skipped without blocking the queue when
+        // unbuildable, persist until their quantity completes.
+        // "(Auto Build)" naming is canonical Stars!; Nova C# provides
+        // only the engine flag (ProductionOrder.IsAutoBuild), no
+        // creation UI for auto orders
+        items.push(
+            { label: 'Factory (Auto Build)', production_type: 'FACTORY',
+              name: 'Factory', is_auto_build: true },
+            { label: 'Mine (Auto Build)', production_type: 'MINE',
+              name: 'Mine', is_auto_build: true },
+            { label: 'Defense (Auto Build)', production_type: 'DEFENSE',
+              name: 'Defense', is_auto_build: true },
+            { label: 'Alchemy (Auto Build)', production_type: 'ALCHEMY',
+              name: 'Alchemy', is_auto_build: true }
+        );
+        // Terraform: offered when the race can use any terraform
+        // component - TT races always can (Total ±3 has no tech
+        // requirement), others need Bio 1 plus Prop/Energy/Weapons 1
+        // (the dedicated ±3 components in components.xml)
+        const isTT = ((GameState.race || {}).traits || []).includes('TT');
+        const levels = (GameState.research || {}).levels || {};
+        const hasTerraformTech = isTT || (
+            (levels.Biotechnology || 0) >= 1 && (
+                (levels.Propulsion || 0) >= 1 ||
+                (levels.Energy || 0) >= 1 ||
+                (levels.Weapons || 0) >= 1));
+        if (hasTerraformTech) {
+            const terraformCost = isTT ? 70 : 100;
+            this.infraCosts.TERRAFORM.resources = terraformCost;
+            items.push({
+                label: `Terraform (${terraformCost} res)`,
+                production_type: 'TERRAFORM', name: 'Terraform'
+            });
+        }
         for (const design of (GameState.designs || [])) {
             if (design.obsolete) continue;
             const c = design.cost || {};
@@ -714,7 +855,8 @@ const StarPanel = {
             const order = {
                 production_type: item.production_type,
                 quantity: quantity,
-                name: item.name
+                name: item.name,
+                is_auto_build: !!item.is_auto_build
             };
             if (item.design_key !== undefined) {
                 order.design_key = '0x' + item.design_key.toString(16);

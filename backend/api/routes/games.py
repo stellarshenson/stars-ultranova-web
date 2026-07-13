@@ -17,6 +17,9 @@ class GameCreate(BaseModel):
     universe_size: str = "medium"  # tiny, small, medium, large, huge
     seed: Optional[int] = None
     race: Optional[dict] = None  # race wizard payload for the human player
+    # Accelerated BBS play (GameSettings.cs:63): starting population
+    # 100000 instead of 25000
+    accelerated_start: bool = False
 
 
 class GameResponse(BaseModel):
@@ -61,13 +64,19 @@ class EmpireResponse(BaseModel):
 async def create_game(game: GameCreate) -> GameResponse:
     """Create a new game."""
     manager = get_game_manager()
-    game_data = manager.create_game(
-        name=game.name,
-        player_count=game.player_count,
-        universe_size=game.universe_size,
-        seed=game.seed,
-        race=game.race
-    )
+    try:
+        game_data = manager.create_game(
+            name=game.name,
+            player_count=game.player_count,
+            universe_size=game.universe_size,
+            seed=game.seed,
+            race=game.race,
+            accelerated_start=game.accelerated_start
+        )
+    except ValueError as e:
+        # Over-budget race rejected (the web equivalent of the C# race
+        # designer's Finish_Click gate, RaceDesigner.cs:1712-1719)
+        raise HTTPException(status_code=422, detail=str(e))
     return GameResponse(
         id=game_data["id"],
         name=game_data["name"],

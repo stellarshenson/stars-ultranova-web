@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Optional
 
 from .config import settings
-from .api.routes import games_router, stars_router, fleets_router, designs_router
+from .api.routes import (games_router, stars_router, fleets_router,
+                         designs_router, races_router)
 from .api.websocket import handle_websocket
 
 # Configure logging
@@ -76,6 +77,7 @@ app.include_router(games_router)
 app.include_router(stars_router)
 app.include_router(fleets_router)
 app.include_router(designs_router)
+app.include_router(races_router)
 
 # Static files for frontend
 frontend_path = Path(__file__).parent.parent / settings.frontend_dir

@@ -10,7 +10,11 @@ import math
 
 from .base import ITurnStep
 from ...core.commands.base import Message
-from ...core.globals import NOBODY, NEBULA_SCAN_PENALTY
+from ...core.components.ship_design import cloak_percent_from_units
+from ...core.globals import (
+    NOBODY, NEBULA_SCAN_PENALTY,
+    SS_BUILT_IN_CLOAK_UNITS, TACHYON_DETECTOR_FACTOR,
+)
 
 if TYPE_CHECKING:
     from ..server_data import ServerData
@@ -110,16 +114,30 @@ class ScanStep(ITurnStep):
             if scan_range <= 0 and pen_scan_range <= 0:
                 continue
 
+            # Tachyon Detectors on the SCANNING fleet counter target
+            # cloak (canonical Stars! rule, C# absent - the property
+            # only exists in the ComponentEditor GUI)
+            detectors = sum(
+                getattr(token, 'tachyon_detectors', 0) * token.quantity
+                for token in fleet.tokens.values()
+            )
+
             self._scan_from_position(
                 fleet.position.x, fleet.position.y,
                 scan_range, pen_scan_range,
-                empire, server_state
+                empire, server_state,
+                tachyon_detectors=detectors
             )
 
         # Scan from owned stars
         for star in empire.owned_stars.values():
             scan_range = getattr(star, 'scan_range', 0)
-            pen_scan_range = getattr(star, 'pen_scan_range', scan_range)
+            # Planetary pen scan uses the scanner type's PenetratingScan
+            # range. Canonical fix of the C# stub (ScanStep.cs:106
+            # "Planetary Pen-Scan not implemented yet" reuses ScanRange
+            # for both): non-Snooper planetary scanners (pen 0) no
+            # longer reveal foreign star details at a distance
+            pen_scan_range = getattr(star, 'pen_scan_range', 0)
 
             if scan_range <= 0 and pen_scan_range <= 0:
                 continue
@@ -132,7 +150,8 @@ class ScanStep(ITurnStep):
 
     def _scan_from_position(self, x: float, y: float,
                             scan_range: int, pen_scan_range: int,
-                            empire, server_state: 'ServerData'):
+                            empire, server_state: 'ServerData',
+                            tachyon_detectors: int = 0):
         """
         Scan all objects from a position.
 
@@ -142,6 +161,8 @@ class ScanStep(ITurnStep):
             pen_scan_range: Penetrating scan range.
             empire: Scanning empire.
             server_state: Game state.
+            tachyon_detectors: Tachyon Detector count on the scanning
+                fleet (planetary scanners carry none).
         """
         # Dust nebulae dampen sensors: reduce ranges by dust density
         # at the scanner's position
@@ -175,11 +196,99 @@ class ScanStep(ITurnStep):
             for fleet in other_empire.owned_fleets.values():
                 distance = self._distance(x, y, fleet.position.x, fleet.position.y)
 
-                if distance <= scan_range:
+                # Cloak reduces the range at which the fleet is
+                # detected (canonical Stars! rule - C# is a stub:
+                # ScanStep.cs:165 has no cloak term and Fleet.Cloaked
+                # is never read). Cloak affects fleet detection only,
+                # never star pen-scan; at distance 0 the 98% cap
+                # guarantees detection
+                cloak_pct = self._fleet_cloak_percent(fleet, other_empire)
+                if cloak_pct > 0 and tachyon_detectors > 0:
+                    # Each detector cuts cloak effectiveness by 5%,
+                    # stacking with 4th-root damping (canonical rule,
+                    # C# absent)
+                    cloak_pct *= (
+                        TACHYON_DETECTOR_FACTOR ** (tachyon_detectors ** 0.25)
+                    )
+                effective_range = scan_range * (1.0 - cloak_pct / 100.0)
+
+                if distance <= effective_range:
                     # Fleet detected
                     empire.fleet_reports[fleet.key] = self._generate_fleet_report(
                         fleet, server_state.turn_year
                     )
+                    self._learn_designs(
+                        empire, other_empire, fleet, server_state.turn_year
+                    )
+
+    def _fleet_cloak_percent(self, fleet, owner_empire) -> float:
+        """
+        Effective cloak percent of a fleet (canonical Stars! rules -
+        the C# reference never applies cloak: ScanStep.cs:165 stub).
+
+        Fleet cloak dilutes over total mass: units_per_kT =
+        sum(design units/kT * per-ship mass * quantity) / (ship mass +
+        cargo mass). SS PRT ships get 300 built-in units/kT and
+        exclude cargo from the divisor (PrimaryTraits.cs:54: "all your
+        ships have 75% cloaking built in", "Cargo does not decrease
+        your cloaking abilities"). Fleet.cloaked acts as a floor - ISB
+        starbases are set to 20 (Manufacture.cs:133).
+        """
+        ship_mass = sum(
+            token.mass * token.quantity for token in fleet.tokens.values()
+        )
+        is_ss = owner_empire.has_trait("SS") if hasattr(
+            owner_empire, 'has_trait') else False
+
+        total_units = 0.0
+        for token in fleet.tokens.values():
+            rating = getattr(token, 'cloak_units', 0)
+            if is_ss:
+                rating += SS_BUILT_IN_CLOAK_UNITS
+            total_units += rating * token.mass * token.quantity
+
+        divisor = ship_mass
+        if not is_ss:
+            divisor += getattr(fleet.cargo, 'mass', 0)
+
+        if divisor <= 0:
+            pct = 0.0
+        else:
+            pct = cloak_percent_from_units(total_units / divisor)
+
+        return max(pct, getattr(fleet, 'cloaked', 0.0))
+
+    def _learn_designs(self, empire, other_empire, fleet, year: int):
+        """
+        Record hull-only design intel for each detected token.
+
+        Port of ScanStep.cs:170-183: a normal scan teaches a HULL-ONLY
+        design copy (new ShipDesign(token.Design) + ClearAllocated(),
+        ShipDesign.cs:751-758) - hull, name and key, no fitted
+        components. Battles later upgrade records to scope "full"
+        (BattleEngine.cs:347-368); an existing record is never
+        overwritten here.
+        """
+        reports = empire.empire_reports.setdefault(other_empire.id, {})
+        designs = reports.setdefault("designs", {})
+        for token in fleet.tokens.values():
+            key = hex(token.design_key)
+            if key in designs:
+                continue
+            design = other_empire.designs.get(token.design_key)
+            name = getattr(design, 'name', '') or getattr(
+                token, 'design_name', '')
+            hull_name = getattr(design, 'hull_name', '') or (
+                design.blueprint.name
+                if getattr(design, 'blueprint', None) else '')
+            designs[key] = {
+                "key": key,
+                "name": name,
+                "hull_name": hull_name,
+                "owner": other_empire.id,
+                "scope": "hull",
+                "year": year,
+            }
 
     def _get_fleet_scan_range(self, fleet, empire) -> int:
         """Get fleet's non-penetrating scan range."""
@@ -271,5 +380,15 @@ class ScanStep(ITurnStep):
             "year": year,
             "ship_count": sum(t.quantity for t in fleet.tokens.values()),
             "bearing": getattr(fleet, 'bearing', 0),
-            "warp": getattr(fleet, 'warp_factor', 0)
+            "warp": getattr(fleet, 'warp_factor', 0),
+            # FleetIntel.cs:206-217 reveals full Composition at InScan
+            # (token design keys + quantities)
+            "composition": [
+                {
+                    "design_key": hex(t.design_key),
+                    "design_name": getattr(t, 'design_name', ''),
+                    "quantity": t.quantity,
+                }
+                for t in fleet.tokens.values()
+            ],
         }

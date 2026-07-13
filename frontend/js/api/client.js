@@ -115,19 +115,27 @@ const ApiClient = {
     },
 
     // Games
-    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null, race = null) {
+    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null, race = null, acceleratedStart = false) {
         return this.request('POST', '/games/', {
             name,
             player_count: playerCount,
             universe_size: universeSize,
             density,
             seed,
-            race
+            race,
+            accelerated_start: acceleratedStart
         }, { showLoading: true, loadingMessage: 'Creating game...' });
     },
 
     async listGames() {
         return this.request('GET', '/games/');
+    },
+
+    // Races
+    async validateRace(race) {
+        // Exact server-side advantage-point score for a race wizard
+        // payload: {points, legal, leftover_points, breakdown}
+        return this.request('POST', '/races/validate', race);
     },
 
     async getGame(gameId) {
@@ -199,6 +207,18 @@ const ApiClient = {
             boranium: delta.boranium || 0,
             germanium: delta.germanium || 0,
             colonists: delta.colonists || 0
+        });
+    },
+
+    async transferCargoFleet(gameId, fleetKey, empireId, targetFleetKey, delta) {
+        return this.request('POST', `/games/${gameId}/fleets/${fleetKey}/transfer`, {
+            empire_id: empireId,
+            target_fleet_key: targetFleetKey,
+            ironium: delta.ironium || 0,
+            boranium: delta.boranium || 0,
+            germanium: delta.germanium || 0,
+            colonists: delta.colonists || 0,
+            fuel: delta.fuel || 0
         });
     },
 

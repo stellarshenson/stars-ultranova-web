@@ -570,6 +570,32 @@ footer a:hover {
     color: #ff6666;
 }
 
+.queue-auto {
+    font-size: 0.75rem;
+    color: #7cb3ff;
+}
+
+.queue-percent {
+    font-size: 0.75rem;
+    color: #4aff4a;
+    margin-left: 0.5rem;
+}
+
+.queue-item-buttons {
+    display: flex;
+    gap: 0.15rem;
+}
+
+.queue-item-buttons .btn-small {
+    padding: 0 0.3rem;
+    font-size: 0.7rem;
+}
+
+.queue-item-buttons .btn-small:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
 .production-hint {
     margin-top: 0.5rem;
     color: #666;

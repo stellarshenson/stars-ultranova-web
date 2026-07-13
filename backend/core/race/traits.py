@@ -84,7 +84,12 @@ TRAIT_NAMES = {
     "NAS": "No Advanced Scanners",
     "LSP": "Low Starting Population",
     "BET": "Bleeding Edge Technology",
-    "RS": "Regenerating Shields"
+    "RS": "Regenerating Shields",
+    # Not a normal LRT (SecondaryTraits.cs:94 "This is not a normal
+    # LRT!"); grants starting tech and is excluded from LRT counts
+    # (RaceAdvantagePointCalculator.cs:340), so it is deliberately NOT
+    # in SECONDARY_TRAIT_KEYS.
+    "ExtraTech": "Extra Tech"
 }
 
 

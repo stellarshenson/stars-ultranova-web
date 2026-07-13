@@ -11,6 +11,7 @@ from .post_bombing_step import PostBombingStep
 from .star_update_step import StarUpdateStep
 from .split_fleet_step import SplitFleetStep
 from .scrap_fleet_step import ScrapFleetStep
+from .remote_mine_step import RemoteMineStep
 
 __all__ = [
     "ITurnStep",
@@ -20,5 +21,6 @@ __all__ = [
     "PostBombingStep",
     "StarUpdateStep",
     "SplitFleetStep",
-    "ScrapFleetStep"
+    "ScrapFleetStep",
+    "RemoteMineStep"
 ]

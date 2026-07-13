@@ -52,6 +52,17 @@ class SimpleDesign:
     battle_speed: float = 0.5
     initiative: int = 0
     weapons: List[Weapon] = field(default_factory=list)
+    # Mine laying rates (mines laid per year; full ShipDesign derives
+    # these from MineLayer components)
+    mine_count: int = 0
+    speed_bump_mine_count: int = 0
+    # Remote mining rate (kT per mineral per year at 100% concentration;
+    # full ShipDesign derives this from Mining Robot components)
+    mining_rate: int = 0
+    # Cloak units per kT and Tachyon Detector count (full ShipDesign
+    # derives these from Cloak / Tachyon Detector properties)
+    cloak_units: int = 0
+    tachyon_detectors: int = 0
 
     @property
     def power_rating(self) -> int:
@@ -94,6 +105,11 @@ class SimpleDesign:
             "hull_name": self.hull_name,
             "battle_speed": self.battle_speed,
             "initiative": self.initiative,
+            "mine_count": self.mine_count,
+            "speed_bump_mine_count": self.speed_bump_mine_count,
+            "mining_rate": self.mining_rate,
+            "cloak_units": self.cloak_units,
+            "tachyon_detectors": self.tachyon_detectors,
             "weapons": [
                 {"power": w.power, "range": w.range, "initiative": w.initiative,
                  "accuracy": w.accuracy, "group": w.group}
@@ -129,6 +145,11 @@ class SimpleDesign:
         design.hull_name = data.get("hull_name", "")
         design.battle_speed = data.get("battle_speed", 0.5)
         design.initiative = data.get("initiative", 0)
+        design.mine_count = data.get("mine_count", 0)
+        design.speed_bump_mine_count = data.get("speed_bump_mine_count", 0)
+        design.mining_rate = data.get("mining_rate", 0)
+        design.cloak_units = data.get("cloak_units", 0)
+        design.tachyon_detectors = data.get("tachyon_detectors", 0)
         design.weapons = [
             Weapon(power=w.get("power", 0), range=w.get("range", 0),
                    initiative=w.get("initiative", 0), accuracy=w.get("accuracy", 75),
@@ -188,6 +209,101 @@ STARTING_DESIGN_SPECS = [
             {"power": 16, "range": 3, "initiative": 9, "accuracy": 75, "group": "standardBeam"},
             {"power": 16, "range": 3, "initiative": 9, "accuracy": 75, "group": "standardBeam"},
         ],
+    },
+    # Per-PRT starting extras below follow canonical Stars! rules; the
+    # C# reference registers only colony ship / scout / starbase and
+    # leaves the per-PRT fleets as comments (GameInitialiser.cs:192-248,
+    # StarMapInitialiser.cs:259-302). Registered for every empire
+    # (superset), as C# registers designs the race can build anyway.
+    {
+        # HE starting colonizer: Mini-Colony Ship hull with the
+        # Settler's Delight engine, free at warp 5
+        # (StarMapInitialiser.cs:143-151)
+        "name": "Spore Cloud",
+        "hull_name": "Mini-Colony Ship",
+        "cost": {"ironium": 12, "boranium": 3, "germanium": 9, "energy": 22},
+        "mass": 32,
+        "armor": 20,
+        "fuel_capacity": 150,
+        "cargo_capacity": 10,
+        "can_colonize": True,
+        "free_warp_speed": 5,
+        "optimal_speed": 5,
+    },
+    {
+        # Armed scout for HE and WM (X-Ray-class beam)
+        "name": "Armed Probe",
+        "hull_name": "Scout",
+        "cost": {"ironium": 9, "boranium": 4, "germanium": 8, "energy": 26},
+        "mass": 27,
+        "armor": 20,
+        "fuel_capacity": 300,
+        "can_scan": True,
+        "scan_range_normal": 66,
+        "optimal_speed": 9,
+        "has_weapons": True,
+        "battle_speed": 1.0,
+        "initiative": 1,
+        "weapons": [
+            {"power": 16, "range": 1, "initiative": 9, "accuracy": 75, "group": "standardBeam"},
+        ],
+    },
+    {
+        # PP shielded scout
+        "name": "Shielded Scout",
+        "hull_name": "Scout",
+        "cost": {"ironium": 10, "boranium": 2, "germanium": 9, "energy": 26},
+        "mass": 28,
+        "armor": 20,
+        "shields": 25,
+        "fuel_capacity": 300,
+        "can_scan": True,
+        "scan_range_normal": 66,
+        "optimal_speed": 9,
+    },
+    {
+        # SD standard mine layer (Mine Dispenser 40)
+        "name": "Little Hen",
+        "hull_name": "Mini Mine Layer",
+        "cost": {"ironium": 20, "boranium": 10, "germanium": 10, "energy": 40},
+        "mass": 60,
+        "armor": 60,
+        "fuel_capacity": 400,
+        "optimal_speed": 6,
+        "mine_count": 40,
+    },
+    {
+        # SD speed-trap mine layer (Speed Trap 20)
+        "name": "Speed Turtle",
+        "hull_name": "Mini Mine Layer",
+        "cost": {"ironium": 20, "boranium": 10, "germanium": 10, "energy": 40},
+        "mass": 60,
+        "armor": 60,
+        "fuel_capacity": 400,
+        "optimal_speed": 6,
+        "speed_bump_mine_count": 20,
+    },
+    {
+        # IT starting privateer
+        "name": "Swashbuckler",
+        "hull_name": "Privateer",
+        "cost": {"ironium": 38, "boranium": 2, "germanium": 22, "energy": 80},
+        "mass": 150,
+        "armor": 150,
+        "fuel_capacity": 650,
+        "cargo_capacity": 250,
+        "optimal_speed": 6,
+    },
+    {
+        # JOAT starting mini-miner (also the ARM midget-miner stand-in;
+        # carries no robots, so it mines 0 until refitted)
+        "name": "Cotton Picker",
+        "hull_name": "Mini Miner",
+        "cost": {"ironium": 25, "boranium": 0, "germanium": 6, "energy": 50},
+        "mass": 80,
+        "armor": 50,
+        "fuel_capacity": 210,
+        "optimal_speed": 6,
     },
     {
         "name": "Starbase",
@@ -253,6 +369,10 @@ def _design_from_spec(spec: dict) -> SimpleDesign:
         dock_capacity=spec.get("dock_capacity", 0),
         battle_speed=spec.get("battle_speed", 0.5),
         initiative=spec.get("initiative", 0),
+        mine_count=spec.get("mine_count", 0),
+        speed_bump_mine_count=spec.get("speed_bump_mine_count", 0),
+        cloak_units=spec.get("cloak_units", 0),
+        tachyon_detectors=spec.get("tachyon_detectors", 0),
         weapons=[
             Weapon(power=w.get("power", 0), range=w.get("range", 0),
                    initiative=w.get("initiative", 0), accuracy=w.get("accuracy", 75),
@@ -312,10 +432,20 @@ def make_token(design, quantity: int = 1) -> ShipToken:
 
     # Mine laying rates (ShipDesign aggregates MineLayer components)
     token.mine_count = getattr(design, 'mine_count', 0)
+    # Remote mining rate per ship (ShipDesign aggregates Mining Robot
+    # components; SimpleDesign caches the same field)
+    token.mining_rate = getattr(design, 'mining_rate', 0)
     heavy = getattr(design, 'heavy_mines', None)
     token.heavy_mine_count = heavy.layer_rate if heavy else 0
     bump = getattr(design, 'speed_bump_mines', None)
-    token.speed_bump_mine_count = bump.layer_rate if bump else 0
+    token.speed_bump_mine_count = bump.layer_rate if bump else getattr(
+        design, 'speed_bump_mine_count', 0)
+
+    # Cloak units per kT and Tachyon Detector count (canonical
+    # cloaking rules; ShipDesign aggregates Cloak / Tachyon Detector
+    # properties, SimpleDesign caches the same fields)
+    token.cloak_units = getattr(design, 'cloak_units', 0)
+    token.tachyon_detectors = getattr(design, 'tachyon_detectors', 0)
 
     # Stargate (ShipDesign aggregates the Gate component; -1 = unlimited)
     gate = getattr(design, 'gate', None)

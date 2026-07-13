@@ -335,3 +335,296 @@ class TestHealthEndpoint:
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "healthy"}
+
+
+def _wizard_race(**overrides) -> dict:
+    """A default-Humanoids race wizard payload (JOAT baseline)."""
+    race = {
+        "name": "Humanoids",
+        "pluralName": "Humanoids",
+        "prt": "JOAT",
+        "lrts": [],
+        "growthRate": 15,
+        "colonistsPerResource": 1000,
+        "factoryEfficiency": 10,
+        "factoryCost": 10,
+        "factoryNumberPer10k": 10,
+        "mineEfficiency": 10,
+        "mineCost": 5,
+        "mineNumberPer10k": 10,
+        "gravityMin": 15, "gravityMax": 85,
+        "temperatureMin": 15, "temperatureMax": 85,
+        "radiationMin": 15, "radiationMax": 85,
+        "immuneGravity": False,
+        "immuneTemperature": False,
+        "immuneRadiation": False,
+        "researchCosts": {field: "normal" for field in (
+            "energy", "weapons", "propulsion", "construction",
+            "electronics", "biotechnology")},
+        "startAtLevel3": False,
+    }
+    race.update(overrides)
+    return race
+
+
+def _over_budget_race() -> dict:
+    """A grossly over-budget race design (scores -6359)."""
+    return _wizard_race(
+        name="Overreach",
+        prt="IT",
+        lrts=["IFE", "TT", "ARM", "ISB", "UR", "MA"],
+        growthRate=20,
+        colonistsPerResource=500,
+        factoryEfficiency=15,
+        factoryCost=5,
+        factoryNumberPer10k=25,
+        mineEfficiency=25,
+        mineCost=2,
+        mineNumberPer10k=25,
+        gravityMin=0, gravityMax=100,
+        temperatureMin=0, temperatureMax=100,
+        radiationMin=0, radiationMax=100,
+        researchCosts={field: "cheap" for field in (
+            "energy", "weapons", "propulsion", "construction",
+            "electronics", "biotechnology")},
+    )
+
+
+class TestRaceValidation:
+    """Tests for /api/races/validate and the create-game budget gate."""
+
+    def test_validate_default_humanoids(self, client):
+        """The default wizard race scores the pinned baseline and is
+        legal (see tests/unit/test_race_points.py for the C# parity
+        notes on the value)."""
+        response = client.post("/api/races/validate", json=_wizard_race())
+        assert response.status_code == 200
+        data = response.json()
+        assert data["points"] == 29
+        assert data["legal"] is True
+        assert data["leftover_points"] == 29
+        assert data["breakdown"]["raw_total"] == 29 * 3 + 1
+
+    def test_validate_over_budget(self, client):
+        """An over-budget design is reported illegal with the deficit."""
+        response = client.post("/api/races/validate",
+                               json=_over_budget_race())
+        assert response.status_code == 200
+        data = response.json()
+        assert data["points"] < 0
+        assert data["legal"] is False
+        assert data["leftover_points"] == 0
+
+    def test_create_game_rejects_over_budget_race(self, client):
+        """Over-budget race payloads are rejected with 422 and no
+        orphan game row (the web equivalent of the C# RaceDesigner
+        Finish_Click gate)."""
+        response = client.post("/api/games/", json={
+            "name": "Illegal Race Game",
+            "seed": 42,
+            "race": _over_budget_race(),
+        })
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "advantage point budget" in detail
+        assert "points" in detail
+
+        # No game row was created
+        games = client.get("/api/games/").json()
+        assert games == []
+
+    def test_create_game_with_legal_race_plays_a_turn(self, client):
+        """A legal custom race creates a game, lands on empire 1, and
+        survives a full turn generation."""
+        race = _wizard_race(name="Testers", pluralName="Testers")
+        response = client.post("/api/games/", json={
+            "name": "Legal Race Game",
+            "seed": 42,
+            "race": race,
+        })
+        assert response.status_code == 200
+        game_id = response.json()["id"]
+
+        empires = client.get(f"/api/games/{game_id}/empires").json()
+        empire1 = next(e for e in empires if e["id"] == 1)
+        assert empire1["race_name"] == "Testers"
+
+        # The real leftover budget (29, from the ported calculator)
+        # flows into the race used by the game state
+        state = client.get(
+            f"/api/games/{game_id}/empires/1/state").json()
+        assert state["empire"]["race"]["leftover_points"] == 29
+
+        # The accepted race plays a full turn without error
+        response = client.post(f"/api/games/{game_id}/turn/generate")
+        assert response.status_code == 200
+        assert response.json()["turn"] == 2101
+
+
+class TestFleetToFleetTransfer:
+    """Tests for POST /fleets/{key}/transfer (fleet-to-fleet cargo).
+
+    The C# reference applies this transfer client-side only
+    (FleetDetail.cs:766-786); the web port is server-authoritative
+    and rejects invalid orders instead of clamping.
+    """
+
+    def _setup(self, client):
+        """Create a seeded game; return (game_id, fleet lookup)."""
+        response = client.post("/api/games/", json={
+            "name": "Xfer Game", "player_count": 2,
+            "universe_size": "small", "seed": 777,
+        })
+        game_id = response.json()["id"]
+        summaries = client.get(
+            f"/api/games/{game_id}/fleets/",
+            params={"empire_id": 1}).json()
+
+        def by_name(prefix):
+            key = next(f["key"] for f in summaries
+                       if f["name"].startswith(prefix))
+            return client.get(f"/api/games/{game_id}/fleets/{key}").json()
+
+        return game_id, by_name
+
+    def _post(self, client, game_id, fleet_key, target_key, **delta):
+        return client.post(
+            f"/api/games/{game_id}/fleets/{fleet_key}/transfer",
+            json={"empire_id": 1, "target_fleet_key": target_key,
+                  **delta})
+
+    def test_transfer_colonists_both_directions(self, client):
+        """Positive deltas pull from the target fleet; negative push
+        back. The Santa Maria launches with 25 kT of colonists."""
+        game_id, by_name = self._setup(client)
+        teamster = by_name("Teamster")
+        santa = by_name("Santa Maria")
+        assert santa["cargo"]["colonists"] == 2500
+
+        response = self._post(client, game_id, teamster["key"],
+                              santa["key"], colonists=500)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["fleet"]["cargo"]["colonists"] == 500
+        assert body["other_fleet"]["cargo"]["colonists"] == 2000
+
+        # Reverse direction: negative pushes back to the Santa Maria
+        response = self._post(client, game_id, teamster["key"],
+                              santa["key"], colonists=-200)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["fleet"]["cargo"]["colonists"] == 300
+        assert body["other_fleet"]["cargo"]["colonists"] == 2200
+
+    def test_transfer_minerals_and_fuel(self, client):
+        """Minerals loaded off the homeworld move between fleets;
+        fuel moves once the receiver has burned some."""
+        game_id, by_name = self._setup(client)
+        teamster = by_name("Teamster")
+        santa = by_name("Santa Maria")
+
+        # Load 30 ironium onto the Teamster from the homeworld and
+        # make room on the Santa Maria (it launches full of colonists)
+        response = client.post(
+            f"/api/games/{game_id}/fleets/{teamster['key']}/cargo",
+            json={"empire_id": 1, "ironium": 30})
+        assert response.status_code == 200
+        response = self._post(client, game_id, teamster["key"],
+                              santa["key"], colonists=1000)
+        assert response.status_code == 200
+
+        # Move 10 ironium Teamster -> Santa Maria
+        response = self._post(client, game_id, santa["key"],
+                              teamster["key"], ironium=10)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["fleet"]["cargo"]["ironium"] == 10
+        assert body["other_fleet"]["cargo"]["ironium"] == 20
+
+        # Burn a hole in the Santa Maria's tank, then refill from
+        # the Teamster
+        from backend.services.game_manager import get_game_manager
+        manager = get_game_manager()
+        server_data = manager._load_game_state(game_id)
+        santa_fleet = server_data.all_empires[1].owned_fleets[
+            santa["key"]]
+        santa_fleet.fuel_available -= 50
+        manager._save_game_state(game_id, server_data)
+
+        response = self._post(client, game_id, santa["key"],
+                              teamster["key"], fuel=50)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["fleet"]["fuel_available"] == \
+            body["fleet"]["fuel_capacity"]
+        assert body["other_fleet"]["fuel_available"] == \
+            body["other_fleet"]["fuel_capacity"] - 50
+
+    def test_transfer_validation_errors(self, client):
+        """Invalid orders are rejected with 400 and a reason."""
+        game_id, by_name = self._setup(client)
+        teamster = by_name("Teamster")
+        santa = by_name("Santa Maria")
+        starbase = by_name("Starbase")
+
+        # Same fleet
+        response = self._post(client, game_id, teamster["key"],
+                              teamster["key"], ironium=1)
+        assert response.status_code == 400
+        assert "same fleet" in response.json()["detail"]
+
+        # Starbase counterparty
+        response = self._post(client, game_id, teamster["key"],
+                              starbase["key"], ironium=1)
+        assert response.status_code == 400
+        assert "Starbases" in response.json()["detail"]
+
+        # Giver lacks stock (Santa Maria carries no minerals)
+        response = self._post(client, game_id, teamster["key"],
+                              santa["key"], ironium=10)
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Not enough ironium"
+
+        # Receiver fuel capacity exceeded (both launch with full tanks)
+        response = self._post(client, game_id, teamster["key"],
+                              santa["key"], fuel=10)
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Fuel capacity exceeded"
+
+        # Receiver cargo capacity exceeded: fill the Teamster to 60 of
+        # its 70 kT, then try to pull 20 kT of colonists on top
+        response = client.post(
+            f"/api/games/{game_id}/fleets/{teamster['key']}/cargo",
+            json={"empire_id": 1, "ironium": 60})
+        assert response.status_code == 200
+        response = self._post(client, game_id, teamster["key"],
+                              santa["key"], colonists=2000)
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Cargo capacity exceeded"
+
+        # Foreign fleet is not addressable
+        foreign = client.get(
+            f"/api/games/{game_id}/fleets/",
+            params={"empire_id": 2}).json()
+        response = self._post(client, game_id, teamster["key"],
+                              foreign[0]["key"], ironium=1)
+        assert response.status_code == 400
+        assert "not owned" in response.json()["detail"]
+
+    def test_transfer_requires_same_location(self, client):
+        """Fleets apart in space cannot transfer."""
+        game_id, by_name = self._setup(client)
+        teamster = by_name("Teamster")
+        santa = by_name("Santa Maria")
+
+        from backend.services.game_manager import get_game_manager
+        manager = get_game_manager()
+        server_data = manager._load_game_state(game_id)
+        fleet = server_data.all_empires[1].owned_fleets[teamster["key"]]
+        fleet.position.x += 50
+        manager._save_game_state(game_id, server_data)
+
+        response = self._post(client, game_id, teamster["key"],
+                              santa["key"], colonists=100)
+        assert response.status_code == 400
+        assert "same location" in response.json()["detail"]

@@ -47,9 +47,9 @@ const GameState = {
     /**
      * Create a new game.
      */
-    async createGame(name, playerCount, universeSize, density, seed, race = null) {
+    async createGame(name, playerCount, universeSize, density, seed, race = null, acceleratedStart = false) {
         try {
-            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed, race);
+            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart);
             await this.refreshState();
             this.nebulae = await ApiClient.getNebulae(this.game.id);
             this.emit('gameCreated', this.game);

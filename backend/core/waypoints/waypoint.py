@@ -30,6 +30,7 @@ class WaypointTask(IntEnum):
     INVADE = 4
     SCRAP = 5
     SPLIT_MERGE = 6
+    REMOTE_MINE = 7
 
 
 class WaypointTaskBase(ABC):
@@ -68,6 +69,8 @@ class WaypointTaskBase(ABC):
             return ScrapTaskObj.from_dict(data)
         elif normalized == "splitmerge":
             return SplitMergeTaskObj.from_dict(data)
+        elif normalized == "remotemine":
+            return RemoteMineTaskObj.from_dict(data)
         return NoTaskObj()
 
 
@@ -251,6 +254,34 @@ class SplitMergeTaskObj(WaypointTaskBase):
 
 # Backwards compatibility alias
 SplitMergeTask = SplitMergeTaskObj
+
+
+@dataclass
+class RemoteMineTaskObj(WaypointTaskBase):
+    """
+    Remote mining task.
+
+    No C# equivalent - remote mining is a stub in the reference
+    (Common/Waypoints/ has no mining task and Waypoint.cs LoadTask,
+    lines 125-157, has no mining case); canonical Stars! rules apply
+    (executed by RemoteMineStep each year at waypoint 0).
+    """
+
+    @property
+    def name(self) -> str:
+        return "RemoteMineTask"
+
+    @property
+    def task_type(self) -> WaypointTask:
+        return WaypointTask.REMOTE_MINE
+
+    @classmethod
+    def from_dict(cls, data: dict) -> RemoteMineTaskObj:
+        return cls()
+
+
+# Backwards compatibility alias
+RemoteMineTask = RemoteMineTaskObj
 
 
 def get_task_type(task: Union[WaypointTask, WaypointTaskBase, None]) -> WaypointTask:

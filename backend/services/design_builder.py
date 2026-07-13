@@ -96,6 +96,9 @@ def build_ship_design(
         return None, f"Unknown hull: {hull_name}"
     if not _tech_ok(empire, hull_comp):
         return None, f"Insufficient tech for hull {hull_name}"
+    race_traits = _race_traits(empire)
+    if not hull_comp.is_available_to_race(race_traits):
+        return None, f"{hull_comp.name} is not available to your race"
 
     # Deep copy: Component.clone shares the nested modules list with
     # the catalog, and slot allocation must never mutate the catalog
@@ -128,6 +131,8 @@ def build_ship_design(
                           f"{module.get('component_maximum', 1)} components")
         if not _tech_ok(empire, comp):
             return None, f"Insufficient tech for {comp_name}"
+        if not comp.is_available_to_race(race_traits):
+            return None, f"{comp.name} is not available to your race"
 
         module["allocated_component"] = comp.name
         module["component_count"] = count
@@ -143,6 +148,20 @@ def build_ship_design(
         return None, "A ship design must have an engine"
 
     return design, None
+
+
+def _race_traits(empire) -> list:
+    """
+    Trait codes (PRT + LRTs) for component availability checks.
+
+    RaceRestriction.cs:44-49 semantics: required(2) hulls (e.g. the
+    ARM-only miner hulls) need the trait present; not_available(0)
+    (e.g. Maxi Miner for OBRM) fails when the trait is present.
+    """
+    race = getattr(empire, 'race', None)
+    if race is None:
+        return []
+    return list(race.traits) + [race.primary_trait]
 
 
 def _tech_ok(empire, component) -> bool:

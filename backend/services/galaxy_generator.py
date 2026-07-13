@@ -11,6 +11,9 @@ from typing import List, Dict, Tuple, Optional
 
 from ..core.data_structures import NovaPoint, Resources, TechLevel
 from ..core.data_structures.empire_data import EmpireData
+from ..core.defenses import (
+    best_defense_type, best_planetary_scanner, race_trait_codes
+)
 from ..core.game_objects.star import Star
 from ..core.game_objects.fleet import Fleet, ShipToken
 from ..core.race.race import Race
@@ -117,7 +120,8 @@ class GalaxyGenerator:
         self,
         player_count: int = 2,
         universe_size: str = "medium",
-        player_race: Optional[Race] = None
+        player_race: Optional[Race] = None,
+        accelerated_start: bool = False
     ) -> ServerData:
         """
         Generate a new game.
@@ -126,6 +130,9 @@ class GalaxyGenerator:
             player_count: Number of players.
             universe_size: Size of universe.
             player_race: Optional custom race for the human player.
+            accelerated_start: Accelerated BBS play (GameSettings.cs:63);
+                its only effect is the higher starting population
+                (Race.cs GetStartingPopulation, lines 340-355).
 
         Returns:
             Initialized ServerData.
@@ -133,6 +140,9 @@ class GalaxyGenerator:
         server_data = ServerData()
         server_data.turn_year = STARTING_YEAR
         server_data.game_in_progress = True
+        # Remember the creation seed so turn generation can be made
+        # reproducible (see GameManager.generate_turn)
+        server_data.game_seed = self.seed
 
         # Get universe dimensions
         width, height = UNIVERSE_SIZES.get(universe_size, UNIVERSE_SIZES["medium"])
@@ -179,17 +189,68 @@ class GalaxyGenerator:
 
             # Set star ownership
             home_star.owner = empire_id
-            home_star.colonists = 250000  # Starting population
+            # Starting population (StarMapInitialiser.cs:449 via
+            # Race.cs GetStartingPopulation): 25000 normal, 100000
+            # accelerated BBS, x0.7 with LSP
+            home_star.colonists = race.get_starting_population(
+                accelerated_start)
             home_star.factories = 10
             home_star.mines = 10
             home_star.this_race = race
 
-            # Starting surface minerals and planetary scanner
+            # Homeworld habitability equals the race's optimum values
+            # (AllocateHomeStarResources, StarMapInitialiser.cs:441-443
+            # uses race.OptimumRadiationLevel etc. = tolerance centre)
+            home_star.gravity = (race.gravity_min + race.gravity_max) // 2
+            home_star.temperature = (
+                race.temperature_min + race.temperature_max) // 2
+            home_star.radiation = (race.radiation_min + race.radiation_max) // 2
+            # Pristine environment mirror - anchor for the terraform
+            # limit and Retro Bomb reversal (Star.cs:64-66)
+            home_star.original_gravity = home_star.gravity
+            home_star.original_temperature = home_star.temperature
+            home_star.original_radiation = home_star.radiation
+
+            # Starting surface minerals: 300-500 kT of each mineral
+            # (PrepareResources, StarMapInitialiser.cs:305-316; uses
+            # the seeded generator rng for reproducibility)
             home_star.resources_on_hand = Resources(
-                ironium=600, boranium=300, germanium=600, energy=0
+                ironium=self.rng.randint(300, 500),
+                boranium=self.rng.randint(300, 500),
+                germanium=self.rng.randint(300, 500),
+                energy=0
             )
+            # Homeworld installations. C# fixes ScannerType "Scoper
+            # 150" / ScanRange 50 / DefenseType "SDI" regardless of
+            # race (StarMapInitialiser.cs:462-464, internally
+            # inconsistent - Scoper 150 scans 150 ly). Web deviation:
+            # Viewer 50 / SDI baseline, then upgraded to the best
+            # planetary scanner / defense type the race's starting
+            # tech unlocks (canonical rule; e.g. JOAT with Electronics
+            # 3 starts on Scoper 150 at its true 150 ly range). Races
+            # whose restrictions allow nothing better (AR) keep the
+            # C# baseline.
             home_star.scan_range = 50
             home_star.scanner_type = "Viewer 50"
+            home_star.pen_scan_range = 0
+            home_star.defense_type = "SDI"
+            best_scanner = best_planetary_scanner(
+                race_trait_codes(race), empire.research_levels)
+            if (best_scanner is not None
+                    and best_scanner.scan_range_normal
+                    > home_star.scan_range):
+                home_star.scanner_type = best_scanner.name
+                home_star.scan_range = best_scanner.scan_range_normal
+                home_star.pen_scan_range = \
+                    best_scanner.scan_range_penetrating
+            best_defense = best_defense_type(
+                empire.research_levels, race_trait_codes(race))
+            if best_defense != "None":
+                home_star.defense_type = best_defense
+
+            # Spend leftover advantage points on the homeworld
+            # (StarMapInitialiser.cs:466)
+            self._adjust_homeworld_leftover_points(home_star, race)
 
             # Starting fleets: scout and loaded colony ship
             for fleet in self._create_starting_fleets(empire, home_star, race):
@@ -364,6 +425,10 @@ class GalaxyGenerator:
             star.gravity = self.rng.randint(0, 100)
             star.temperature = self.rng.randint(0, 100)
             star.radiation = self.rng.randint(0, 100)
+            # Pristine environment mirror (Star.cs:64-66)
+            star.original_gravity = star.gravity
+            star.original_temperature = star.temperature
+            star.original_radiation = star.radiation
 
             # Random mineral concentrations (1-100)
             star.ironium_concentration = self.rng.randint(1, 100)
@@ -715,10 +780,15 @@ class GalaxyGenerator:
             star.gravity = 50
             star.temperature = 50
             star.radiation = 50
-            # Good mineral concentrations
-            star.ironium_concentration = self.rng.randint(50, 80)
-            star.boranium_concentration = self.rng.randint(50, 80)
-            star.germanium_concentration = self.rng.randint(50, 80)
+            # Pristine environment mirror (Star.cs:64-66)
+            star.original_gravity = 50
+            star.original_temperature = 50
+            star.original_radiation = 50
+            # Good mineral concentrations, 50-100% each
+            # (PrepareResources, StarMapInitialiser.cs:313-315)
+            star.ironium_concentration = self.rng.randint(50, 100)
+            star.boranium_concentration = self.rng.randint(50, 100)
+            star.germanium_concentration = self.rng.randint(50, 100)
 
         return selected
 
@@ -742,8 +812,48 @@ class GalaxyGenerator:
         empire.race_name = race.name
         empire.turn_year = STARTING_YEAR
 
-        # Starting tech levels
-        empire.research_levels = TechLevel.from_level(3)
+        # Starting tech levels by PRT
+        # (GameInitialiser.cs ProcessPrimaryTraits, lines 187-254)
+        empire.research_levels = TechLevel()
+        prt = race.primary_trait
+        if prt == "SS":
+            empire.research_levels.levels["Electronics"] = 5
+        elif prt == "WM":
+            empire.research_levels.levels["Propulsion"] = 1
+            empire.research_levels.levels["Energy"] = 1
+        elif prt == "CA":
+            empire.research_levels.levels["Weapons"] = 1
+            empire.research_levels.levels["Propulsion"] = 1
+            empire.research_levels.levels["Energy"] = 1
+            empire.research_levels.levels["Biotechnology"] = 6
+        elif prt == "SD":
+            empire.research_levels.levels["Propulsion"] = 2
+            empire.research_levels.levels["Biotechnology"] = 2
+        elif prt == "PP":
+            empire.research_levels.levels["Energy"] = 4
+        elif prt == "IT":
+            empire.research_levels.levels["Propulsion"] = 5
+            empire.research_levels.levels["Construction"] = 5
+        elif prt == "AR":
+            empire.research_levels.levels["Energy"] = 1
+        elif prt == "JOAT":
+            empire.research_levels = TechLevel.from_level(3)
+        # HE and IS start with no tech
+
+        # LRT starting tech (GameInitialiser.cs ProcessSecondaryTraits)
+        if race.has_trait("IFE"):
+            # Propulsion tech starts one level higher
+            # (GameInitialiser.cs:267-275)
+            empire.research_levels.levels["Propulsion"] += 1
+        if race.has_trait("ExtraTech"):
+            # "Start at Tech 3" checkbox (pseudo-trait, not a normal
+            # LRT). C# Nova boosts ALL six fields - +1 for JOAT, +3
+            # otherwise (GameInitialiser.cs:355-376) - deviating from
+            # canonical Stars! "expensive fields only start at 3"; we
+            # port the C# code.
+            boost = 1 if prt == "JOAT" else 3
+            for key in empire.research_levels.levels:
+                empire.research_levels.levels[key] += boost
 
         # Research allocation (even distribution)
         empire.research_budget = 15  # 15% of resources to research
@@ -761,6 +871,96 @@ class GalaxyGenerator:
 
         return empire
 
+    def _adjust_homeworld_leftover_points(self, star: Star, race: Race) -> None:
+        """
+        Spend leftover race-design advantage points on the homeworld.
+
+        Port of: HomeStarLeftoverpointsAdjuster.cs Adjust (lines 12-82).
+        The budget is clamped to [0, 50] as in Race.cs
+        GetLeftoverAdvantagePoints (lines 215-221).
+        """
+        points = max(0, min(50, race.leftover_points))
+        if points == 0:
+            return
+
+        target = race.leftover_point_target
+        if target == "Mineral concentration":
+            # 1% for three points for the poorest mineral; poorest picked
+            # by the nested compares (HomeStarLeftoverpointsAdjuster.cs:22-48)
+            additional = points // 3
+            conc = star.mineral_concentration
+            if conc.boranium > conc.germanium:
+                if conc.germanium > conc.ironium:
+                    conc.ironium += additional
+                else:
+                    conc.germanium += additional
+            else:
+                if conc.boranium > conc.ironium:
+                    conc.ironium += additional
+                else:
+                    conc.boranium += additional
+        elif target == "Mines":
+            # one mine for two points (lines 49-53)
+            star.mines += points // 2
+        elif target == "Factories":
+            # one factory for five points (lines 54-58)
+            star.factories += points // 5
+        elif target == "Defenses":
+            # one defense for ten points (lines 59-63)
+            star.defenses += points // 10
+        else:
+            # "Surface minerals" and any unknown target (lines 64-81):
+            # 10 kT per point, distribution weighted for the rarest
+            # surface minerals
+            total = points * 10
+            germanium = max(1, star.resources_on_hand.germanium)
+            boranium = max(1, star.resources_on_hand.boranium)
+            ironium = max(1, star.resources_on_hand.ironium)
+            dividend = float(boranium + germanium + ironium)
+            factor_boranium = dividend / boranium
+            factor_germanium = dividend / germanium
+            factor_ironium = dividend / ironium
+            distributed_total = (factor_boranium + factor_germanium
+                                 + factor_ironium)
+            star.resources_on_hand.boranium += int(
+                round(factor_boranium / distributed_total * total))
+            star.resources_on_hand.germanium += int(
+                round(factor_germanium / distributed_total * total))
+            star.resources_on_hand.ironium += int(
+                round(factor_ironium / distributed_total * total))
+
+    # Per-PRT starting fleet composition, as (design name, count) pairs.
+    # C# implements only the HE 3x mini-colony-ship and the universal
+    # single scout (StarMapInitialiser.cs AllocateHomeStarOrbitalInstallations,
+    # lines 363-420); the remaining per-PRT extras are canonical Stars!
+    # rules that the C# reference leaves as comments only
+    # (GameInitialiser.cs:192-248).
+    PRT_STARTING_FLEETS = {
+        "HE": [("Armed Probe", 1), ("Spore Cloud", 3)],
+        "SS": [("Long Range Scout", 1), ("Santa Maria", 1)],
+        "WM": [("Armed Probe", 1), ("Santa Maria", 1)],
+        # CA orbital-terraformer is comment-only in C#
+        # (GameInitialiser.cs:206-212); scout + colony ship instead
+        "CA": [("Long Range Scout", 1), ("Santa Maria", 1)],
+        "IS": [("Long Range Scout", 1), ("Santa Maria", 1)],
+        "SD": [("Long Range Scout", 1), ("Santa Maria", 1),
+               ("Little Hen", 1), ("Speed Turtle", 1)],
+        # PP second starting planet in a non-tiny universe is not
+        # implemented in C# either (comment only)
+        "PP": [("Shielded Scout", 2), ("Santa Maria", 1)],
+        # IT second planet with 100/250 stargates is not implemented
+        # in C# either (comment only)
+        "IT": [("Long Range Scout", 1), ("Santa Maria", 1),
+               ("Stalwart Defender", 1), ("Swashbuckler", 1)],
+        # AR colonize-to-orbit semantics are a separate gap; the AR
+        # colonizer difference in C# is the Orbital Construction Module
+        # (StarMapInitialiser.cs:155-158)
+        "AR": [("Long Range Scout", 1), ("Santa Maria", 1)],
+        "JOAT": [("Long Range Scout", 2), ("Santa Maria", 1),
+                 ("Teamster", 1), ("Cotton Picker", 1),
+                 ("Stalwart Defender", 1)],
+    }
+
     def _create_starting_fleets(
         self,
         empire: EmpireData,
@@ -768,10 +968,11 @@ class GalaxyGenerator:
         race: Race
     ) -> List[Fleet]:
         """
-        Create starting fleets for an empire.
+        Create starting fleets for an empire, by primary racial trait.
 
-        Matches the original starting force: a Long Range Scout and a
-        Santa Maria colony ship pre-loaded with colonists.
+        C# reference implements the universal scout + colony ship (3x
+        mini-colony for HE); the per-PRT extras follow the canonical
+        Stars! table left as comments in GameInitialiser.cs:192-248.
 
         Args:
             empire: Empire receiving the fleets.
@@ -784,31 +985,34 @@ class GalaxyGenerator:
         from .ship_specs import find_design, make_token
         from ..core.data_structures.cargo import Cargo
 
+        composition = list(self.PRT_STARTING_FLEETS.get(
+            race.primary_trait, self.PRT_STARTING_FLEETS["JOAT"]))
+        if race.has_trait("ARM"):
+            # ARM: "Start the game with two midget miners" - TODO comment
+            # in C# (GameInitialiser.cs:282-286); Cotton Picker mini-miner
+            # stands in for the midget miner
+            composition.append(("Cotton Picker", 2))
+
         fleets: List[Fleet] = []
-
-        scout_design = find_design(empire, "Long Range Scout")
-        scout = Fleet()
-        scout.key = empire.get_next_fleet_key()
-        scout.name = "Long Range Scout #1"
-        scout.position = NovaPoint(home_star.position.x, home_star.position.y)
-        scout.in_orbit_name = home_star.name
-        token = make_token(scout_design)
-        scout.tokens[token.design_key] = token
-        scout.fuel_available = scout.total_fuel_capacity
-        fleets.append(scout)
-
-        colony_design = find_design(empire, "Santa Maria")
-        colony = Fleet()
-        colony.key = empire.get_next_fleet_key()
-        colony.name = "Santa Maria #2"
-        colony.position = NovaPoint(home_star.position.x, home_star.position.y)
-        colony.in_orbit_name = home_star.name
-        token = make_token(colony_design)
-        colony.tokens[token.design_key] = token
-        colony.fuel_available = colony.total_fuel_capacity
-        # Pre-loaded with 2500 colonists (25 kT), as in the original
-        colony.cargo = Cargo(colonists_in_kilotons=25)
-        fleets.append(colony)
+        for design_name, count in composition:
+            design = find_design(empire, design_name)
+            for i in range(count):
+                fleet = Fleet()
+                fleet.key = empire.get_next_fleet_key()
+                fleet.name = f"{design_name} #{i + 1}"
+                fleet.position = NovaPoint(
+                    home_star.position.x, home_star.position.y)
+                fleet.in_orbit_name = home_star.name
+                token = make_token(design)
+                fleet.tokens[token.design_key] = token
+                fleet.fuel_available = fleet.total_fuel_capacity
+                if design.can_colonize:
+                    # Colony ships launch pre-loaded with colonists up
+                    # to their cargo capacity (25 kT Santa Maria,
+                    # 10 kT Spore Cloud)
+                    fleet.cargo = Cargo(
+                        colonists_in_kilotons=design.cargo_capacity)
+                fleets.append(fleet)
 
         return fleets
 
