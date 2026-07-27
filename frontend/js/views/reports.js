@@ -15,8 +15,15 @@ const Reports = {
     TABS: {
         planets: { label: 'Planets', icon: '\uD83C\uDF0D' },
         fleets: { label: 'Fleets', icon: '\uD83D\uDE80' },
-        research: { label: 'Research', icon: '\uD83D\uDD2C' }
+        research: { label: 'Research', icon: '\uD83D\uDD2C' },
+        score: { label: 'Score', icon: '\uD83C\uDFC6' }
     },
+
+    // Line colors for the score history graph, indexed by empire id
+    SCORE_GRAPH_COLORS: [
+        '#66ccff', '#ff6666', '#66ff66', '#ffcc44',
+        '#cc66ff', '#ff9944', '#44ffcc', '#ff66cc'
+    ],
 
     /**
      * Initialize the reports component.
@@ -132,9 +139,166 @@ const Reports = {
                 return this.renderFleets();
             case 'research':
                 return this.renderResearch();
+            case 'score':
+                return this.renderScore();
             default:
                 return '<p>Unknown tab</p>';
         }
+    },
+
+    /**
+     * Render the score report: one row per empire with the C# Score
+     * report columns (ScoreReport.Designer.cs:91-146), plus a score
+     * history graph. Scores are public to all players (Intel.AllScores).
+     * @returns {string} HTML content
+     */
+    renderScore() {
+        const scores = (window.GameState && GameState.scores) || [];
+        if (scores.length === 0) {
+            return '<p class="info-text">No score data available.</p>';
+        }
+
+        // C# column order: Race, Rank, Score, Planets, Starbases,
+        // Unarmed Ships, Escort Ships, Capital Ships, Tech Levels,
+        // Resources (the web shows the race name where C# rendered
+        // the EmpireId as hex, ScoreReport.cs:68)
+        const columns = [
+            ['race_name', 'Race'],
+            ['rank', 'Rank'],
+            ['score', 'Score'],
+            ['planets', 'Planets'],
+            ['starbases', 'Starbases'],
+            ['unarmed_ships', 'Unarmed Ships'],
+            ['escort_ships', 'Escort Ships'],
+            ['capital_ships', 'Capital Ships'],
+            ['tech_level', 'Tech Levels'],
+            ['resources', 'Resources']
+        ];
+
+        let sortedScores = [...scores];
+        if (this.sortColumn) {
+            sortedScores.sort((a, b) => {
+                let aVal = a[this.sortColumn] ?? 0;
+                let bVal = b[this.sortColumn] ?? 0;
+                if (typeof aVal === 'string') {
+                    aVal = aVal.toLowerCase();
+                    bVal = (bVal || '').toLowerCase();
+                }
+                if (aVal < bVal) return this.sortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return this.sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        return `
+            <div class="report-table-container">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            ${columns.map(([key, label]) => `
+                            <th class="sortable" data-column="${key}">
+                                ${label} ${this.getSortIndicator(key)}
+                            </th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sortedScores.map(s => `
+                            <tr class="report-row">
+                                <td>${s.race_name || `Empire ${s.empire_id}`}</td>
+                                <td class="number">${s.rank}</td>
+                                <td class="number">${s.score}</td>
+                                <td class="number">${s.planets}</td>
+                                <td class="number">${s.starbases}</td>
+                                <td class="number">${s.unarmed_ships}</td>
+                                <td class="number">${s.escort_ships}</td>
+                                <td class="number">${s.capital_ships}</td>
+                                <td class="number">${s.tech_level}</td>
+                                <td class="number">${s.resources}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            ${this.renderScoreHistoryGraph(scores)}
+        `;
+    },
+
+    /**
+     * Score history line graph (SVG): one polyline per empire,
+     * x = year, y = score. Canonical Stars! shows this graph in its
+     * Score report; the history itself is a web extension.
+     * @param {Array} scores - Current score records (for race names)
+     * @returns {string} SVG markup or empty string
+     */
+    renderScoreHistoryGraph(scores) {
+        const history = (window.GameState && GameState.scoreHistory) || {};
+        const series = Object.entries(history)
+            .filter(([, entries]) => entries && entries.length > 0);
+        if (series.length === 0) {
+            return '';
+        }
+
+        const width = 560;
+        const height = 200;
+        const pad = 30;
+
+        let minYear = Infinity;
+        let maxYear = -Infinity;
+        let maxScore = 1;
+        for (const [, entries] of series) {
+            for (const e of entries) {
+                minYear = Math.min(minYear, e.year);
+                maxYear = Math.max(maxYear, e.year);
+                maxScore = Math.max(maxScore, e.score);
+            }
+        }
+        const yearSpan = Math.max(1, maxYear - minYear);
+
+        const x = (year) => pad + ((year - minYear) / yearSpan) * (width - 2 * pad);
+        const y = (score) => height - pad - (score / maxScore) * (height - 2 * pad);
+
+        const raceName = (empireId) => {
+            const record = scores.find(s => s.empire_id === parseInt(empireId));
+            return record ? record.race_name : `Empire ${empireId}`;
+        };
+
+        const lines = series.map(([empireId, entries]) => {
+            const color = this.SCORE_GRAPH_COLORS[
+                parseInt(empireId) % this.SCORE_GRAPH_COLORS.length];
+            const points = entries
+                .map(e => `${x(e.year).toFixed(1)},${y(e.score).toFixed(1)}`)
+                .join(' ');
+            return `<polyline points="${points}" fill="none"
+                        stroke="${color}" stroke-width="2"/>`;
+        }).join('');
+
+        const legend = series.map(([empireId], i) => {
+            const color = this.SCORE_GRAPH_COLORS[
+                parseInt(empireId) % this.SCORE_GRAPH_COLORS.length];
+            return `<span style="color: ${color}; margin-right: 12px;">
+                        &#9632; ${raceName(empireId)}</span>`;
+        }).join('');
+
+        return `
+            <div class="score-history-graph">
+                <h3>Score History</h3>
+                <svg viewBox="0 0 ${width} ${height}" width="100%"
+                     style="max-width: ${width}px; background: rgba(0,0,0,0.3);">
+                    <line x1="${pad}" y1="${height - pad}" x2="${width - pad}"
+                          y2="${height - pad}" stroke="#666"/>
+                    <line x1="${pad}" y1="${pad}" x2="${pad}"
+                          y2="${height - pad}" stroke="#666"/>
+                    <text x="${pad}" y="${height - pad + 14}" fill="#999"
+                          font-size="10">${minYear}</text>
+                    <text x="${width - pad}" y="${height - pad + 14}" fill="#999"
+                          font-size="10" text-anchor="end">${maxYear}</text>
+                    <text x="${pad - 4}" y="${pad}" fill="#999" font-size="10"
+                          text-anchor="end">${maxScore}</text>
+                    ${lines}
+                </svg>
+                <div>${legend}</div>
+            </div>
+        `;
     },
 
     /**
@@ -551,6 +715,9 @@ const Reports = {
         } else if (this.currentTab === 'research') {
             csv = this.exportResearchCSV();
             filename = 'research.csv';
+        } else if (this.currentTab === 'score') {
+            csv = this.exportScoresCSV();
+            filename = 'scores.csv';
         }
 
         // Download
@@ -594,6 +761,23 @@ const Reports = {
             csv += `${f.fuel || 0},${f.fuel_capacity || 0},`;
             csv += `${this.getCargoTotal(f)},${f.cargo_capacity || 0},`;
             csv += `${this.getFleetTask(f)}\n`;
+        }
+
+        return csv;
+    },
+
+    /**
+     * Export scores to CSV.
+     * @returns {string} CSV content
+     */
+    exportScoresCSV() {
+        const scores = (GameState.scores || []);
+        let csv = 'Race,Rank,Score,Planets,Starbases,UnarmedShips,EscortShips,CapitalShips,TechLevels,Resources\n';
+
+        for (const s of scores) {
+            csv += `${s.race_name || s.empire_id},${s.rank},${s.score},${s.planets},`;
+            csv += `${s.starbases},${s.unarmed_ships},${s.escort_ships},`;
+            csv += `${s.capital_ships},${s.tech_level},${s.resources}\n`;
         }
 
         return csv;

@@ -57,10 +57,37 @@ const Dialogs = {
         }
     },
 
+    // Victory targets: [settings key, wizard caption, default checked,
+    // default value, max]. Captions and defaults follow the C# New
+    // Game wizard (NewGameWizard.Designer.cs) and GameSettings.cs:49-58.
+    // SecondPlaceScore has no C# wizard control (defect); the web
+    // exposes it with the canonical "exceeds second place by N%" label.
+    VICTORY_TARGETS: [
+        ['planets_owned', 'Owns the following number of planets (%)', true, 60, 100],
+        ['tech_levels', 'Attains the following tech-level', false, 22, 26],
+        ['number_of_fields', 'In the following number of fields', false, 4, 6],
+        ['total_score', 'Exceeds a score of', false, 1000, 100000],
+        ['second_place_score', 'Exceeds second-place score by (%)', false, 0, 1000],
+        ['production_capacity', 'Has production capacity of (in K resources)', false, 1000, 100000],
+        ['capital_ships', 'Number of capital ships', false, 100, 100000],
+        ['highest_score', 'Has the highest score after (years)', false, 100, 10000]
+    ],
+
     /**
      * Show New Game dialog.
      */
     showNewGame() {
+        const victoryRows = this.VICTORY_TARGETS.map(([key, caption, checked, value, max]) => `
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="victory-${key}-enabled" ${checked ? 'checked' : ''}>
+                                ${caption}
+                                <input type="number" id="victory-${key}-value" class="form-input"
+                                       value="${value}" min="0" max="${max}"
+                                       style="width: 6em; margin-left: 4px;">
+                            </label>
+                        </div>`).join('');
+
         const html = `
             <div class="dialog-header">
                 <h2>New Game</h2>
@@ -119,6 +146,35 @@ const Dialogs = {
                 </div>
 
                 <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="mystery-trader" checked>
+                        Mystery Trader (enigmatic ship crossing the galaxy mid-game)
+                    </label>
+                </div>
+
+                <fieldset>
+                    <legend>Victory Conditions</legend>
+                    <p class="info-text">Victory is declared when a player:</p>
+                    ${victoryRows}
+                    <div class="form-group">
+                        <label>
+                            Number of targets to meet
+                            <input type="number" id="victory-targets-to-meet" class="form-input"
+                                   value="1" min="1" max="8"
+                                   style="width: 6em; margin-left: 4px;">
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            Minimum game time (years)
+                            <input type="number" id="victory-minimum-game-time" class="form-input"
+                                   value="50" min="10" max="10000"
+                                   style="width: 6em; margin-left: 4px;">
+                        </label>
+                    </div>
+                </fieldset>
+
+                <div class="form-group">
                     <label for="player-race">Your Race</label>
                     <select id="player-race" class="form-select">
                         <option value="">Default (Humanoids)</option>
@@ -149,13 +205,25 @@ const Dialogs = {
             const density = document.getElementById('star-density').value || 'normal';
             const seed = document.getElementById('game-seed').value || null;
             const acceleratedStart = document.getElementById('accelerated-start').checked;
+            const mysteryTrader = document.getElementById('mystery-trader').checked;
 
             const raceIdx = document.getElementById('player-race').value;
             const race = raceIdx === '' ? null
                 : (this.getCustomRaces()[parseInt(raceIdx)] || null);
 
+            const victory = {
+                targets_to_meet: parseInt(document.getElementById('victory-targets-to-meet').value) || 1,
+                minimum_game_time: parseInt(document.getElementById('victory-minimum-game-time').value) || 50
+            };
+            for (const [key] of this.VICTORY_TARGETS) {
+                victory[key] = {
+                    enabled: document.getElementById(`victory-${key}-enabled`).checked,
+                    value: parseInt(document.getElementById(`victory-${key}-value`).value) || 0
+                };
+            }
+
             try {
-                await GameState.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart);
+                await GameState.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart, victory, mysteryTrader);
                 this.close();
             } catch (error) {
                 alert('Failed to create game: ' + error.message);
@@ -456,6 +524,101 @@ const Dialogs = {
 
             <div class="dialog-footer">
                 <button class="btn-primary" onclick="Dialogs.close()">Continue</button>
+            </div>
+        `;
+
+        this.show(html);
+    },
+
+    /**
+     * Show the victory announcement for a newly declared winner.
+     * @param {number} victorId - Winning empire id
+     */
+    showVictory(victorId) {
+        const record = (GameState.scores || []).find(s => s.empire_id === victorId);
+        const raceName = record?.race_name || `Empire ${victorId}`;
+        const suffix = victorId === GameState.empireId
+            ? 'You are victorious!'
+            : 'The game continues, but a victor has been declared.';
+
+        const html = `
+            <div class="dialog-header">
+                <h2>Victory</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+
+            <div class="dialog-body">
+                <p>The ${raceName} have won the game</p>
+                <p class="info-text">Year ${GameState.game?.turn || ''}. ${suffix}</p>
+            </div>
+
+            <div class="dialog-footer">
+                <button class="btn-primary" onclick="Dialogs.close()">Continue</button>
+            </div>
+        `;
+
+        this.show(html);
+    },
+
+    /**
+     * Show progress toward each enabled victory target
+     * (GameState.victoryStatus from the player state payload).
+     */
+    showVictoryConditions() {
+        const status = GameState.victoryStatus;
+        if (!status) {
+            this.showMessage('Victory Conditions', 'No game loaded.');
+            return;
+        }
+
+        const captions = {};
+        for (const [key, caption] of this.VICTORY_TARGETS) {
+            captions[key] = caption;
+        }
+
+        const rows = Object.entries(status.targets)
+            .map(([key, t]) => {
+                const state = !t.enabled ? 'off'
+                    : (t.met ? 'MET' : 'in progress');
+                return `
+                    <tr class="${t.enabled ? '' : 'disabled'}">
+                        <td>${captions[key] || key}</td>
+                        <td class="number">${t.value}</td>
+                        <td class="number">${t.progress}</td>
+                        <td>${state}</td>
+                    </tr>`;
+            }).join('');
+
+        const minTimeMet = status.game_time >= status.minimum_game_time;
+        const html = `
+            <div class="dialog-header">
+                <h2>Victory Conditions</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+
+            <div class="dialog-body">
+                <p class="info-text">
+                    Targets to meet: ${status.targets_to_meet}.
+                    Minimum game time: ${status.minimum_game_time} years
+                    (${status.game_time} elapsed${minTimeMet ? '' : ' - victory not yet possible'}).
+                </p>
+                <div class="report-table-container">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>Target</th>
+                                <th>Goal</th>
+                                <th>Progress</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="dialog-footer">
+                <button class="btn-primary" onclick="Dialogs.close()">OK</button>
             </div>
         `;
 

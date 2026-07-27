@@ -124,6 +124,10 @@ const StarPanel = {
         if (isOwned && isColonized) {
             this.bindProductionEvents();
         }
+
+        // Mass driver fling button (owned stars with a driver)
+        document.getElementById('btn-fling-packet')
+            ?.addEventListener('click', () => this.showFlingDialog());
     },
 
     /**
@@ -405,6 +409,15 @@ const StarPanel = {
                     <span>Scanner:</span>
                     <span class="stat-value">${star.scanner_type || 'None'} (${star.scan_range || 0} ly)</span>
                 </div>
+                ${isOwned ? `
+                <div class="stat-row">
+                    <span>Mass Driver:</span>
+                    <span class="stat-value">${star.mass_driver ? 'Warp ' + star.mass_driver : 'None'}</span>
+                </div>` : ''}
+                ${isOwned && star.mass_driver ? `
+                <div class="production-buttons">
+                    <button class="btn-small" id="btn-fling-packet">Fling Mineral Packet</button>
+                </div>` : ''}
             </div>
 
             <div class="star-section">
@@ -873,6 +886,97 @@ const StarPanel = {
         } catch (error) {
             ApiClient.showStatus('Failed to add to queue: ' + error.message, 'error');
         }
+    },
+
+    /**
+     * Show the mineral packet fling dialog (canonical mass driver
+     * rules: fling at the driver's rating up to 3 warp over, capped
+     * at warp 13; overflinging decays the packet 10/25/50% per year).
+     */
+    showFlingDialog() {
+        const star = this.currentStar;
+        if (!star || !star.mass_driver || !GameState.game) return;
+
+        const rating = star.mass_driver;
+        const maxWarp = Math.min(rating + 3, 13);
+        const decayPct = [0, 10, 25, 50];
+
+        const targetOptions = (GameState.stars || [])
+            .filter(s => s.name !== star.name)
+            .map(s => s.name)
+            .sort()
+            .map(name => `<option value="${name}">${name}</option>`)
+            .join('');
+        let warpOptions = '';
+        for (let w = rating; w <= maxWarp; w++) {
+            const note = w === rating
+                ? 'safe' : `decay ${decayPct[w - rating]}%/yr`;
+            warpOptions += `<option value="${w}">Warp ${w} (${note})</option>`;
+        }
+        const mineralInput = (id, label, max) => `
+            <div class="form-group">
+                <label for="${id}">${label} (max ${max})</label>
+                <input type="number" id="${id}" class="form-input"
+                       value="0" min="0" max="${max}">
+            </div>`;
+
+        const html = `
+            <div class="dialog-header">
+                <h2>Fling Mineral Packet</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+            <div class="dialog-body">
+                <p class="info-text">Mass driver at ${star.name}
+                (warp ${rating}). Packets fly at warp&sup2; ly per year
+                straight at the target; a weaker or missing receiving
+                driver means impact damage.</p>
+                <div class="form-group">
+                    <label for="fling-target">Target star</label>
+                    <select id="fling-target" class="form-select">
+                        ${targetOptions}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="fling-warp">Fling warp</label>
+                    <select id="fling-warp" class="form-select">
+                        ${warpOptions}
+                    </select>
+                </div>
+                ${mineralInput('fling-ironium', 'Ironium (kT)', star.ironium || 0)}
+                ${mineralInput('fling-boranium', 'Boranium (kT)', star.boranium || 0)}
+                ${mineralInput('fling-germanium', 'Germanium (kT)', star.germanium || 0)}
+            </div>
+            <div class="dialog-footer">
+                <button class="btn-primary" id="btn-fling-send">Fling</button>
+                <button class="btn-secondary" onclick="Dialogs.close()">Cancel</button>
+            </div>
+        `;
+        Dialogs.show(html);
+
+        document.getElementById('btn-fling-send')
+            ?.addEventListener('click', async () => {
+                const amount = id =>
+                    parseInt(document.getElementById(id).value) || 0;
+                const data = {
+                    star: star.name,
+                    target: document.getElementById('fling-target').value,
+                    warp: parseInt(document.getElementById('fling-warp').value),
+                    ironium: amount('fling-ironium'),
+                    boranium: amount('fling-boranium'),
+                    germanium: amount('fling-germanium')
+                };
+                const result = await ApiClient.flingPacket(
+                    GameState.game.id, GameState.empireId, data);
+                if (result.status === 'error') {
+                    ApiClient.showStatus(
+                        'Fling failed: ' + (result.error || 'rejected'),
+                        'error');
+                    return;
+                }
+                Dialogs.close();
+                await GameState.refreshState();
+                ApiClient.showStatus('Mineral packet flung', 'info');
+            });
     },
 
     /**

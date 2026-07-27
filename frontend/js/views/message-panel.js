@@ -200,9 +200,78 @@ const MessagePanel = {
                 <button class="btn-small" onclick="MessagePanel.prev()" ${currentNum <= 1 ? 'disabled' : ''}>&lt; Prev</button>
                 <button class="btn-small" onclick="MessagePanel.next()" ${currentNum >= msgCount ? 'disabled' : ''}>Next &gt;</button>
                 <button class="btn-small" onclick="MessagePanel.last()" ${currentNum >= msgCount ? 'disabled' : ''}>&gt;|</button>
-                <button class="btn-small btn-goto" onclick="MessagePanel.showGotoDialog()">Goto...</button>
+                <button class="btn-small" onclick="MessagePanel.gotoObject()" ${this.gotoTarget(currentMessage) ? '' : 'disabled'}>Goto</button>
+                <button class="btn-small btn-goto" onclick="MessagePanel.showGotoDialog()">Jump...</button>
             </div>
         `;
+    },
+
+    /**
+     * Resolve a message's goto target, or null when nothing links
+     * (SetMessage enables Goto iff Message.Event != null,
+     * Messages.cs:249-278; the web linkage is star_name/fleet_key).
+     */
+    gotoTarget(msg) {
+        if (!msg) return null;
+        if (msg.type === 'Battle') {
+            return { kind: 'battle' };
+        }
+        if (msg.star_name) {
+            const star = GameState.stars.find(s => s.name === msg.star_name);
+            if (star) return { kind: 'star', star: star };
+        }
+        if (msg.fleet_key) {
+            const fleet = GameState.fleets.find(f => f.key === msg.fleet_key);
+            if (fleet) return { kind: 'fleet', fleet: fleet };
+        }
+        return null;
+    },
+
+    /**
+     * Goto the object the current message refers to. The C# button
+     * handles only battle reports - it opens the BattleViewer
+     * (GotoButton_Click, Messages.cs:229-238); star and fleet focus
+     * is the canonical original-Stars! behavior (select and center
+     * the scanner on the referenced object), a superset of the C#
+     * battle-only goto per user directive.
+     */
+    async gotoObject() {
+        const msg = this.messages[this.currentIndex];
+        const target = this.gotoTarget(msg);
+        if (!target) return;
+
+        if (target.kind === 'battle') {
+            const star = GameState.stars.find(s => s.name === msg.star_name);
+            if (star && window.GalaxyMap) {
+                GalaxyMap.centerOn(star.position_x, star.position_y);
+            }
+            try {
+                const battles = await BattleViewer.loadBattles();
+                const report = (battles || []).find(
+                        b => b.location === msg.star_name) ||
+                    (battles || []).find(
+                        b => (msg.text || '').includes(b.location));
+                if (report) {
+                    BattleViewer.show(report);
+                } else {
+                    ApiClient.showStatus('Battle report not available', 'info');
+                }
+            } catch (error) {
+                // ApiClient.request already surfaced the error status
+            }
+        } else if (target.kind === 'star') {
+            GameState.selectStar(target.star);
+            if (window.GalaxyMap) {
+                GalaxyMap.centerOn(target.star.position_x,
+                                   target.star.position_y);
+            }
+        } else {
+            GameState.selectFleet(target.fleet);
+            if (window.GalaxyMap) {
+                GalaxyMap.centerOn(target.fleet.position_x,
+                                   target.fleet.position_y);
+            }
+        }
     },
 
     /**

@@ -32,8 +32,9 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
   - log: 2026-07-13 implemented wave 1 (v0.1.0)
 - [ ] **Edge: different seed** - different seed -> different galaxy, no digest collision
   - log: 2026-07-13 covered by tests/e2e/test_harness.py; re-verify wave 6
-- [ ] **Victory settings** - game creation accepts 8 tunable targets, TargetsToMeet, MinimumGameTime per GameSettings.cs, with New Game settings UI
+- [x] **Victory settings** - game creation accepts 8 tunable targets, TargetsToMeet, MinimumGameTime per GameSettings.cs, with New Game settings UI
   - log: 2026-07-13 criterion added, scheduled wave 4
+  - log: 2026-07-13 met wave 4 - VictorySettings/EnabledValue model (server_data.py) with GameSettings.cs:49-58 defaults, victory payload on POST /api/games/ -> GameManager.create_game, persisted + restart-safe, New Game dialog Victory Conditions fieldset with C# wizard captions; tests/unit/test_scores.py::TestSerialization, tests/e2e/test_score_victory.py::TestVictoryDeclaration::test_victory_settings_default
 - [x] **PRT starting tech** - each PRT gets C#-exact grants (ProcessPrimaryTraits), AI empires included; IFE +1 Propulsion; ExtraTech +3 all fields (+1 JOAT)
   - log: 2026-07-13 implemented wave 1 (v0.1.0)
 - [x] **Leftover points spend** - leftover advantage points convert to homeworld bonuses per HomeStarLeftoverpointsAdjuster, all 5 targets
@@ -106,6 +107,7 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
 - [x] **Electronics in battle** - computers (initiative+accuracy), jammers (torpedo accuracy), capacitors (+beam), deflectors (-beam) honored by the battle engine
   - log: 2026-07-13 criterion added, scheduled wave 4
   - log: 2026-07-14 design aggregation landed (probability stacking for jammers/computers/deflectors, geometric for capacitors with 250 cap per Capacitor.cs:41) plus consumption in both battle engines - torpedo accuracy = computers cut miss chance, jammers cut hit chance; beam damage x (1+cap/100) x (1-defl/100); tests/unit/test_ship_design.py::TestElectronicsAggregation, tests/unit/test_battle_engine.py::TestElectronicsInBattle, seeded e2e tests/e2e/test_electronics_battle.py (jammed target takes 0.64x torpedo damage; capacitor ship out-damages plain ship)
+  - log: 2026-07-14 wave-4 verifier - full suite 808 green; cross-feature seeded game tests/e2e/test_wave4_integration.py re-proves the first raider beam hit at exactly power 10 x quantity 2 x 1.21 (2x Energy Capacitor) x 0.9 (Beam Deflector)
 
 ## Fleets and Movement
 
@@ -154,12 +156,15 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
   - log: 2026-07-13 pre-campaign for strikes; sweep case verify wave 6
 - [x] **Stargates** - warp-10 jumps honor SafeHullMass/SafeRange, over-limit transit losses
   - log: 2026-07-13 pre-campaign (v0.1.0)
-- [ ] **Gate hull limit** - only small and medium hulls may gate; large and capital hulls are refused outright (no over-limit gamble for them) - deliberate deviation from canonical, keeps heavy fleets flying conventionally while light forces teleport
+- [x] **Gate hull limit** - only small and medium hulls may gate; large and capital hulls are refused outright (no over-limit gamble for them) - deliberate deviation from canonical, keeps heavy fleets flying conventionally while light forces teleport
   - log: 2026-07-13 user directive - "no stargates for large ships, only small up to medium ones"; scheduled wave 5
-- [ ] **Star-fuelled gate range** - gates are powered by their host star: reach scales with the star's size (the larger the star, the farther the gate throws), always bounded - no unlimited-range gates
+  - log: 2026-07-14 landed wave 5 - GATE_HULL_SIZE hull-name table + GATE_ALLOWED_HULL_SIZES in globals.py, hull_name cached on ShipToken via make_token; _gate_travel refuses any large/capital (or unclassified) hull with an Invalid Command message and clamps to warp 9; tests/unit/test_wormholes_gates.py::TestStargateHullLimit, tests/e2e/test_stargate_rework.py (battleship refused where a scout gates)
+- [x] **Star-fuelled gate range** - gates are powered by their host star: reach scales with the star's size (the larger the star, the farther the gate throws), always bounded - no unlimited-range gates
   - log: 2026-07-13 user directive - "not too far... fuelled by the presence of the nearby star (the larger the star, the larger the distance)"; scheduled wave 5
-- [ ] **No minerals through gates** - gates move ships only; loose mineral logistics stay with mass drivers (packets) and freighters
+  - log: 2026-07-14 landed wave 5 - GATE_SPECTRAL_RANGE_FACTOR (O 2.0, B 1.6, A 1.3, F 1.1, G 1.0, K 0.8, M 0.6) and GATE_MAX_BASE_RANGE 800 ly in globals.py; _star_gate multiplies the model's safe range ("any" -> clamped to 800) by the host star's factor, tighter of the two gates applies; over-range small/medium hulls keep the canonical 25% loss / 50% damage gamble; tests/unit/test_wormholes_gates.py::TestStargateStarFuelledRange, tests/e2e/test_stargate_rework.py (class-B pair throws 960 ly)
+- [x] **No minerals through gates** - gates move ships only; loose mineral logistics stay with mass drivers (packets) and freighters
   - log: 2026-07-13 user directive; scheduled wave 5 with the packets decision
+  - log: 2026-07-14 landed wave 5 - mineral cargo (ironium/boranium/germanium/silicoxium) refuses the jump for everyone incl. IT; colonists gate only for Interstellar Traveler races (canonical cargo rule) and fuel always travels free, both documented in _gate_travel and the encyclopedia Stargates entry; tests/unit/test_wormholes_gates.py::TestStargateCargoRules, tests/e2e/test_stargate_rework.py (ironium-laden scout refused with message)
 - [x] **Wormholes** - pairs drift by stability, discovered by scan, transit via waypoint within 5 ly
   - log: 2026-07-13 pre-campaign (v0.1.0)
 - [ ] **Edge: gate without destination gate** - jump rejected/no-op with message
@@ -172,9 +177,11 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
 - [x] **Battle plans** - per-fleet plan (attack-who, primary/secondary target types, tactic, max damage %) edited in dialog, honored by engine
   - log: 2026-07-13 criterion added, scheduled wave 4
   - log: 2026-07-13 implemented wave 4; per-empire named plans (canonical 14-plan cap) with battle_plan CRUD command + POST /fleets/{key}/battle-plan assignment, Battle Plans dialog in the Commands menu (two-pane, working New/Save/Delete - the C# dialog's edit buttons are disabled) and per-fleet plan selector in the fleet panel; Ron engine honors attack-who incl. dialog-only "Enemies and Neutrals" (canonical, BattleEngine.cs never checked it), five target tiers gate engagement and fire allocation (priority target eats the fire first), tactics Disengage (7 flee moves -> leaves the battle), Disengage if Challenged, stand-off variants (canonical-approx; standard engine stays C#-exact per BattleEngine.cs); "max damage %" -> Ron percent-to-fire overkill allocation; tests/unit/test_battle_engine.py TestBattlePlan/TestAreEnemies/TestRonTargetPriority/TestTactics + tests/e2e/test_battle_plans.py (CRUD round-trip, disengaging freighter escapes while escort fights, control freighter destroyed, deterministic digests)
+  - log: 2026-07-14 wave-4 verifier - cross-feature seeded game tests/e2e/test_wave4_integration.py re-proves target tiers (Escort tier soaks every raider volley up to the kill) and the Disengage tactic (freighter flees the board alive) inside one relations-triggered battle
 - [x] **Player relations** - Enemy/Neutral/Friend per empire drive battle eligibility and invasion legality, relations dialog
   - log: 2026-07-13 criterion added, scheduled wave 4
   - log: 2026-07-13 implemented wave 4; per-opponent relation map initialized all-Enemy at game creation (GameInitialiser.cs:132-143), "relation" command + F7 dialog (correct Neutral display, C# bug not ported); honored by battle targeting (default plan attack="Enemies", BattlePlan.cs:44), invasion cancel (InvadeTask.cs:110-131, colonists kept aboard), bombing gate (Bombing.cs:59-64), minefield strike friend-skip, enemy-only sweeping and friendly-starbase refuel/repair (canonical); tests/unit/test_relations.py (29 tests), tests/e2e/test_relations.py
+  - log: 2026-07-14 wave-4 verifier - cross-feature seeded game tests/e2e/test_wave4_integration.py: Neutral contact passes without battle, mid-game flip to Enemy fights the same deep-space encounter
 - [x] **Edge: neutral contact** - co-located neutral fleets do not battle
   - log: 2026-07-13 criterion added, scheduled wave 4
   - log: 2026-07-13 met wave 4; seeded e2e parks two armed warships on one deep-space point at mutual Neutral over several turns with zero battles, then both declare Enemy and the same encounter fights (tests/e2e/test_relations.py); engine-level Neutral-not-targeted case for both battle engines in tests/unit/test_battle_engine.py
@@ -202,14 +209,20 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
 
 ## Messages, Score, Victory
 
-- [ ] **Message goto** - typed messages link to the referenced object (fleet/star/battle)
+- [x] **Message goto** - typed messages link to the referenced object (fleet/star/battle)
   - log: 2026-07-13 partial pre-campaign; completion scheduled wave 5
-- [ ] **Score** - C# formula (planets, starbases +3, colonists/100k, resources/30, ship classes, tech), ScoreRecord history, score report UI
+  - log: 2026-07-27 met wave 5 - Message gains star_name (web port of C# Message.Event, Message.cs:38; from_dict default keeps old saves loading), all 13 Star-message sites and the battle announcement populate it (battle carries the report location per BattleEngine.cs:936-943); message panel Goto button enabled per message, selects and centers the referenced star or fleet, battle messages open the battle viewer on the matching report (Messages.cs:229-238 superset per canonical Stars! rule), old number-jump relabeled Jump...; tests/unit/test_commands.py::TestMessage star_name roundtrip, tests/e2e/test_client_parity.py::TestMessageGotoLinkage (star/fleet/battle linkage resolve)
+- [x] **Score** - C# formula (planets, starbases +3, colonists/100k, resources/30, ship classes, tech), ScoreRecord history, score report UI
   - log: 2026-07-13 criterion added, scheduled wave 4
-- [ ] **Victory** - last-standing plus 8 configurable targets evaluated after MinimumGameTime, TargetsToMeet honored
+  - log: 2026-07-13 met wave 4 - backend/server/scores.py exact Scores.cs port (int divisions, tech buckets, capital bonus, rank sort; per-ship counting per legacy Common/Scores.cs + canonical Stars!; real power_rating for the C# stub), per-year score_history on empires appended each generated turn, public scores + history in player state, Reports Score tab with the 10 C# columns + history graph; tests/unit/test_scores.py::TestScoreFormula, tests/e2e/test_score_victory.py::TestScoresInPlayerState
+  - log: 2026-07-14 wave-4 verifier - cross-feature seeded game tests/e2e/test_wave4_integration.py: one history entry per empire per generated turn through the victory turn, latest entry matching the live public records for both viewers
+- [x] **Victory** - last-standing plus 8 configurable targets evaluated after MinimumGameTime, TargetsToMeet honored
   - log: 2026-07-13 criterion added, scheduled wave 4
-- [ ] **Edge: before minimum time** - no victory declared before MinimumGameTime even if targets met
+  - log: 2026-07-13 met wave 4 - backend/server/victory_check.py full VictoryCheck.cs port at the C# call site (before year increment); last-man-standing any year, 7 target checks, C# defects fixed with comments (HighestScore break, ExceedsSecondPlace gate + canonical exceed-by-N% formula); winner messaged to everyone once, victor persisted, game stays playable; victory-conditions status dialog shows per-target progress; tests/unit/test_scores.py::TestVictoryCheck, tests/e2e/test_score_victory.py::TestVictoryDeclaration
+  - log: 2026-07-14 wave-4 verifier - cross-feature seeded game tests/e2e/test_wave4_integration.py ends by a configured condition (planets_owned 1%, minimum_game_time 4): gated at turn 4, empire 1 declared at turn 5 with the public announcement; full suite 808 green, live 30-turn autoplay regression PASS (logs/wave4-regression.log)
+- [x] **Edge: before minimum time** - no victory declared before MinimumGameTime even if targets met
   - log: 2026-07-13 criterion added, scheduled wave 4
+  - log: 2026-07-13 met wave 4 - minimum-time gate ported from VictoryCheck.cs:76-81 (last-man-standing exempt per C#); tests/unit/test_scores.py::TestVictoryCheck::test_minimum_game_time_gates_target_victories, tests/e2e/test_score_victory.py::TestVictoryDeclaration::test_no_victory_before_minimum_time
 
 ## Spatial Phenomena
 
@@ -225,26 +238,36 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
   - log: 2026-07-13 implemented wave 3; ~70% nebula-biased rejection sampling on a seed-derived RNG; tests/unit/test_phenomena.py::TestStormSpawning
 - [ ] **Edge: outside boundary** - zero storm effect outside the blob; starbases immune inside
   - log: 2026-07-13 criterion added; verify wave 6
-- [ ] **Orbit safe harbor** - storms never affect planets, nor fleets and stations in orbit of a planet; only fleets in open space inside the storm suffer effects
+- [x] **Orbit safe harbor** - storms never affect planets, nor fleets and stations in orbit of a planet; only fleets in open space inside the storm suffer effects
   - log: 2026-07-13 user directive; scheduled wave 4
-- [ ] **Storm shields** - researchable storm shield components join the catalog (tech-gated discovery); equipped ships negate/strongly reduce all storm effects (damage, mishap, colonist attrition)
+  - log: 2026-07-14 met wave 4 - _process_storms skips any fleet whose position coincides with a star (get_star_at_position), covering hull damage, warp mishap and colonist attrition; starbases stay immune; scan dampening deliberately stays environmental - a scanner inside a storm still scans worse (decision documented in scan_step.py); tests/unit/test_phenomena.py::TestStormProtection::test_orbit_safe_harbor_skips_all_effects, tests/e2e/test_storms.py::TestStormProtectionE2E
+- [x] **Storm shields** - researchable storm shield components join the catalog (tech-gated discovery); equipped ships negate/strongly reduce all storm effects (damage, mishap, colonist attrition)
   - log: 2026-07-13 user directive; scheduled wave 4
-- [ ] **Standard shields vs storms** - conventional shields grant partial storm protection scaled by shield rating
+  - log: 2026-07-14 met wave 4 - web-only 3-tier line in components.xml (catalog 228 -> 231): Storm Deflector 0.40 (Prop 6 + Energy 6), Storm Barrier 0.70 (Prop 12 + Energy 12), Storm Bulwark 1.00 (Prop 18 + Energy 18); mountable in shield slots, best tier aboard wins, aggregated on the design and cached on tokens; tests/unit/test_phenomena.py::TestStormShieldComponents
+  - log: 2026-07-14 wave-4 verifier - cross-feature seeded game tests/e2e/test_wave4_integration.py: a real Storm Bulwark design registered through the design command crosses an intensity-1.0 storm at warp 5 with zero damage and no Storm message while an identical bare hull takes the full 20 x local hit; fleet API storm_protection reads 1.0 vs 0.0
+- [x] **Standard shields vs storms** - conventional shields grant partial storm protection scaled by shield rating
   - log: 2026-07-13 user directive; scheduled wave 4
-- [ ] **Armor vs storms** - armor grants a smaller but non-zero storm damage reduction
+  - log: 2026-07-14 met wave 4 - STORM_SHIELD_PROTECTION (0.35) in globals.py for tokens with shields aboard, full factor while undepleted (tokens carry no persistent shield depletion - shields regenerate between battles); tests/unit/test_phenomena.py::TestStormProtection::test_each_source_alone
+- [x] **Armor vs storms** - armor grants a smaller but non-zero storm damage reduction
   - log: 2026-07-13 user directive; scheduled wave 4
-- [ ] **Edge: protection stacking** - storm shield + standard shield + armor compose without exceeding full immunity; unshielded hull takes full local effect
+  - log: 2026-07-14 met wave 4 - STORM_ARMOR_PROTECTION (0.15) in globals.py for tokens with armor components mounted; hull base armor grants nothing (ShipDesign.has_armor_components); tests/unit/test_phenomena.py::TestStormProtection, TestStormShieldComponents::test_armor_components_flagged
+- [x] **Edge: protection stacking** - storm shield + standard shield + armor compose without exceeding full immunity; unshielded hull takes full local effect
   - log: 2026-07-13 criterion added; scheduled wave 4
-- [ ] **Total immunity attainable** - full storm immunity is realistically reachable (top-tier storm shields alone, or high-tier combinations) by mid-to-late game tech
+  - log: 2026-07-14 met wave 4 - sources additive (0.35 + 0.15 + 0.25 + storm-shield tier) then clamped at 1.0, per token then fleet-min (a convoy is as protected as its weakest ship); storm shields never sum (best tier wins) and carry no conventional Shield rating, so no component is double-counted; hull damage, mishap chance AND mishap damage, and attrition all scale by (1 - protection) - never negative; unprotected hull takes the full local effect; tests/unit/test_phenomena.py::TestStormProtection::test_stacking_clamps_at_full_immunity, test_fleet_min_weakest_ship, tests/e2e/test_storms.py::TestStormProtectionE2E
+- [x] **Total immunity attainable** - full storm immunity is realistically reachable (top-tier storm shields alone, or high-tier combinations) by mid-to-late game tech
   - log: 2026-07-13 user directive; scheduled wave 4
-- [ ] **Radiation-hardened races** - races accustomed to radiation (high radiation tolerance or radiation immunity) get inherent storm resilience on all their ships
+  - log: 2026-07-14 met wave 4 - Storm Bulwark (1.00, Prop 18 + Energy 18) alone grants total immunity: zero damage, zero mishap chance, zero attrition, not even a Storm message; mid-tier combos also reach 1.0 (Barrier 0.70 + shields 0.35; Deflector 0.40 + shields + armor + rad race); tests/unit/test_phenomena.py::TestStormProtection::test_damage_scaling_at_protection_levels, test_mishap_never_fires_at_full_protection, tests/e2e/test_storms.py::TestStormProtectionE2E
+- [x] **Radiation-hardened races** - races accustomed to radiation (high radiation tolerance or radiation immunity) get inherent storm resilience on all their ships
   - log: 2026-07-13 user directive; scheduled wave 4
+  - log: 2026-07-14 met wave 4 - STORM_RAD_RACE_PROTECTION (0.25) fleet-wide for races with radiation immunity or radiation optimum in the extreme band (>= STORM_RAD_EXTREME_OPTIMUM, 85); derived from existing habitability data via Race.is_radiation_hardened - no new race-wizard fields; tests/unit/test_phenomena.py::TestStormProtection::test_rad_race_qualification, test_rad_race_protection_applies_in_turn
 - [ ] **Storm balance calibration** - hazard and protection numbers calibrated via seeded trial games (survival rates with/without protection recorded and reviewed); constants adjusted until the curve feels right
   - log: 2026-07-13 user directive; calibration pass scheduled wave 6
 - [x] **Encyclopedia** - Help menu opens Encyclopedia with numbered entries (dust/emission nebulae, storms, wormholes, minefields, stargates) stating actual gameplay numbers
   - log: 2026-07-13 implemented wave 3; frontend/js/views/encyclopedia.js, Help → Encyclopedia in menu-bar.js; entries mirror globals.py / MINE_STATS / gate catalog numbers; met with browser evidence wave 6
-- [ ] **Emission nebula glare** - emission nebulae are not inert: their glow washes out sensors for a small scanner-range penalty at high glow density (constant in globals, far milder than dust), no effect on ship speed; encyclopedia entry updated to match
+  - log: 2026-07-14 storms entry extended wave 4 - Safe harbor bullet (orbit shelter) and a Protection paragraph mirroring the storm-protection constants (storm shield tiers 40/70/100% with tech costs, shields 35%, armor 15%, rad races 25%, additive with 100% cap, fleet-min, scan static never cleared); fleet panel shows "Storm protection: NN%" when > 0 (storm_protection in fleet API payload)
+- [x] **Emission nebula glare** - emission nebulae are not inert: their glow washes out sensors for a small scanner-range penalty at high glow density (constant in globals, far milder than dust), no effect on ship speed; encyclopedia entry updated to match
   - log: 2026-07-13 user directive - "must have some small effect, not entirely inert... maybe small sensor hit?"; scheduled wave 5
+  - log: 2026-07-14 landed wave 5 - NEBULA_GLARE_SCAN_PENALTY 0.15 in globals.py, scaled by local emission density (new NebulaField emission grid) and composed with dust and storm dampening in scan_step.py; speed untouched; Emission Nebulae encyclopedia entry replaces "No gameplay effect" with the Sensor glare / No drag bullets; tests/unit/test_phenomena.py::TestNebulaGlare, tests/e2e/test_stargate_rework.py (scout provably scans shorter inside the glow)
 - [x] **Encyclopedia imagery** - every phenomenon entry carries beautiful, hand-painted-feel artwork (deterministic procedural painting, consistent style across entries, no external assets)
   - log: 2026-07-13 user directive - "beautiful, like-hand-painted imagery" for all phenomena
   - log: 2026-07-13 implemented - EncyclopediaArt in encyclopedia.js: seeded painterly canvas per entry (layered brush strokes, gradient billows, grain, vignette); all 6 entries browser-verified (walkthrough/final/wave3/07-12)
@@ -255,30 +278,42 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
 
 Canonical Stars! feature the C# reference never implemented (only a TODO in GameInitialiser.cs:180) - built directly from canonical rules per user directive, like mine sweeping was.
 
-- [ ] **Spawning** - from mid-game on, a trader periodically enters at a galaxy edge and crosses the map in a straight line at high warp (canonical 7-13), exiting the far side; multiple traders possible late game
+- [x] **Spawning** - from mid-game on, a trader periodically enters at a galaxy edge and crosses the map in a straight line at high warp (canonical 7-13), exiting the far side; multiple traders possible late game
   - log: 2026-07-13 user directive: canonical feature, model directly; scheduled wave 5
-- [ ] **Universal visibility** - every empire sees the trader and its course from the moment it spawns, regardless of scanners; spawn and departure broadcast to all empires; distinct map marker
+  - log: 2026-07-27 implemented wave 5 - TurnGenerator._process_traders/_spawn_trader (before the fleet move loop): eligible from year 2140 (STARTING_YEAR + MT_MIN_YEARS 40), 1-in-16 yearly roll (MT_SPAWN_CHANCE) on the seeded per-turn RNG, cap 1 active early -> 3 from year 2200 (MT_LATE_YEARS 100), spawn ON a random edge crossing to the opposite edge, warp randint(7, 13), velocity = unit heading x warp^2, first out-of-bounds step exits; MysteryTrader dataclass + all_traders/trader_counter in server_data.py (keys never reused); tests/unit/test_traders.py (spawn gate, edge/warp/velocity, caps, exit), tests/e2e/test_mystery_trader.py phase 1
+- [x] **Universal visibility** - every empire sees the trader and its course from the moment it spawns, regardless of scanners; spawn and departure broadcast to all empires; distinct map marker
   - log: 2026-07-13 user directive; scheduled wave 5
-- [ ] **Untouchable** - cannot be attacked, invaded, or struck by mines; storms do not harm it; it never initiates hostilities
+  - log: 2026-07-27 implemented wave 5 - get_player_state "traders" list (no fog; key/name/x/y/warp/velocity + viewer-only gift balance), spawn and departure Messages audience=EVERYONE (message_type "Mystery Trader"); map marker: renderTraders in galaxy-map.js - gold diamond, pulsing halo, dashed gold projected-course line, TRADER label at zoom >= 0.4; tests/unit test_universal_visibility, e2e phases 1 and 5
+- [x] **Untouchable** - cannot be attacked, invaded, or struck by mines; storms do not harm it; it never initiates hostilities
   - log: 2026-07-13 user directive; scheduled wave 5
-- [ ] **Intercept and gift** - a fleet at the trader's position may transfer minerals or colonists to it as a gift; the trader always keeps the cargo
+  - log: 2026-07-27 implemented wave 5 - structural, zero defensive code: the trader is not a Fleet and belongs to no empire, so battle engines, minefield checks, storm damage and scans never iterate it; asserted in tests/unit test_untouchable_by_construction (armed fleet co-located + storm blob + hostile minefield over the trader, full generate(), trader and ledger untouched, no Battle/Storm/Minefield message names it)
+- [x] **Intercept and gift** - a fleet at the trader's position may transfer minerals or colonists to it as a gift; the trader always keeps the cargo
   - log: 2026-07-13 user directive; scheduled wave 5
-- [ ] **Rewards** - a gift at or above the threshold earns a reward from the canonical table: a Mystery Trader component (hidden tech), research level boosts, minerals/fuel, or a gifted ship; reward scales with gift size; chosen thresholds and odds documented in code comments and the encyclopedia
+  - log: 2026-07-27 implemented wave 5 - GameManager.gift_to_trader (one-way sibling of transfer_cargo_between_fleets: co-location gate 1 ly, minerals kT + colonists //100, no negatives, no fuel, no refund path) + POST /api/games/{id}/fleets/{key}/gift (TraderGift model); per-empire ledger trader.gifts[empire] = {total, fleet_key}; fleet panel Gift button (enabled only with a trader at the fleet position) + gift dialog showing running total vs threshold; tests/unit test_gift_validation_and_ledger, e2e phase 2
+- [x] **Rewards** - a gift at or above the threshold earns a reward from the canonical table: a Mystery Trader component (hidden tech), research level boosts, minerals/fuel, or a gifted ship; reward scales with gift size; chosen thresholds and odds documented in code comments and the encyclopedia
   - log: 2026-07-13 user directive; scheduled wave 5
-- [ ] **Hidden technology** - trader-exclusive components (canonical MT items such as Multi-Function Pod, Anti-Matter Torpedo, Genesis Device) cannot be researched; once granted, the empire can build them and they appear in its component catalog
+  - log: 2026-07-27 implemented wave 5 - thresholds/odds in globals.py (MT_GIFT_THRESHOLD 1000 kT, tiers 2000/4000) and the authoritative table comment at TurnGenerator._grant_trader_reward: tier1 40% component / 30% research +1 in 2 fields / 30% minerals 2x gift + full fuel; tier2 50/25/15 (3x) /10 ship; tier3 55/20 (+2 in 3) /25 ship (Trader Marauder: armor 2000, shields 800, 4x Anti-Matter Torpedo battery, fueled, at the gifting fleet); component band falls through to research when all items owned, dead gifting fleet converts bounty to research; rewards resolve in _process_traders on the seeded per-turn RNG (never at API time); mirrored verbatim in the encyclopedia entry; tests/unit TestTraderRewards (every band + clamp + fallbacks), e2e phase 3
+- [x] **Hidden technology** - trader-exclusive components (canonical MT items such as Multi-Function Pod, Anti-Matter Torpedo, Genesis Device) cannot be researched; once granted, the empire can build them and they appear in its component catalog
   - log: 2026-07-13 user directive; matches the C# TODO's "hidden technology" note; scheduled wave 5
-- [ ] **Moving waypoint target** - fleets can set the trader as a waypoint target; intercept course recomputed each turn
+  - log: 2026-07-27 implemented wave 5 - four catalog items in components.xml (Multi-Function Pod, Anti-Matter Torpedo, Mega Poly Shell, Genesis Device), each with the "Mystery Trader Item" marker property, Tech all zero and empty race restrictions; per-empire grant list EmpireData.mt_components (serialized, exposed in player state); design_builder._mt_granted gates hull and slot components server-side ("requires a Mystery Trader grant"); design-panel.js hides ungranted items client-side; Genesis Device is a buildable trophy only - its planet-reforming effect is DEFERRED (out of this criterion's scope: grant -> buildable -> in catalog); tests/unit TestHiddenTechGating (zero-tech empire passes _tech_ok, grant unlocks build), e2e phase 4 (granted item mounts for the giver, second empire refused)
+- [x] **Moving waypoint target** - fleets can set the trader as a waypoint target; intercept course recomputed each turn
   - log: 2026-07-13 criterion added; scheduled wave 5
-- [ ] **Game setting** - "Mystery Trader" toggle at game creation, default on
+  - log: 2026-07-27 implemented wave 5 - waypoints carry the trader NAME as destination (C# Waypoint.cs is position-only, so this is a web extension); _process_traders retargets every matching waypoint to the trader's post-move position each turn BEFORE the fleet move loop (co-location at the turn boundary); departed traders freeze the waypoint into a "Space at x,y" positional leg; fleet-panel Add Waypoint lists live traders as destinations; tests/unit test_moving_waypoint_retarget, e2e phase 2 co-location
+- [x] **Game setting** - "Mystery Trader" toggle at game creation, default on
   - log: 2026-07-13 criterion added; scheduled wave 5
-- [ ] **Encyclopedia + tooltip** - encyclopedia article stating actual thresholds and reward odds; map hover tooltip links to it
+  - log: 2026-07-27 implemented wave 5 - GameCreate.mystery_trader (default true) -> create_game -> ServerData.mystery_trader_enabled (persisted; _process_traders no-ops when off); New Game dialog checkbox, default checked, passed through GameState.createGame -> ApiClient.createGame; tests/unit test_disabled_toggle, e2e test_toggle_off_no_trader
+- [x] **Encyclopedia + tooltip** - encyclopedia article stating actual thresholds and reward odds; map hover tooltip links to it
   - log: 2026-07-13 criterion added; scheduled wave 5
-- [ ] **Determinism** - spawn timing, course, and rewards reproduce bit-for-bit in seeded games
+  - log: 2026-07-27 implemented wave 5 - encyclopedia.js entry 'mystery-trader' ("The Mystery Trader") stating the actual numbers: year 2140 gate, 1-in-16 chance, 3 late-game from 2200, warp 7-13, 1000/2000/4000 kT tiers, the full odds table and all four MT items with stats; EncyclopediaArt._mysteryTrader painter (enigmatic lone dark hull, warm running lights, curved golden wake, seeded painterly composition per the established helpers); galaxy-map findPhenomenonAt hit-tests traders FIRST and links entryId 'mystery-trader'; browser walkthrough evidence due at the wave 6 verification gate
+- [x] **Determinism** - spawn timing, course, and rewards reproduce bit-for-bit in seeded games
   - log: 2026-07-13 criterion added; scheduled wave 5
-- [ ] **Edge: below-threshold gift** - trader keeps the cargo, no reward, giver messaged
+  - log: 2026-07-27 implemented wave 5 - all trader randomness rides TurnGenerator.rand (seeded per turn from game_seed), dict iteration over sorted keys, rewards resolve only inside the seeded window; e2e test_determinism_bit_for_bit runs the identical scenario (same seed, same surgery, same API calls) in two games and asserts equal per-empire state digests every turn
+- [x] **Edge: below-threshold gift** - trader keeps the cargo, no reward, giver messaged
   - log: 2026-07-13 criterion added; scheduled wave 5
-- [ ] **Edge: multiple empires intercept** - gifts tracked per empire; simultaneous intercepts resolve independently
+  - log: 2026-07-27 implemented wave 5 - sub-threshold balances persist on the ledger (an empire may top up across turns), resolution pass sends the giver a polite "courteous nod" message naming the 1000 kT bar, nothing else changes and there is no refund path; tests/unit test_gift_below_threshold_no_reward, tests/unit test_multi_empire_independent_gifts (empire 2 side)
+- [x] **Edge: multiple empires intercept** - gifts tracked per empire; simultaneous intercepts resolve independently
   - log: 2026-07-13 criterion added; scheduled wave 5
+  - log: 2026-07-27 implemented wave 5 - trader.gifts keyed by empire id, resolution iterates sorted empire ids independently, player state exposes only the viewer's balance; tests/unit test_multi_empire_independent_gifts (two empires gift the same trader the same turn: one rewarded and zeroed, one below threshold persists; neither sees the other's message)
 
 ## Client UI
 
@@ -290,10 +325,12 @@ Canonical Stars! feature the C# reference never implemented (only a TODO in Game
   - log: 2026-07-13 partial waves 1-2; plans/relations wave 4
   - log: 2026-07-13 relations dialog landed wave 4 (F7, empire list + Enemy/Neutral/Friend radio group, immediate apply per PlayerRelations.cs:104-120, C# Neutral-displays-as-Friend bug not ported); battle plans UI still pending
   - log: 2026-07-13 battle plans dialog landed wave 4 (Commands menu, two-pane list + details with name, five target tiers, tactic, attack; working New/Save/Delete unlike the disabled C# buttons; per-fleet plan selector in fleet panel); criterion stays open pending remaining dialog checks
-- [ ] **Waypoint editing** - insert/modify legs, per-leg warp incl. warp-10 gate; multi-fleet same-location picker
+- [x] **Waypoint editing** - insert/modify legs, per-leg warp incl. warp-10 gate; multi-fleet same-location picker
   - log: 2026-07-13 criterion added, scheduled wave 5
+  - log: 2026-07-27 met wave 5 - fleet panel leg editor: clickable leg list (last selected by default per FleetDetail.cs:482-486), per-leg warp slider 0-10 incl. gate warp-10 (Edit command on release), task selector mapping UI names to real task types (C# LoadTask Replace() defect Waypoint.cs:132 not ported), Insert Before via backend INSERT, delete any leg (web waypoint-zero divergence documented), leg distance/time/fuel + route fuel readout red over fuel aboard (FleetDetail.cs:376-439); player state ships full waypoint task dicts + fuel_consumption_by_warp (Fleet.cs:817-839); map left-click cycles stacked objects within 10 px repeat clicks, right-click near-object menu stars-then-fleets (StarMap.cs:859-953); tests/unit/test_api.py::TestClientParityState, tests/e2e/test_client_parity.py::TestWaypointLegEditing (mixed warps/tasks list shaped via Add/Edit/Insert/Delete executes exactly over several turns), TestMultiFleetSharedPosition
 - [ ] **Reports** - planets, fleets, battles (viewer replay), score
   - log: 2026-07-13 partial pre-campaign; score report wave 4
+  - log: 2026-07-13 score report landed wave 4 - Reports Score tab (Race/Rank/Score/Planets/Starbases/Unarmed/Escort/Capital/Tech Levels/Resources per ScoreReport.Designer.cs) + score history graph, Report -> Score History menu wired; battles viewer replay still pending
 - [ ] **Panel polish** - no text touching panel borders in the left column; consistent margins/padding on sections, labels, values, bars; clean at 1080p and 1440p
   - log: 2026-07-13 user directive; scheduled wave 5
 - [ ] **Race icons** - 16 designed SVG emblem icons replace numbered boxes; custom icon upload per player, stored with the race, shown in wizard/race select/empire summary/reports
@@ -564,9 +601,10 @@ Declared exclusions for this campaign - future candidates, not acceptance blocke
 - [ ] **Mystery trader + random events** - absent in the C# reference, canonical-only
   - log: 2026-07-13 excluded by scope decision
   - log: 2026-07-13 user reversed for the mystery trader - now canonical scope, see the Mystery Trader section (scheduled wave 5); random events remain excluded
-- [ ] **Mineral packets + mass drivers** - wave 5 decides: minimal canonical implementation or clean removal of the `_move_mineral_packets` remnant, documented either way
+- [x] **Mineral packets + mass drivers** - wave 5 decides: minimal canonical implementation or clean removal of the `_move_mineral_packets` remnant, documented either way
   - log: 2026-07-13 decision deferred to wave 5
   - log: 2026-07-13 user embraced packet relay + trade agreements extensions - weighs the wave 5 decision strongly toward implementing packets
+  - log: 2026-07-27 implemented canonical packets - fling command from starbase drivers (MassDriver.cs aggregation semantics), warp^2 flight with overfling decay (10/25/50 pct, min 10 kT), catch/impact formulas (/160 divisor, 1/3 recovery, defense coverage), map rendering, scannable contacts, fleet loading from packets, encyclopedia entry with art; remnant replaced; tests tests/unit/test_packets.py + tests/e2e/test_packets.py
 - [ ] **Multiplayer turn submission** - per-player order files, passwords, turn locking; web port is single-human live API
   - log: 2026-07-13 excluded by scope decision
   - log: 2026-07-13 partial reversal: correspondence (file-based) play is now a user requirement - see the Correspondence Play section; live simultaneous multiplayer remains excluded

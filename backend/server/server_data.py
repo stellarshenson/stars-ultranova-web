@@ -341,6 +341,69 @@ class GalacticStorm:
 
 
 @dataclass
+class MysteryTrader:
+    """
+    The Mystery Trader: an untouchable neutral ship crossing the galaxy.
+
+    Canonical Stars! Mystery Trader - the C# reference has only a TODO
+    (GameInitialiser.cs:180 "Mystery Trader Items ... hidden
+    technology"); built from canonical rules per user directive
+    (acc-crit Mystery Trader section). Spawns on a galaxy edge, crosses
+    in a straight line at warp 7-13 (velocity = heading * warp^2) and
+    exits the far side. It belongs to no empire and is not a Fleet, so
+    battles, minefields and storms never touch it by construction.
+    """
+    key: int = 0
+    x: float = 0.0
+    y: float = 0.0
+    velocity_x: float = 0.0  # ly per turn (unit heading * warp^2)
+    velocity_y: float = 0.0
+    warp: int = 7
+    # Per-empire gift ledger: empire_id -> {"total": unrewarded kT
+    # balance, "fleet_key": last gifting fleet}. Gifts of different
+    # empires accumulate and resolve independently.
+    gifts: Dict[int, dict] = field(default_factory=dict)
+
+    @property
+    def name(self) -> str:
+        """Stable unique name (keys never reuse - trader_counter)."""
+        return f"Mystery Trader {self.key}"
+
+    def move(self, universe_width: int, universe_height: int) -> bool:
+        """Advance one turn along the straight-line course.
+
+        Returns True when the trader has left the galaxy (spawn points
+        sit exactly ON an edge with an inward velocity, so the first
+        out-of-bounds step is the exit).
+        """
+        self.x += self.velocity_x
+        self.y += self.velocity_y
+        return (self.x < 0 or self.x > universe_width
+                or self.y < 0 or self.y > universe_height)
+
+    def to_dict(self) -> dict:
+        return {
+            'key': self.key, 'x': self.x, 'y': self.y,
+            'velocity_x': self.velocity_x, 'velocity_y': self.velocity_y,
+            'warp': self.warp,
+            'gifts': {str(k): dict(v) for k, v in self.gifts.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'MysteryTrader':
+        trader = cls(
+            key=data.get('key', 0),
+            x=data.get('x', 0.0), y=data.get('y', 0.0),
+            velocity_x=data.get('velocity_x', 0.0),
+            velocity_y=data.get('velocity_y', 0.0),
+            warp=data.get('warp', 7),
+        )
+        for k, v in data.get('gifts', {}).items():
+            trader.gifts[int(k)] = dict(v)
+        return trader
+
+
+@dataclass
 class NebulaRegion:
     """
     A single nebula region with position, shape, and density.
@@ -369,6 +432,7 @@ class NebulaField:
     # Cached density grids for fast lookups
     _grid: Optional[List[List[float]]] = field(default=None, repr=False)
     _dust_grid: Optional[List[List[float]]] = field(default=None, repr=False)
+    _emission_grid: Optional[List[List[float]]] = field(default=None, repr=False)
     _grid_resolution: int = 20  # Grid cell size in light years
 
     def get_density_at(self, x: float, y: float) -> float:
@@ -392,6 +456,17 @@ class NebulaField:
         if self._dust_grid is None:
             self._build_grid()
         return self._sample_grid(self._dust_grid, x, y)
+
+    def get_emission_density_at(self, x: float, y: float) -> float:
+        """
+        Get emission nebula density at a specific position.
+
+        Emission glow washes out sensors (nebula glare, user directive
+        2026-07-13) but never slows ships - see scan_step.py.
+        """
+        if self._emission_grid is None:
+            self._build_grid()
+        return self._sample_grid(self._emission_grid, x, y)
 
     def get_average_dust_density_along_path(
         self, x1: float, y1: float, x2: float, y2: float, samples: int = 10
@@ -455,6 +530,7 @@ class NebulaField:
 
         self._grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
         self._dust_grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
+        self._emission_grid = [[0.0 for _ in range(cols)] for _ in range(rows)]
 
         for region in self.regions:
             # Calculate bounding box for this region
@@ -497,11 +573,16 @@ class NebulaField:
                             self._dust_grid[gy][gx] = min(
                                 1.0, self._dust_grid[gy][gx] + contribution
                             )
+                        elif region.nebula_type == 'emission':
+                            self._emission_grid[gy][gx] = min(
+                                1.0, self._emission_grid[gy][gx] + contribution
+                            )
 
     def invalidate_cache(self) -> None:
         """Invalidate the cached grids (call after modifying regions)."""
         self._grid = None
         self._dust_grid = None
+        self._emission_grid = None
 
     def to_dict(self) -> dict:
         """Serialize to dictionary for persistence."""
@@ -578,6 +659,16 @@ class ServerData:
 
     # Wormhole pairs (by key)
     all_wormholes: Dict[int, Wormhole] = field(default_factory=dict)
+
+    # Mystery traders currently crossing the galaxy (by key)
+    all_traders: Dict[int, MysteryTrader] = field(default_factory=dict)
+
+    # Persisted trader key source - never resets, departed keys are
+    # never reused
+    trader_counter: int = 0
+
+    # "Mystery Trader" game-creation toggle (default on)
+    mystery_trader_enabled: bool = True
 
     # Messages generated this turn
     all_messages: List['Message'] = field(default_factory=list)
@@ -816,7 +907,12 @@ class ServerData:
             },
             "all_wormholes": {
                 str(k): v.to_dict() for k, v in self.all_wormholes.items()
-            }
+            },
+            "all_traders": {
+                str(k): v.to_dict() for k, v in self.all_traders.items()
+            },
+            "trader_counter": self.trader_counter,
+            "mystery_trader_enabled": self.mystery_trader_enabled
         }
 
     @classmethod
@@ -859,5 +955,12 @@ class ServerData:
 
         for k, v in data.get("all_wormholes", {}).items():
             server.all_wormholes[int(k)] = Wormhole.from_dict(v)
+
+        # Pre-trader saves load cleanly with the defaults
+        for k, v in data.get("all_traders", {}).items():
+            server.all_traders[int(k)] = MysteryTrader.from_dict(v)
+        server.trader_counter = data.get("trader_counter", 0)
+        server.mystery_trader_enabled = data.get(
+            "mystery_trader_enabled", True)
 
         return server

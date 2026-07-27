@@ -33,6 +33,7 @@ class ShipToken:
     """
     design_key: int = 0
     design_name: str = ""
+    hull_name: str = ""
     quantity: int = 0
     damage_percent: float = 0.0
 
@@ -69,16 +70,59 @@ class ShipToken:
     gate_mass: int = 0
     gate_range: int = 0
 
+    # Mass driver warp rating (starbases with Mass Driver components;
+    # cached from the design like the fields above, 0 = no driver)
+    mass_driver: int = 0
+
+    # Storm protection sources (web-only extension, user directive -
+    # galactic storm protection; cached from the design like the
+    # fields above). storm_shield is the best Storm Shield component
+    # tier fitted (protection fraction 0..1); has_armor_components is
+    # True only for fitted armor plates, never the hull's base armor.
+    storm_shield: float = 0.0
+    has_armor_components: bool = False
+
     @property
     def key(self) -> int:
         """Return design key as the token key."""
         return self.design_key
+
+    def storm_protection(self, race: Optional['Race'] = None) -> float:
+        """
+        Storm protection fraction for this token, in [0, 1].
+
+        Web-only extension (galactic storm protection, user directive -
+        no C# equivalent). Sources are ADDITIVE, then clamped at 1.0
+        (total immunity); each source counts at most once:
+
+        - Storm Shield components: the best tier's protection value
+        - conventional shields: STORM_SHIELD_PROTECTION scaled by the
+          token's shield coverage. Shields regenerate fully between
+          battles and tokens carry no persistent shield depletion, so
+          shields present -> full factor
+        - armor components: STORM_ARMOR_PROTECTION (hull base armor
+          grants nothing)
+        - radiation-hardened race: STORM_RAD_RACE_PROTECTION fleet-wide
+        """
+        from ..globals import (
+            STORM_SHIELD_PROTECTION, STORM_ARMOR_PROTECTION,
+            STORM_RAD_RACE_PROTECTION
+        )
+        protection = self.storm_shield
+        if self.shields > 0:
+            protection += STORM_SHIELD_PROTECTION
+        if self.has_armor_components:
+            protection += STORM_ARMOR_PROTECTION
+        if race is not None and race.is_radiation_hardened:
+            protection += STORM_RAD_RACE_PROTECTION
+        return max(0.0, min(1.0, protection))
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
             "design_key": hex(self.design_key),
             "design_name": self.design_name,
+            "hull_name": self.hull_name,
             "quantity": self.quantity,
             "damage_percent": self.damage_percent,
             "mass": self.mass,
@@ -107,6 +151,9 @@ class ShipToken:
             "has_gate": self.has_gate,
             "gate_mass": self.gate_mass,
             "gate_range": self.gate_range,
+            "mass_driver": self.mass_driver,
+            "storm_shield": self.storm_shield,
+            "has_armor_components": self.has_armor_components,
         }
 
     @classmethod
@@ -117,6 +164,7 @@ class ShipToken:
             key_str = data["design_key"]
             token.design_key = int(key_str, 16) if isinstance(key_str, str) else key_str
         token.design_name = data.get("design_name", "")
+        token.hull_name = data.get("hull_name", "")
         token.quantity = data.get("quantity", 0)
         token.damage_percent = data.get("damage_percent", 0.0)
         token.mass = data.get("mass", 0)
@@ -145,7 +193,23 @@ class ShipToken:
         token.has_gate = data.get("has_gate", False)
         token.gate_mass = data.get("gate_mass", 0)
         token.gate_range = data.get("gate_range", 0)
+        token.mass_driver = data.get("mass_driver", 0)
+        token.storm_shield = data.get("storm_shield", 0.0)
+        token.has_armor_components = data.get("has_armor_components", False)
         return token
+
+
+def is_mineral_packet(fleet) -> bool:
+    """
+    True when the fleet is a mineral-packet pseudo-fleet.
+
+    Canonical Stars! mass-driver rules, C# absent (no MineralPacket
+    class exists in the reference). packet_warp is authoritative for
+    packets flung by the fling_packet command; the name check keeps
+    pre-wave-5 remnant packets in legacy saves recognized.
+    """
+    return getattr(fleet, 'packet_warp', 0) > 0 or \
+        "Mineral Packet" in (fleet.name or "")
 
 
 @dataclass
@@ -174,6 +238,14 @@ class Fleet(Mappable):
     battle_plan: str = "Default"
     max_population: int = 1000000  # For AR starbases
     turn_year: int = -1  # For salvage decay
+
+    # Mineral packet pseudo-fleet fields (canonical Stars! mass-driver
+    # rules, C# absent). packet_warp is the flight speed the packet
+    # was flung at; packet_safe_warp is the flinging driver's rating
+    # (overfling above it decays the packet in flight). Both 0 for
+    # ordinary fleets, so legacy saves load unchanged.
+    packet_warp: int = 0
+    packet_safe_warp: int = 0
 
     def __post_init__(self):
         """Initialize fleet-specific defaults."""
@@ -253,6 +325,16 @@ class Fleet(Mappable):
         return any(token.is_starbase for token in self.tokens.values())
 
     @property
+    def mass_driver(self) -> int:
+        """Best mass driver warp rating aboard (0 = no driver).
+
+        A starbase is a single token, so the max over tokens is exact
+        for the receiving/flinging driver rating.
+        """
+        return max((token.mass_driver for token in self.tokens.values()),
+                   default=0)
+
+    @property
     def mass(self) -> int:
         """Return total mass of fleet including cargo."""
         # Port of: Fleet.cs lines 301-315
@@ -302,6 +384,21 @@ class Fleet(Mappable):
         """Set speed on first waypoint."""
         if self.waypoints:
             self.waypoints[0].warp_factor = value
+
+    def storm_protection(self, race: Optional['Race'] = None) -> float:
+        """
+        Fleet storm protection in [0, 1]: the MINIMUM across tokens.
+
+        Web-only extension (galactic storm protection, user directive -
+        no C# equivalent). A convoy is only as protected as its weakest
+        ship; 1.0 means total immunity to storm hull damage, warp
+        mishaps and colonist attrition (scan dampening is environmental
+        and never reduced).
+        """
+        if not self.tokens:
+            return 0.0
+        return min(token.storm_protection(race)
+                   for token in self.tokens.values())
 
     @property
     def total_armor_strength(self) -> float:
@@ -447,7 +544,7 @@ class Fleet(Mappable):
         fuel_consumption_rate = self.fuel_consumption(warp_factor, race)
 
         # Mineral packets don't consume fuel
-        if "Mineral Packet" in (self.name or ""):
+        if is_mineral_packet(self):
             fuel_consumption_rate = 1.0 / float(2**31)
 
         # Warp 1 generates fuel
@@ -627,7 +724,9 @@ class Fleet(Mappable):
             "target_distance": self.target_distance,
             "battle_plan": self.battle_plan,
             "max_population": self.max_population,
-            "turn_year": self.turn_year
+            "turn_year": self.turn_year,
+            "packet_warp": self.packet_warp,
+            "packet_safe_warp": self.packet_safe_warp
         })
         return data
 
@@ -668,6 +767,8 @@ class Fleet(Mappable):
         fleet.battle_plan = data.get("battle_plan", "Default")
         fleet.max_population = data.get("max_population", 1000000)
         fleet.turn_year = data.get("turn_year", -1)
+        fleet.packet_warp = data.get("packet_warp", 0)
+        fleet.packet_safe_warp = data.get("packet_safe_warp", 0)
 
         return fleet
 

@@ -11,6 +11,8 @@ here with //.
 from dataclasses import dataclass
 from typing import List, TYPE_CHECKING
 
+from ..core.game_objects.fleet import is_mineral_packet
+
 if TYPE_CHECKING:
     from .server_data import ServerData
 
@@ -130,7 +132,7 @@ class Scores:
         for fleet in empire.owned_fleets.values():
             # Mineral-packet pseudo-fleets are a web-only construct
             # (no C# equivalent) - exclude them from ship counts
-            if "Mineral Packet" in fleet.name:
+            if is_mineral_packet(fleet):
                 continue
             for token in fleet.tokens.values():
                 design = empire.designs.get(token.design_key)

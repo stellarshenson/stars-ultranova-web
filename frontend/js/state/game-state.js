@@ -21,10 +21,13 @@ const GameState = {
     designs: [],           // Own ship designs
     race: null,            // Own race definition
     storms: [],            // Galactic storms (visible to all)
+    traders: [],           // Mystery traders (visible to all)
+    mtComponents: [],      // Mystery Trader component grants (hidden tech)
     minefields: [],        // Minefields known to this empire
     wormholes: [],         // Wormholes discovered by this empire
     scores: [],            // Public score records for all empires
     scoreHistory: {},      // Per-empire score history (empire id -> entries)
+    victoryStatus: null,   // Own progress toward each victory target
     victor: null,          // Winning empire id once victory declared
 
     // Selection state
@@ -52,9 +55,9 @@ const GameState = {
     /**
      * Create a new game.
      */
-    async createGame(name, playerCount, universeSize, density, seed, race = null, acceleratedStart = false, victory = null) {
+    async createGame(name, playerCount, universeSize, density, seed, race = null, acceleratedStart = false, victory = null, mysteryTrader = true) {
         try {
-            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart, victory);
+            this.game = await ApiClient.createGame(name, playerCount, universeSize, density, seed, race, acceleratedStart, victory, mysteryTrader);
             await this.refreshState();
             this.nebulae = await ApiClient.getNebulae(this.game.id);
             this.emit('gameCreated', this.game);
@@ -81,10 +84,13 @@ const GameState = {
         this.designs = state.designs || [];
         this.race = state.empire ? state.empire.race : null;
         this.storms = state.storms || [];
+        this.traders = state.traders || [];
+        this.mtComponents = state.mt_components || [];
         this.minefields = state.minefields || [];
         this.wormholes = state.wormholes || [];
         this.scores = state.scores || [];
         this.scoreHistory = state.score_history || {};
+        this.victoryStatus = state.victory_status || null;
 
         // Announce a newly declared victor once per session
         const previousVictor = this.victor;

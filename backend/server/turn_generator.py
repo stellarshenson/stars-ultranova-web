@@ -26,17 +26,42 @@ from .scores import Scores
 from .victory_check import VictoryCheck
 from ..core.commands.base import Message
 from ..core.globals import (
-    NOBODY, NEBULA_SPEED_PENALTY, NEBULA_MIN_SPEED_FACTOR,
+    NOBODY, EVERYONE, STARTING_YEAR,
+    NEBULA_SPEED_PENALTY, NEBULA_MIN_SPEED_FACTOR,
     STORM_DAMAGE_PER_TURN, STORM_SAFE_WARP, STORM_WARP_RISK_PER_WARP,
     STORM_MISHAP_RISK_CAP, STORM_MISHAP_DAMAGE, STORM_COLONIST_DEATH,
-    COLONISTS_PER_KILOTON
+    COLONISTS_PER_KILOTON,
+    PACKET_DECAY_RATES, PACKET_MIN_DECAY, PACKET_OVERFLING_MAX,
+    PACKET_DAMAGE_DIVISOR, PACKET_UNCAUGHT_RECOVERY,
+    MT_MIN_YEARS, MT_LATE_YEARS, MT_SPAWN_CHANCE,
+    MT_MAX_ACTIVE_EARLY, MT_MAX_ACTIVE_LATE, MT_WARP_MIN, MT_WARP_MAX,
+    MT_GIFT_THRESHOLD, MT_TIER2_GIFT, MT_TIER3_GIFT,
+    MT_MINERAL_BOUNTY_FACTOR,
+    GATE_HULL_SIZE, GATE_ALLOWED_HULL_SIZES,
+    GATE_SPECTRAL_RANGE_FACTOR, GATE_MAX_BASE_RANGE
 )
+from ..core.data_structures.cargo import Cargo
+from ..core.data_structures.tech_level import RESEARCH_KEYS
+from ..core.defenses import compute_defense_coverage
+from ..core.game_objects.fleet import is_mineral_packet
 from ..core.waypoints.waypoint import WaypointTask, get_task_type, Waypoint, NoTaskObj
 
 if TYPE_CHECKING:
     from .server_data import ServerData
     from ..core.game_objects.fleet import Fleet
     from ..core.race.race import Race
+
+
+# Mystery Trader hidden-technology items (canonical Stars! MT items;
+# components.xml carries each with the "Mystery Trader Item" marker
+# property). Sorted so self.rand.choice over the not-yet-owned
+# remainder is deterministic.
+MT_ITEMS = [
+    "Anti-Matter Torpedo",
+    "Genesis Device",
+    "Mega Poly Shell",
+    "Multi-Function Pod",
+]
 
 
 # Turn step ordering constants (from TurnGenerator.cs)
@@ -123,11 +148,20 @@ class TurnGenerator:
         messages = ScrapFleetStep().process(self.server_state)
         self.server_state.all_messages.extend(messages)
 
+        # Mystery Trader: resolve gifts, move/exit, spawn, retarget
+        # intercept waypoints. Must run BEFORE the fleet move loop so
+        # fleets chase the trader's post-move position and co-locate at
+        # the turn boundary.
+        self._process_traders()
+
         # Move fleets; minefield check follows each fleet's move, as in
         # the original TurnGenerator.UpdateFleet -> CheckForMinefields.Check
         destroyed_fleets: List['Fleet'] = []
         for fleet in list(self.server_state.iterate_all_fleets()):
-            if fleet.name == "Mineral Packet":
+            # Packets move in their own step (_move_mineral_packets);
+            # the old exact-match name check let "Mineral Packet #N"
+            # fleets move twice
+            if is_mineral_packet(fleet):
                 continue
             if getattr(fleet, 'is_starbase', False):
                 # C# TurnGenerator.cs:115-117 runs ProcessFleet for every
@@ -293,8 +327,10 @@ class TurnGenerator:
 
         # Check for no fuel (TurnGenerator.cs:270-279; original text
         # reads "has ran out of fuel" - normalized to match the web's
-        # existing fuel message style)
-        if fleet.fuel_available == 0 and not fleet.is_starbase:
+        # existing fuel message style). Mineral packets coast without
+        # fuel and never warn.
+        if fleet.fuel_available == 0 and not fleet.is_starbase \
+                and not is_mineral_packet(fleet):
             self.server_state.all_messages.append(Message(
                 audience=fleet.owner,
                 text=f"{fleet.name} has run out of fuel.",
@@ -335,8 +371,9 @@ class TurnGenerator:
 
         waypoint_zero = fleet.waypoints[0]
 
-        # Check for Cheap Engines failure
-        if race is not None and race.has_trait("CE"):
+        # Check for Cheap Engines failure (packets have no engines)
+        if race is not None and race.has_trait("CE") \
+                and not is_mineral_packet(fleet):
             if waypoint_zero.warp_factor > 6 and self.rand.randint(0, 9) == 0:
                 # Engine failure
                 msg = Message(
@@ -351,8 +388,9 @@ class TurnGenerator:
 
         # Stargate travel: a warp-10 order between two friendly gated
         # starbases is an instant jump (gate components existed in the
-        # original but travel was never implemented; canonical rules)
-        if waypoint_zero.warp_factor >= 10:
+        # original but travel was never implemented; canonical rules).
+        # Mineral packets fly, they never gate.
+        if waypoint_zero.warp_factor >= 10 and not is_mineral_packet(fleet):
             if self._gate_travel(fleet, waypoint_zero, empire):
                 return False
 
@@ -498,6 +536,11 @@ class TurnGenerator:
         Fleet.cs Move (lines 456-463).
         """
         if warp <= 0 or distance <= 0:
+            return
+
+        # Mineral packets need no fuel (canonical Stars! rule); without
+        # this a fuel-less packet would be dropped to warp 0 below
+        if is_mineral_packet(fleet):
             return
 
         empire = self.server_state.all_empires.get(fleet.owner)
@@ -672,9 +715,14 @@ class TurnGenerator:
 
     def _star_gate(self, star) -> Optional[tuple]:
         """
-        Find a stargate at a star: (safe_mass, safe_range) or None.
+        Find a stargate at a star: (safe_mass, effective_range) or None.
 
-        The gate lives on the owner's starbase fleet in orbit.
+        The gate lives on the owner's starbase fleet in orbit. The
+        effective range is star-fuelled (user directive 2026-07-13):
+        the gate model's SafeRange - with "any" (-1) clamped to
+        GATE_MAX_BASE_RANGE, so no gate is ever unlimited - is
+        multiplied by the host star's spectral class factor
+        (GATE_SPECTRAL_RANGE_FACTOR: O throws farthest, M shortest).
         """
         if star is None or star.owner == NOBODY:
             return None
@@ -688,7 +736,12 @@ class TurnGenerator:
                 continue
             for token in fleet.tokens.values():
                 if getattr(token, 'has_gate', False):
-                    return (token.gate_mass, token.gate_range)
+                    base_range = token.gate_range
+                    if base_range < 0 or base_range > GATE_MAX_BASE_RANGE:
+                        base_range = GATE_MAX_BASE_RANGE
+                    factor = GATE_SPECTRAL_RANGE_FACTOR.get(
+                        getattr(star, 'spectral_class', 'G'), 1.0)
+                    return (token.gate_mass, base_range * factor)
         return None
 
     def _gate_travel(self, fleet: 'Fleet', waypoint, empire) -> bool:
@@ -696,10 +749,19 @@ class TurnGenerator:
         Attempt stargate travel for a warp-10 order.
 
         Both the origin (orbited star) and the destination star must
-        carry a friendly gated starbase. Exceeding the gates' safe
-        hull mass or safe range risks losing ships in transit
-        (canonical rule; the original never implemented gate travel,
-        so limit handling is an approximation).
+        carry a friendly gated starbase. Stargate rework (user
+        directive 2026-07-13, deliberate deviations from canonical):
+
+        - only small and medium hulls may gate (GATE_HULL_SIZE);
+          large and capital hulls are refused outright, no over-limit
+          gamble for them
+        - gate range is star-fuelled and never unlimited (_star_gate)
+        - mineral cargo never gates - loose mineral logistics stay
+          with freighters and mass drivers; colonists gate only for
+          Interstellar Traveler (IT) races (canonical cargo rule) and
+          fuel always travels free (canonical)
+        - exceeding safe mass or range with an allowed hull keeps the
+          canonical 25% loss / 50% damage gamble
 
         Returns True if the order was handled (jump or failure).
         """
@@ -723,15 +785,57 @@ class TurnGenerator:
             waypoint.warp_factor = min(waypoint.warp_factor, 9)
             return False
 
+        # Hull size limit: any large/capital (or unclassified) hull in
+        # the fleet blocks the whole jump - refused outright
+        for token in fleet.tokens.values():
+            size = GATE_HULL_SIZE.get(token.hull_name)
+            if size not in GATE_ALLOWED_HULL_SIZES:
+                hull = token.hull_name or token.design_name
+                self.server_state.all_messages.append(Message(
+                    audience=fleet.owner,
+                    text=f"{fleet.name} cannot make a stargate jump: "
+                         f"the {hull} hull is too large for gate "
+                         f"transit - only small and medium hulls may "
+                         f"use stargates.",
+                    message_type="Invalid Command", fleet_key=fleet.key))
+                waypoint.warp_factor = min(waypoint.warp_factor, 9)
+                return False
+
+        # No minerals through gates: mineral cargo aboard blocks the
+        # jump for everyone. Colonists are cargo too - canonical Stars!
+        # lets only IT races gate cargo - while fuel is not cargo and
+        # always travels
+        cargo = fleet.cargo
+        if (cargo.ironium > 0 or cargo.boranium > 0 or
+                cargo.germanium > 0 or cargo.silicoxium > 0):
+            self.server_state.all_messages.append(Message(
+                audience=fleet.owner,
+                text=f"{fleet.name} cannot make a stargate jump: "
+                     f"mineral cargo cannot pass through a stargate. "
+                     f"Unload the minerals or ship them by freighter.",
+                message_type="Invalid Command", fleet_key=fleet.key))
+            waypoint.warp_factor = min(waypoint.warp_factor, 9)
+            return False
+        if cargo.colonists_in_kilotons > 0 and not empire.has_trait("IT"):
+            self.server_state.all_messages.append(Message(
+                audience=fleet.owner,
+                text=f"{fleet.name} cannot make a stargate jump: only "
+                     f"Interstellar Traveler races can gate fleets "
+                     f"carrying colonists.",
+                message_type="Invalid Command", fleet_key=fleet.key))
+            waypoint.warp_factor = min(waypoint.warp_factor, 9)
+            return False
+
         distance = math.hypot(dest.position.x - fleet.position.x,
                               dest.position.y - fleet.position.y)
 
-        def limit(a: int, b: int) -> float:
-            vals = [v for v in (a, b) if v >= 0]  # -1 means unlimited
+        def limit(a, b) -> float:
+            vals = [v for v in (a, b) if v >= 0]  # -1 means unlimited mass
             return min(vals) if vals else float('inf')
 
         safe_mass = limit(origin_gate[0], dest_gate[0])
-        safe_range = limit(origin_gate[1], dest_gate[1])
+        # Ranges from _star_gate are always finite (star-fuelled)
+        safe_range = min(origin_gate[1], dest_gate[1])
 
         over_range = distance > safe_range
         ships_lost = 0
@@ -832,6 +936,303 @@ class TurnGenerator:
         for wormhole in self.server_state.all_wormholes.values():
             wormhole.drift(self.rand, width, height)
 
+    def _process_traders(self):
+        """
+        Mystery Trader turn processing.
+
+        Canonical Stars! Mystery Trader - the C# reference has only a
+        TODO (GameInitialiser.cs:180 "Mystery Trader Items ... hidden
+        technology"); built from canonical rules per user directive
+        (acc-crit Mystery Trader section).
+
+        Order: (a) resolve accumulated gifts on the seeded per-turn
+        RNG, (b) move every trader along its straight-line course and
+        broadcast departures, (c) roll a spawn once eligible (year
+        gate, active cap), (d) retarget fleet waypoints naming a
+        trader so the intercept course recomputes every turn. Runs
+        BEFORE the fleet move loop: a fleet whose warp covers the
+        distance arrives exactly at the trader's end-of-turn position
+        and can gift until the next generation.
+
+        The trader is not a Fleet and belongs to no empire, so battle
+        engines, minefield checks, storm damage and scans never touch
+        it by construction (untouchable criterion). All randomness
+        rides self.rand; dict iteration is over sorted keys.
+        """
+        if not getattr(self.server_state, 'mystery_trader_enabled', True):
+            return
+
+        traders = self.server_state.all_traders
+        nebula = self.server_state.nebula_field
+        width = nebula.universe_width if nebula else 600
+        height = nebula.universe_height if nebula else 600
+
+        # (a) Resolve gifts. Below-threshold balances persist (an
+        # empire may top up over several gifts while it can still
+        # reach the trader); the trader always keeps the cargo.
+        for trader_key in sorted(traders):
+            trader = traders[trader_key]
+            for empire_id in sorted(trader.gifts):
+                entry = trader.gifts[empire_id]
+                total = entry.get("total", 0)
+                if total <= 0:
+                    continue
+                if total < MT_GIFT_THRESHOLD:
+                    self.server_state.all_messages.append(Message(
+                        audience=empire_id,
+                        text=f"{trader.name} accepts your {total} kT "
+                             f"gift with a courteous nod, but offers "
+                             f"nothing in return. It expects at least "
+                             f"{MT_GIFT_THRESHOLD} kT before parting "
+                             f"with its secrets.",
+                        message_type="Mystery Trader"))
+                    continue
+                self._grant_trader_reward(trader, empire_id, entry)
+                entry["total"] = 0
+
+        # (b) Move and exit (spawn points sit ON an edge with inward
+        # velocity, so the first out-of-bounds step is the exit)
+        for trader_key in sorted(traders):
+            trader = traders[trader_key]
+            if trader.move(width, height):
+                del traders[trader_key]
+                self._retarget_departed_trader(trader)
+                self.server_state.all_messages.append(Message(
+                    audience=EVERYONE,
+                    text=f"{trader.name} has left the galaxy.",
+                    message_type="Mystery Trader"))
+
+        # (c) Spawn roll: eligible from STARTING_YEAR + MT_MIN_YEARS,
+        # cap 1 active early, MT_MAX_ACTIVE_LATE from MT_LATE_YEARS on
+        years_in = self.server_state.turn_year - STARTING_YEAR
+        if years_in >= MT_MIN_YEARS:
+            cap = MT_MAX_ACTIVE_LATE if years_in >= MT_LATE_YEARS \
+                else MT_MAX_ACTIVE_EARLY
+            if len(traders) < cap \
+                    and self.rand.random() < MT_SPAWN_CHANCE:
+                self._spawn_trader(width, height)
+
+        # (d) Retarget moving waypoints to the post-move positions.
+        # C# waypoints are position-only (Common/Waypoints/Waypoint.cs:
+        # 36-60, no moving-object targeting anywhere); the web resolves
+        # the destination name against the live trader every turn -
+        # that IS the moving-waypoint targeting (web extension).
+        by_name = {t.name: t for t in traders.values()}
+        if by_name:
+            for fleet in self.server_state.iterate_all_fleets():
+                for wp in fleet.waypoints:
+                    trader = by_name.get(wp.destination or "")
+                    if trader is not None:
+                        wp.position_x = trader.x
+                        wp.position_y = trader.y
+
+    def _spawn_trader(self, width: int, height: int):
+        """Spawn a trader ON a random edge, targeting a random point on
+        the OPPOSITE edge: a straight-line crossing at warp 7-13
+        (canonical band; velocity = unit heading * warp^2, so the
+        trader may outrun every player drive)."""
+        from .server_data import MysteryTrader
+
+        edge = self.rand.randint(0, 3)  # 0=W, 1=E, 2=N, 3=S
+        if edge == 0:    # west -> east
+            x, y = 0.0, self.rand.uniform(0, height)
+            tx, ty = float(width), self.rand.uniform(0, height)
+        elif edge == 1:  # east -> west
+            x, y = float(width), self.rand.uniform(0, height)
+            tx, ty = 0.0, self.rand.uniform(0, height)
+        elif edge == 2:  # north -> south
+            x, y = self.rand.uniform(0, width), 0.0
+            tx, ty = self.rand.uniform(0, width), float(height)
+        else:            # south -> north
+            x, y = self.rand.uniform(0, width), float(height)
+            tx, ty = self.rand.uniform(0, width), 0.0
+
+        warp = self.rand.randint(MT_WARP_MIN, MT_WARP_MAX)
+        heading_len = math.hypot(tx - x, ty - y) or 1.0
+        speed = warp * warp
+        self.server_state.trader_counter += 1
+        trader = MysteryTrader(
+            key=self.server_state.trader_counter, x=x, y=y,
+            velocity_x=(tx - x) / heading_len * speed,
+            velocity_y=(ty - y) / heading_len * speed,
+            warp=warp)
+        self.server_state.all_traders[trader.key] = trader
+        self.server_state.all_messages.append(Message(
+            audience=EVERYONE,
+            text=f"{trader.name} has entered the galaxy at "
+                 f"({x:.0f}, {y:.0f}) and is crossing at warp {warp}. "
+                 f"Meet it with a generous gift and it may part with "
+                 f"its secrets.",
+            message_type="Mystery Trader"))
+
+    def _retarget_departed_trader(self, trader):
+        """Waypoints chasing a departed trader finish their leg as
+        plain positional waypoints: position stays as-is, destination
+        rewritten to the space-at style (turn_generator "Space at"
+        convention)."""
+        for fleet in self.server_state.iterate_all_fleets():
+            for wp in fleet.waypoints:
+                if wp.destination == trader.name:
+                    wp.destination = (f"Space at {wp.position_x:.0f},"
+                                      f"{wp.position_y:.0f}")
+
+    # Mystery Trader reward table (chosen numbers - authoritative,
+    # mirrored verbatim in the encyclopedia entry). Tier by the
+    # unrewarded gift balance G (kT of minerals + colonist kT):
+    #   tier 1 (1000-1999): 40% MT component, 30% research boost
+    #     (+1 level in 2 distinct fields), 30% mineral bounty
+    #     (2x G kT split evenly, loaded onto the gifting fleet up to
+    #     free cargo space, fuel topped to full)
+    #   tier 2 (2000-3999): 50% component, 25% research (+1 in 4
+    #     fields), 15% mineral bounty (3x G), 10% gifted ship
+    #   tier 3 (>= 4000):   55% component, 20% research (+2 in 3
+    #     fields), 25% gifted ship
+    # One self.rand.random() roll against cumulative odds decides the
+    # band. If every MT item is already owned the component band falls
+    # through to the tier's research boost; a dead gifting fleet
+    # converts a mineral bounty to a research boost (+1 in 2 fields).
+    def _grant_trader_reward(self, trader, empire_id: int, entry: dict):
+        """Roll and grant one reward for an at/above-threshold gift."""
+        empire = self.server_state.all_empires.get(empire_id)
+        if empire is None:
+            return
+        total = entry.get("total", 0)
+        roll = self.rand.random()
+        if total >= MT_TIER3_GIFT:
+            if roll < 0.55:
+                self._mt_grant_component(trader, empire, 3, 2)
+            elif roll < 0.75:
+                self._mt_grant_research(trader, empire, 3, 2)
+            else:
+                self._mt_grant_ship(trader, empire, entry)
+        elif total >= MT_TIER2_GIFT:
+            if roll < 0.50:
+                self._mt_grant_component(trader, empire, 4, 1)
+            elif roll < 0.75:
+                self._mt_grant_research(trader, empire, 4, 1)
+            elif roll < 0.90:
+                self._mt_grant_minerals(trader, empire, entry,
+                                        MT_MINERAL_BOUNTY_FACTOR + 1)
+            else:
+                self._mt_grant_ship(trader, empire, entry)
+        else:
+            if roll < 0.40:
+                self._mt_grant_component(trader, empire, 2, 1)
+            elif roll < 0.70:
+                self._mt_grant_research(trader, empire, 2, 1)
+            else:
+                self._mt_grant_minerals(trader, empire, entry,
+                                        MT_MINERAL_BOUNTY_FACTOR)
+
+    def _mt_grant_component(self, trader, empire, res_fields: int,
+                            res_levels: int):
+        """Hidden-technology grant: one MT item the empire does not
+        own yet (the C# TODO GameInitialiser.cs:180 names 'hidden
+        technology' as the intended mechanism - realized as the
+        per-empire mt_components grant list gating design_builder)."""
+        owned = getattr(empire, 'mt_components', [])
+        available = [name for name in MT_ITEMS if name not in owned]
+        if not available:
+            self._mt_grant_research(trader, empire, res_fields,
+                                    res_levels)
+            return
+        item = self.rand.choice(available)
+        empire.mt_components.append(item)
+        self.server_state.all_messages.append(Message(
+            audience=empire.id,
+            text=f"{trader.name} rewards your gift with the secret "
+                 f"plans for the {item}! Your shipyards may now "
+                 f"build it.",
+            message_type="Mystery Trader"))
+
+    def _mt_grant_research(self, trader, empire, fields_n: int,
+                           levels: int):
+        """Research boost: +levels in fields_n distinct random
+        fields."""
+        fields = self.rand.sample(RESEARCH_KEYS, fields_n)
+        for field_name in fields:
+            empire.research_levels.levels[field_name] = \
+                empire.research_levels.levels.get(field_name, 0) + levels
+        self.server_state.all_messages.append(Message(
+            audience=empire.id,
+            text=f"{trader.name} rewards your gift with a trove of "
+                 f"research: +{levels} level(s) in "
+                 f"{', '.join(sorted(fields))}.",
+            message_type="Mystery Trader"))
+
+    def _mt_grant_minerals(self, trader, empire, entry: dict,
+                           factor: int):
+        """Mineral bounty: factor x gift kT split evenly across the
+        three minerals, loaded onto the gifting fleet clamped to its
+        free cargo space, and fuel topped to full ("minerals/fuel")."""
+        fleet = empire.owned_fleets.get(entry.get("fleet_key"))
+        if fleet is None:
+            # Gifting fleet gone - convert to a research boost
+            self._mt_grant_research(trader, empire, 2, 1)
+            return
+        bounty = factor * entry.get("total", 0)
+        free = max(0, fleet.total_cargo_capacity - fleet.cargo.mass)
+        loaded = min(bounty, free)
+        per_mineral = loaded // 3
+        fleet.cargo.ironium += per_mineral
+        fleet.cargo.boranium += per_mineral
+        fleet.cargo.germanium += loaded - 2 * per_mineral
+        fleet.fuel_available = fleet.total_fuel_capacity
+        self.server_state.all_messages.append(Message(
+            audience=empire.id,
+            text=f"{trader.name} rewards your gift with {loaded} kT "
+                 f"of refined minerals and a full load of fuel for "
+                 f"{fleet.name}.",
+            message_type="Mystery Trader", fleet_key=fleet.key))
+
+    def _mt_grant_ship(self, trader, empire, entry: dict):
+        """Gifted ship: a Trader Marauder warship materializes at the
+        gifting fleet's position (or the trader's, if the fleet is
+        gone), fully fueled, owned by the giver."""
+        from ..core.data_structures import NovaPoint
+        from ..services.ship_specs import (
+            SimpleDesign, find_design, make_token)
+        from ..core.data_structures.resources import Resources
+        from ..core.components.ship_design import Weapon
+        from ..core.game_objects.fleet import Fleet
+
+        design = find_design(empire, "Trader Marauder")
+        if design is None:
+            design = SimpleDesign(
+                key=empire.get_next_design_key(),
+                name="Trader Marauder", hull_name="Trader Marauder",
+                cost=Resources(200, 150, 120, 400),
+                mass=400, armor=2000, shields=800,
+                fuel_capacity=2000, cargo_capacity=500,
+                battle_speed=1.0, initiative=4, optimal_speed=9,
+                has_weapons=True,
+                # Anti-Matter Torpedo battery
+                weapons=[Weapon(power=60, range=6, initiative=4,
+                                accuracy=85, group="torpedo")
+                         for _ in range(4)])
+            empire.designs[design.key] = design
+
+        giver = empire.owned_fleets.get(entry.get("fleet_key"))
+        if giver is not None:
+            position = NovaPoint(giver.position.x, giver.position.y)
+        else:
+            position = NovaPoint(trader.x, trader.y)
+
+        key = empire.get_next_fleet_key()
+        fleet = Fleet(name=f"Trader Gift #{key & 0xFFFFFFFF}",
+                      position=position)
+        fleet.key = key
+        token = make_token(design, 1)
+        fleet.tokens[token.design_key] = token
+        fleet.fuel_available = fleet.total_fuel_capacity
+        fleet.turn_year = self.server_state.turn_year
+        empire.add_or_update_fleet(fleet)
+        self.server_state.all_messages.append(Message(
+            audience=empire.id,
+            text=f"{trader.name} rewards your gift with a warship! "
+                 f"{fleet.name} has joined your empire.",
+            message_type="Mystery Trader", fleet_key=fleet.key))
+
     def _process_storms(self):
         """
         Drift galactic storms and apply their hazards to fleets inside.
@@ -842,7 +1243,18 @@ class TurnGenerator:
         intensity at the core): hull damage per turn, a warp mishap
         risk for fleets moving above STORM_SAFE_WARP (the
         minefield-strike analogue) and colonist attrition. Ships whose
-        damage reaches 100% are destroyed; starbases are immune.
+        damage reaches 100% are destroyed.
+
+        Orbit safe harbor (user directive, wave 4): storms never affect
+        planets, and never affect fleets or starbases in orbit of a
+        planet - a fleet whose position coincides with a star is
+        sheltered in the planet's magnetosphere and skipped entirely.
+        Scan dampening is NOT sheltered: the storm disturbs the medium,
+        so a scanner inside a storm still scans worse (ScanStep).
+
+        Storm protection (user directive, wave 4): every effect scales
+        by (1 - fleet.storm_protection(race)); at protection 1.0 the
+        fleet is fully immune and skipped without a message.
         """
         storms = getattr(self.server_state, 'all_storms', None)
         if not storms:
@@ -858,8 +1270,18 @@ class TurnGenerator:
         for fleet in list(self.server_state.iterate_all_fleets()):
             if getattr(fleet, 'is_starbase', False):
                 continue  # starbases shelter in a planet's magnetosphere
-            if fleet.name == "Mineral Packet":
+            if is_mineral_packet(fleet):
                 continue
+            # Orbit safe harbor: a fleet parked at a star is untouched
+            if self.server_state.get_star_at_position(
+                    fleet.position.x, fleet.position.y) is not None:
+                continue
+
+            empire = self.server_state.all_empires.get(fleet.owner)
+            race = getattr(empire, 'race', None)
+            protection = fleet.storm_protection(race)
+            if protection >= 1.0:
+                continue  # total immunity - zero damage, mishap, attrition
 
             for storm in storms.values():
                 local = storm.get_intensity_at(
@@ -868,7 +1290,7 @@ class TurnGenerator:
                     continue
 
                 ships_lost = self._apply_storm_damage(
-                    fleet, STORM_DAMAGE_PER_TURN * local)
+                    fleet, STORM_DAMAGE_PER_TURN * local * (1.0 - protection))
 
                 if ships_lost > 0:
                     text = (f"{fleet.name} was caught in a galactic storm - "
@@ -881,8 +1303,8 @@ class TurnGenerator:
                     message_type="Storm", fleet_key=fleet.key
                 ))
 
-                self._check_storm_mishap(fleet, local)
-                self._apply_storm_attrition(fleet, local)
+                self._check_storm_mishap(fleet, local, protection)
+                self._apply_storm_attrition(fleet, local, protection)
                 break  # one storm hit per fleet per turn
 
     def _apply_storm_damage(self, fleet: 'Fleet', damage: float) -> int:
@@ -904,7 +1326,8 @@ class TurnGenerator:
                 del fleet.tokens[token.design_key]
         return ships_lost
 
-    def _check_storm_mishap(self, fleet: 'Fleet', local: float):
+    def _check_storm_mishap(self, fleet: 'Fleet', local: float,
+                            protection: float = 0.0):
         """
         Warp-risk check for a fleet that moved through a storm.
 
@@ -914,7 +1337,9 @@ class TurnGenerator:
         once per turn on the seeded RNG. A mishap deals
         STORM_MISHAP_DAMAGE * local extra damage to every token and
         stops the fleet in the storm, waypoint preserved - the
-        minefield-strike analogue (user directive 2026-07-13).
+        minefield-strike analogue (user directive 2026-07-13). Storm
+        protection scales BOTH the mishap chance and the mishap damage
+        by (1 - protection) (user directive, wave 4).
         """
         warp = self._fleet_travel_warp.get(fleet.key)
         if warp is None:
@@ -925,12 +1350,13 @@ class TurnGenerator:
             return
 
         probability = min(STORM_MISHAP_RISK_CAP,
-                          STORM_WARP_RISK_PER_WARP * speeding * local)
+                          STORM_WARP_RISK_PER_WARP * speeding * local) \
+            * (1.0 - protection)
         if self.rand.random() >= probability:
             return
 
         ships_lost = self._apply_storm_damage(
-            fleet, STORM_MISHAP_DAMAGE * local)
+            fleet, STORM_MISHAP_DAMAGE * local * (1.0 - protection))
 
         # Fleet is stopped dead in the storm, as with a minefield strike
         if fleet.waypoints:
@@ -948,19 +1374,22 @@ class TurnGenerator:
             message_type="Storm", fleet_key=fleet.key
         ))
 
-    def _apply_storm_attrition(self, fleet: 'Fleet', local: float):
+    def _apply_storm_attrition(self, fleet: 'Fleet', local: float,
+                               protection: float = 0.0):
         """
         Colonists carried through a storm die off, scaled by the local
-        intensity (user directive 2026-07-13). Cargo stores colonists
-        in kilotons; the loss rounds up so any exposure costs at least
-        one kiloton.
+        intensity (user directive 2026-07-13) and by (1 - protection)
+        (user directive, wave 4; a fully protected fleet never reaches
+        this - _process_storms skips it). Cargo stores colonists in
+        kilotons; the loss rounds up so any unprotected exposure costs
+        at least one kiloton.
         """
         col_kt = fleet.cargo.colonists_in_kilotons
         if col_kt <= 0:
             return
 
         deaths_kt = min(col_kt, math.ceil(
-            col_kt * STORM_COLONIST_DEATH * local))
+            col_kt * STORM_COLONIST_DEATH * local * (1.0 - protection)))
         fleet.cargo.colonists_in_kilotons = col_kt - deaths_kt
         self.server_state.all_messages.append(Message(
             audience=fleet.owner,
@@ -1156,7 +1585,7 @@ class TurnGenerator:
             radius = minefield.radius
 
             for fleet in list(self.server_state.iterate_all_fleets()):
-                if fleet.name == "Mineral Packet":
+                if is_mineral_packet(fleet):
                     continue
                 distance = math.hypot(
                     fleet.position.x - minefield.position_x,
@@ -1214,7 +1643,7 @@ class TurnGenerator:
         after battles and bombing, per the canonical order of events.
         """
         for fleet in list(self.server_state.iterate_all_fleets()):
-            if fleet.name == "Mineral Packet":
+            if is_mineral_packet(fleet):
                 continue
 
             empire = self.server_state.all_empires.get(fleet.owner)
@@ -1326,10 +1755,14 @@ class TurnGenerator:
                 if (empire_id, battle.location) in announced:
                     continue
                 announced.add((empire_id, battle.location))
+                # star_name carries the battle location for the client
+                # Goto (C# attaches the BattleReport itself as
+                # Message.Event, BattleEngine.cs:936-943)
                 self.server_state.all_messages.append(Message(
                     audience=empire_id,
                     text=f"A battle took place at {battle.location}",
-                    message_type="Battle"
+                    message_type="Battle",
+                    star_name=battle.location
                 ))
 
     def _victory_check(self):
@@ -1365,11 +1798,32 @@ class TurnGenerator:
             )
 
     def _move_mineral_packets(self):
-        """Move mineral packets after they are created."""
+        """
+        Move mineral packets, decay overflung ones and resolve catch
+        or impact on arrival.
+
+        Canonical Stars! mass-driver rules - the C# reference is a
+        stub: MassDriver.cs holds only the component property and
+        TurnGenerator.cs (505 lines) has no packet code. The previous
+        web remnant here (3/4 population kill, flat 5% erosion) came
+        from an older stars-nova revision and is replaced by the
+        canonical formulas (constants in globals.py):
+
+          spdPacket = packetWarp^2, spdReceiver = receiverDriver^2
+          caught safely when spdReceiver >= spdPacket
+          else recovered fraction = pct + (1 - pct) / 3
+               with pct = spdReceiver / spdPacket
+          rawDamage = (spdPacket - spdReceiver) * kT / 160
+          dmg = rawDamage * (1 - defense population coverage)
+          colonists killed = max(dmg * pop / 1000, dmg * 100)
+          defenses destroyed = max(defs * dmg / 1000, dmg / 20)
+          in flight: +1/+2/+3 warp over the flinging driver's rating
+          decays 10/25/50 percent per year, minimum 10 kT per mineral
+        """
         exploded_packets: List['Fleet'] = []
 
         for fleet in self.server_state.iterate_all_fleets():
-            if "Mineral Packet" not in fleet.name:
+            if not is_mineral_packet(fleet):
                 continue
 
             # Move packet
@@ -1377,30 +1831,29 @@ class TurnGenerator:
             self.server_state.set_fleet_orbit(fleet)
 
             if fleet.in_orbit is not None:
-                # Packet arrived - destroy population
-                star = fleet.in_orbit
-                msg1 = Message(
-                    audience=fleet.owner,
-                    text=f"Your Mineral Packet destroyed 3/4 of the population of {star.name}",
-                    message_type="Star",
-                    fleet_key=fleet.key
-                )
-                self.server_state.all_messages.append(msg1)
-
-                if star.owner != NOBODY:
-                    msg2 = Message(
-                        audience=star.owner,
-                        text=f"A Mineral Packet destroyed 3/4 of your population on {star.name}",
-                        message_type="Star"
-                    )
-                    self.server_state.all_messages.append(msg2)
-
-                star.colonists = star.colonists // 4
+                self._resolve_packet_arrival(fleet, fleet.in_orbit)
                 exploded_packets.append(fleet)
             else:
-                # Erode packet in space (5% loss)
-                if hasattr(fleet.cargo, 'scale'):
-                    fleet.cargo.scale(0.95)
+                # In-flight decay for overflung packets; packets at or
+                # below the driver's rating fly forever undiminished
+                over = min(
+                    max(fleet.packet_warp - fleet.packet_safe_warp, 0),
+                    PACKET_OVERFLING_MAX)
+                if over > 0:
+                    rate = PACKET_DECAY_RATES[over]
+                    for mineral in ("ironium", "boranium", "germanium"):
+                        kt = getattr(fleet.cargo, mineral)
+                        if kt <= 0:
+                            continue
+                        decay = min(kt, max(int(kt * rate),
+                                            PACKET_MIN_DECAY))
+                        setattr(fleet.cargo, mineral, kt - decay)
+                    if fleet.cargo.mass == 0:
+                        self.server_state.all_messages.append(Message(
+                            audience=fleet.owner,
+                            text=f"{fleet.name} has decayed to nothing.",
+                            message_type="Star", fleet_key=fleet.key))
+                        exploded_packets.append(fleet)
 
             # Update fleet report
             empire = self.server_state.all_empires.get(fleet.owner)
@@ -1422,6 +1875,100 @@ class TurnGenerator:
             empire = self.server_state.all_empires.get(packet.owner)
             if empire is not None and packet.key in empire.owned_fleets:
                 del empire.owned_fleets[packet.key]
+
+    def _resolve_packet_arrival(self, fleet: 'Fleet', star):
+        """
+        Catch or impact of a mineral packet at its destination star.
+
+        Canonical Stars! packet formulas (C# absent) - see
+        _move_mineral_packets for the formula block.
+        """
+        # Receiving driver rating: the star owner's starbase, if any
+        rating = 0
+        if star.owner != NOBODY and star.starbase_key:
+            owner_empire = self.server_state.all_empires.get(star.owner)
+            starbase = owner_empire.owned_fleets.get(star.starbase_key) \
+                if owner_empire is not None else None
+            rating = starbase.mass_driver if starbase is not None else 0
+
+        # Remnant-era packets carry no packet_warp - fall back to the
+        # ordered waypoint warp
+        packet_warp = fleet.packet_warp
+        if packet_warp <= 0 and fleet.waypoints:
+            packet_warp = fleet.waypoints[0].warp_factor
+        spd_packet = packet_warp * packet_warp
+        spd_receiver = rating * rating
+        total_kt = (fleet.cargo.ironium + fleet.cargo.boranium
+                    + fleet.cargo.germanium)
+
+        if spd_packet <= 0 or spd_receiver >= spd_packet:
+            # Caught safely - every kT lands on the surface
+            star.add_cargo(Cargo(ironium=fleet.cargo.ironium,
+                                 boranium=fleet.cargo.boranium,
+                                 germanium=fleet.cargo.germanium))
+            self.server_state.all_messages.append(Message(
+                audience=fleet.owner,
+                text=f"The mass driver at {star.name} has caught your "
+                     f"{total_kt} kT mineral packet.",
+                message_type="Star", fleet_key=fleet.key,
+                star_name=star.name))
+            if star.owner != NOBODY:
+                self.server_state.all_messages.append(Message(
+                    audience=star.owner,
+                    text=f"Your mass driver at {star.name} has caught "
+                         f"a {total_kt} kT mineral packet.",
+                    message_type="Star", star_name=star.name))
+            return
+
+        # Impact: part is caught, a third of the rest is recovered
+        caught_pct = spd_receiver / spd_packet
+        recovered_fraction = caught_pct + \
+            (1.0 - caught_pct) * PACKET_UNCAUGHT_RECOVERY
+        recovered = Cargo(
+            ironium=int(fleet.cargo.ironium * recovered_fraction),
+            boranium=int(fleet.cargo.boranium * recovered_fraction),
+            germanium=int(fleet.cargo.germanium * recovered_fraction))
+        star.add_cargo(recovered)
+
+        if star.owner == NOBODY or star.colonists <= 0:
+            # Uninhabited target: recovery only, no damage
+            self.server_state.all_messages.append(Message(
+                audience=fleet.owner,
+                text=f"Your {total_kt} kT mineral packet has crashed "
+                     f"on uninhabited {star.name}; {recovered.mass} kT "
+                     f"of minerals were recovered on the surface.",
+                message_type="Star", fleet_key=fleet.key,
+                star_name=star.name))
+            return
+
+        raw_damage = (spd_packet - spd_receiver) * total_kt \
+            / PACKET_DAMAGE_DIVISOR
+        coverage = compute_defense_coverage(star)["population"]
+        dmg = raw_damage * (1.0 - coverage)
+
+        killed = min(star.colonists,
+                     int(round(max(dmg * star.colonists / 1000.0,
+                                   dmg * 100.0) / 100.0)) * 100)
+        star.colonists -= killed
+        destroyed = min(star.defenses,
+                        int(max(star.defenses * dmg / 1000.0,
+                                dmg / 20.0)))
+        star.defenses -= destroyed
+
+        self.server_state.all_messages.append(Message(
+            audience=fleet.owner,
+            text=f"Your {total_kt} kT mineral packet has struck "
+                 f"{star.name}, killing {killed} colonists and "
+                 f"destroying {destroyed} defenses.",
+            message_type="Star", fleet_key=fleet.key,
+            star_name=star.name))
+        self.server_state.all_messages.append(Message(
+            audience=star.owner,
+            text=f"A {total_kt} kT mineral packet has struck "
+                 f"{star.name}! {killed} colonists were killed and "
+                 f"{destroyed} defenses destroyed; {recovered.mass} kT "
+                 f"of minerals were recovered on the surface.",
+            message_type="Star", star_name=star.name))
 
     def _update_wormhole_visibility(self):
         """

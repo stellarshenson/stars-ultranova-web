@@ -41,13 +41,19 @@ class Message:
     text: str = ""
     message_type: str = ""
     fleet_key: int = 0
+    # Web port of the C# Message.Event goto linkage (Message.cs:38):
+    # star or battle-location name the message refers to; fleet_key
+    # already serves fleet-linked messages
+    star_name: str = ""
 
     def __init__(self, audience: int = 0, text: str = "",
-                 message_type: str = "", fleet_key: int = 0):
+                 message_type: str = "", fleet_key: int = 0,
+                 star_name: str = ""):
         self.audience = audience
         self.text = text
         self.message_type = message_type
         self.fleet_key = fleet_key
+        self.star_name = star_name
 
     def __str__(self) -> str:
         return self.text
@@ -58,6 +64,7 @@ class Message:
             "text": self.text,
             "type": self.message_type,
             "fleet_key": self.fleet_key,
+            "star_name": self.star_name,
         }
 
     @classmethod
@@ -67,6 +74,7 @@ class Message:
             text=data.get("text", ""),
             message_type=data.get("type", ""),
             fleet_key=data.get("fleet_key", 0),
+            star_name=data.get("star_name", ""),
         )
 
 

@@ -23,6 +23,9 @@ class GameCreate(BaseModel):
     # Victory condition settings (GameSettings.cs:49-58); partial dict
     # in the VictorySettings shape - missing keys keep the C# defaults
     victory: Optional[dict] = None
+    # "Mystery Trader" toggle, default on (canonical Stars! feature;
+    # the C# reference has only a TODO, GameInitialiser.cs:180)
+    mystery_trader: bool = True
 
 
 class GameResponse(BaseModel):
@@ -53,6 +56,8 @@ class CommandResponse(BaseModel):
     turn_year: int
     status: str
     error: Optional[str] = None
+    # Key of a fleet the command created (fling_packet)
+    fleet_key: Optional[int] = None
 
 
 class EmpireResponse(BaseModel):
@@ -75,7 +80,8 @@ async def create_game(game: GameCreate) -> GameResponse:
             seed=game.seed,
             race=game.race,
             accelerated_start=game.accelerated_start,
-            victory=game.victory
+            victory=game.victory,
+            mystery_trader=game.mystery_trader
         )
     except ValueError as e:
         # Over-budget race rejected (the web equivalent of the C# race
@@ -214,7 +220,8 @@ async def submit_command(game_id: str, empire_id: int, command: CommandSubmit) -
     return CommandResponse(
         command_id=result.get("command_id"),
         turn_year=result["turn_year"],
-        status=result["status"]
+        status=result["status"],
+        fleet_key=result.get("fleet_key")
     )
 
 

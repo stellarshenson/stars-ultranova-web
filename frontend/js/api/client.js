@@ -115,7 +115,7 @@ const ApiClient = {
     },
 
     // Games
-    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null, race = null, acceleratedStart = false, victory = null) {
+    async createGame(name, playerCount = 2, universeSize = 'medium', density = 'normal', seed = null, race = null, acceleratedStart = false, victory = null, mysteryTrader = true) {
         return this.request('POST', '/games/', {
             name,
             player_count: playerCount,
@@ -124,7 +124,8 @@ const ApiClient = {
             seed,
             race,
             accelerated_start: acceleratedStart,
-            victory
+            victory,
+            mystery_trader: mysteryTrader
         }, { showLoading: true, loadingMessage: 'Creating game...' });
     },
 
@@ -230,6 +231,19 @@ const ApiClient = {
         });
     },
 
+    async giftToTrader(gameId, fleetKey, empireId, traderKey, delta) {
+        // One-way gift to a co-located Mystery Trader (minerals kT,
+        // colonists in headcount); the trader always keeps the cargo
+        return this.request('POST', `/games/${gameId}/fleets/${fleetKey}/gift`, {
+            empire_id: empireId,
+            trader_key: traderKey,
+            ironium: delta.ironium || 0,
+            boranium: delta.boranium || 0,
+            germanium: delta.germanium || 0,
+            colonists: delta.colonists || 0
+        });
+    },
+
     // Empires
     async listEmpires(gameId) {
         return this.request('GET', `/games/${gameId}/empires/`);
@@ -253,6 +267,14 @@ const ApiClient = {
             command_type: commandType,
             command_data: commandData
         });
+    },
+
+    /**
+     * Fling a mineral packet from a starbase mass driver.
+     * data: {star, target, warp, ironium, boranium, germanium}.
+     */
+    async flingPacket(gameId, empireId, data) {
+        return this.submitCommand(gameId, empireId, 'fling_packet', data);
     },
 
     // Designs

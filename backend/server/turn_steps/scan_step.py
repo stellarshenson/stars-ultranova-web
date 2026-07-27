@@ -12,7 +12,8 @@ from .base import ITurnStep
 from ...core.commands.base import Message
 from ...core.components.ship_design import cloak_percent_from_units
 from ...core.globals import (
-    NOBODY, NEBULA_SCAN_PENALTY, STORM_SCAN_PENALTY,
+    NOBODY, NEBULA_SCAN_PENALTY, NEBULA_GLARE_SCAN_PENALTY,
+    STORM_SCAN_PENALTY,
     SS_BUILT_IN_CLOAK_UNITS, TACHYON_DETECTOR_FACTOR,
 )
 
@@ -174,10 +175,25 @@ class ScanStep(ITurnStep):
                 scan_range = int(scan_range * factor)
                 pen_scan_range = int(pen_scan_range * factor)
 
+            # Emission nebula glare: the glow washes out sensors for a
+            # small range penalty scaled by the local emission density,
+            # composed with the dust and storm penalties (web extension
+            # - user directive 2026-07-13, "emission nebulae are not
+            # inert"). Far milder than dust, and no effect on speed.
+            glare = nebula.get_emission_density_at(x, y)
+            if glare > 0.01:
+                factor = 1.0 - NEBULA_GLARE_SCAN_PENALTY * glare
+                scan_range = int(scan_range * factor)
+                pen_scan_range = int(pen_scan_range * factor)
+
         # Galactic storms dampen sensors more strongly than dust,
         # scaled by the local storm intensity at the scanner's
         # position and composed with the dust penalty (web extension -
-        # user directive 2026-07-13)
+        # user directive 2026-07-13). Deliberately NOT reduced by storm
+        # protection or the orbit safe harbor (user directive, wave 4):
+        # the storm disturbs the MEDIUM, so a scanner inside a storm
+        # scans worse no matter how well its ship is protected or
+        # where it is parked.
         storms = getattr(server_state, 'all_storms', None)
         if storms:
             local = max((s.get_intensity_at(x, y)

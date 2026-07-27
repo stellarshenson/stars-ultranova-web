@@ -628,3 +628,121 @@ class TestFleetToFleetTransfer:
                               santa["key"], colonists=100)
         assert response.status_code == 400
         assert "same location" in response.json()["detail"]
+
+
+class TestClientParityState:
+    """Player-state plumbing for the client waypoint leg editor
+    (wave 5 client parity): full waypoint task dicts, per-warp fuel
+    consumption, and Edit/Insert command semantics."""
+
+    def _setup(self, client):
+        response = client.post("/api/games/", json={
+            "name": "Parity", "seed": 4242, "universe_size": "small",
+            "player_count": 2})
+        game_id = response.json()["id"]
+        state = client.get(f"/api/games/{game_id}/empires/1/state").json()
+        return game_id, state
+
+    def _fleet(self, client, game_id, key):
+        state = client.get(f"/api/games/{game_id}/empires/1/state").json()
+        return next(f for f in state["fleets"] if f["key"] == key)
+
+    def _submit_waypoint(self, client, game_id, data):
+        response = client.post(
+            f"/api/games/{game_id}/empires/1/commands",
+            json={"command_type": "waypoint", "command_data": data})
+        assert response.status_code == 200
+        assert response.json()["status"] == "applied"
+
+    def test_waypoint_task_dict_roundtrip(self, client):
+        """Waypoints in the player state expose the full task dict so
+        a warp-only Edit can resend the task intact (C# preserves the
+        Task object on speed edits, FleetDetail.cs:110)."""
+        game_id, state = self._setup(client)
+        fleet = state["fleets"][0]
+
+        self._submit_waypoint(client, game_id, {
+            "mode": "Add", "fleet_key": fleet["key"],
+            "index": len(fleet["waypoints"]),
+            "waypoint": {
+                "position_x": fleet["position_x"] + 20,
+                "position_y": fleet["position_y"],
+                "warp_factor": 5, "destination": "Deep Space",
+                "task": {"type": "Cargo", "mode": "UNLOAD",
+                         "amount": {"ironium": 30},
+                         "target_name": "Deep Space"},
+            }})
+
+        fleet = self._fleet(client, game_id, fleet["key"])
+        wp = fleet["waypoints"][-1]
+        assert wp["task_type"] == "CargoTaskObj"
+        assert wp["task"]["type"] == "CargoTask"
+        assert wp["task"]["mode"] == "UNLOAD"
+        assert wp["task"]["amount"]["ironium"] == 30
+        assert wp["task"]["target_name"] == "Deep Space"
+
+    def test_fuel_consumption_by_warp(self, client):
+        """Every fleet exposes fuel_consumption_by_warp: 11 entries,
+        zero at warp 0, non-decreasing, equal to the authoritative
+        Fleet.fuel_consumption (Fleet.cs:817-839 port)."""
+        game_id, state = self._setup(client)
+        fleet_dict = next(f for f in state["fleets"] if f["tokens"])
+
+        by_warp = fleet_dict["fuel_consumption_by_warp"]
+        assert len(by_warp) == 11
+        assert by_warp[0] == 0
+        assert all(by_warp[w] <= by_warp[w + 1] for w in range(10))
+
+        from backend.services.game_manager import get_game_manager
+        server_data = get_game_manager()._load_game_state(game_id)
+        empire = server_data.all_empires[1]
+        fleet = empire.owned_fleets[fleet_dict["key"]]
+        for w in range(11):
+            assert by_warp[w] == round(
+                fleet.fuel_consumption(w, empire.race), 2)
+
+    def test_edit_and_insert_preserve_order(self, client):
+        """Edit replaces index N in place (pop+insert,
+        WaypointCommand.cs:156-158); Insert at a middle index shifts
+        the tail (web extension mode)."""
+        game_id, state = self._setup(client)
+        fleet = state["fleets"][0]
+        base = len(fleet["waypoints"])
+
+        for i, name in enumerate(["A", "B", "C"]):
+            self._submit_waypoint(client, game_id, {
+                "mode": "Add", "fleet_key": fleet["key"],
+                "index": base + i,
+                "waypoint": {
+                    "position_x": fleet["position_x"] + 10 * (i + 1),
+                    "position_y": fleet["position_y"],
+                    "warp_factor": 6, "destination": name,
+                    "task": {"type": "NoTask"},
+                }})
+
+        # Edit the middle leg: warp only, neighbors untouched
+        self._submit_waypoint(client, game_id, {
+            "mode": "Edit", "fleet_key": fleet["key"], "index": base + 1,
+            "waypoint": {
+                "position_x": fleet["position_x"] + 20,
+                "position_y": fleet["position_y"],
+                "warp_factor": 9, "destination": "B",
+                "task": {"type": "NoTask"},
+            }})
+        fleet_now = self._fleet(client, game_id, fleet["key"])
+        names = [w["destination"] for w in fleet_now["waypoints"][base:]]
+        assert names == ["A", "B", "C"]
+        assert fleet_now["waypoints"][base + 1]["warp_factor"] == 9
+
+        # Insert between A and B shifts the tail
+        self._submit_waypoint(client, game_id, {
+            "mode": "Insert", "fleet_key": fleet["key"], "index": base + 1,
+            "waypoint": {
+                "position_x": fleet["position_x"] + 15,
+                "position_y": fleet["position_y"],
+                "warp_factor": 4, "destination": "A2",
+                "task": {"type": "NoTask"},
+            }})
+        fleet_now = self._fleet(client, game_id, fleet["key"])
+        names = [w["destination"] for w in fleet_now["waypoints"][base:]]
+        assert names == ["A", "A2", "B", "C"]

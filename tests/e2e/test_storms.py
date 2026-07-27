@@ -232,3 +232,99 @@ class TestStormHazardsE2E:
         # Storm damage plus mishap damage, both locally scaled
         damage = fleet.tokens[next(iter(fleet.tokens))].damage_percent
         assert damage == pytest.approx((20 + 25) * local)
+
+
+def _set_protection(harness, fleet_key, shields=0, armor_comp=False,
+                    storm_shield=0.0):
+    """State surgery: set a fleet's storm protection sources on every
+    token (shields grant 0.35, armor components 0.15, storm shields
+    their tier value; fleet protection is the token minimum)."""
+    server_data = _load(harness)
+    fleet = server_data.all_empires[1].owned_fleets[fleet_key]
+    for token in fleet.tokens.values():
+        token.shields = shields
+        token.has_armor_components = armor_comp
+        token.storm_shield = storm_shield
+    _save(harness, server_data)
+
+
+class TestStormProtectionE2E:
+    """Storm protection (user directive, wave 4): three fleets cross
+    the same storm - the unprotected one takes full locally-scaled
+    damage, the shielded+armored one takes half, the Storm Bulwark
+    fleet takes zero - while a fourth fleet parked in orbit inside the
+    storm footprint is untouched (orbit safe harbor)."""
+
+    def test_protection_tiers_and_orbit_safe_harbor(self, harness):
+        harness.create_game(seed=SEED, size="small", players=2, race=RACE)
+
+        # The storm sits centered ON the player's homeworld, so the
+        # blob footprint covers the star and its orbit
+        server_data = _load(harness)
+        home = next(s for s in server_data.all_stars.values()
+                    if s.owner == 1)
+        cx, cy = home.position.x, home.position.y
+        storm = _place_storm(harness, cx, cy)
+        assert storm.contains(cx, cy)
+
+        movers = [f for f in harness.my_fleets(1)
+                  if not f.get("is_starbase")]
+        assert len(movers) >= 4, "need four non-starbase fleets"
+        naked, halved, bulwark, orbiter = [f["key"] for f in movers[:4]]
+
+        # Three fleets fly the identical leg into the storm at warp 5
+        # (below the safe warp - no mishap randomness); the fourth
+        # parks in orbit of the star at the storm's core with
+        # colonists aboard
+        for key, kwargs in [
+                (naked, {}),
+                (halved, {"shields": 40, "armor_comp": True}),
+                (bulwark, {"storm_shield": 1.0})]:
+            _reset_fleet(harness, key, cx - 30, cy)
+            _set_protection(harness, key, **kwargs)
+            _send_to(harness, key, cx, cy, warp=5)
+        _reset_fleet(harness, orbiter, cx, cy)
+        _set_protection(harness, orbiter)
+        server_data = _load(harness)
+        server_data.all_empires[1].owned_fleets[orbiter] \
+            .cargo.colonists_in_kilotons = 100
+        _save(harness, server_data)
+
+        # The fleet API exposes the fleet-min protection (wave 4)
+        by_key = {f["key"]: f for f in harness.my_fleets(1)}
+        assert by_key[naked]["storm_protection"] == pytest.approx(0.0)
+        assert by_key[halved]["storm_protection"] == pytest.approx(0.5)
+        assert by_key[bulwark]["storm_protection"] == pytest.approx(1.0)
+
+        harness.generate_turn()
+
+        # All three movers end at the same spot inside the blob
+        server_data = _load(harness)
+        fleets = server_data.all_empires[1].owned_fleets
+        positions = {(fleets[k].position.x, fleets[k].position.y)
+                     for k in (naked, halved, bulwark)}
+        assert len(positions) == 1, "movers diverged"
+        local = server_data.all_storms[1].get_intensity_at(*positions.pop())
+        assert local > 0.0, "movers did not end inside the storm"
+
+        def damage(key):
+            fleet = fleets[key]
+            return fleet.tokens[next(iter(fleet.tokens))].damage_percent
+
+        # Unprotected takes the full locally-scaled hit, the
+        # shielded+armored fleet exactly half, the Bulwark fleet zero
+        assert damage(naked) == pytest.approx(20 * local)
+        assert damage(halved) == pytest.approx(20 * local * 0.5)
+        assert damage(bulwark) == 0.0
+
+        # Orbit safe harbor: parked at the star under the storm core -
+        # no damage, no colonist attrition
+        assert damage(orbiter) == 0.0
+        assert fleets[orbiter].cargo.colonists_in_kilotons == 100
+
+        # Storm messages name the two damaged fleets only
+        state = harness.state(1)
+        assert _storm_messages(state, fleets[naked].name)
+        assert _storm_messages(state, fleets[halved].name)
+        assert not _storm_messages(state, fleets[bulwark].name)
+        assert not _storm_messages(state, fleets[orbiter].name)

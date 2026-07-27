@@ -48,6 +48,12 @@ const GalaxyMap = {
     measureStart: null,
     measureEnd: null,
 
+    // Repeat-click cycling through stacked objects (LeftMouse,
+    // StarMap.cs:859-895): screen position of the last selecting
+    // click and the index into the near-object list
+    lastClick: null,
+    cycleIndex: 0,
+
     // Nebulae cache (generated once per game)
     nebulae: null,
     nebulaeSeed: 0,
@@ -137,6 +143,7 @@ const GalaxyMap = {
         this.canvas.addEventListener('mouseleave', (e) => this.onMouseLeave(e));
         this.canvas.addEventListener('wheel', (e) => this.onWheel(e));
         this.canvas.addEventListener('dblclick', (e) => this.onDoubleClick(e));
+        this.canvas.addEventListener('contextmenu', (e) => this.onContextMenu(e));
 
         // Touch events
         this.canvas.addEventListener('touchstart', (e) => this.onTouchStart(e));
@@ -194,16 +201,30 @@ const GalaxyMap = {
                 return;
             }
 
-            // Check for star/fleet click first
-            const clicked = this.findObjectAt(worldPos.x, worldPos.y);
+            // Stacked-object cycling (LeftMouse, StarMap.cs:859-895):
+            // repeat clicks within 10 device px of the previous click
+            // advance through the near-object list, wrapping; a click
+            // further away restarts at the first object
+            const candidates = this.findObjectsAt(worldPos.x, worldPos.y);
 
-            if (clicked) {
+            if (candidates.length > 0) {
+                if (this.lastClick &&
+                        Math.abs(x - this.lastClick.x) <= 10 &&
+                        Math.abs(y - this.lastClick.y) <= 10) {
+                    this.cycleIndex = (this.cycleIndex + 1) % candidates.length;
+                } else {
+                    this.cycleIndex = 0;
+                }
+                this.lastClick = { x: x, y: y };
+
+                const clicked = candidates[this.cycleIndex];
                 if (clicked.type === 'star') {
                     GameState.selectStar(clicked.object);
                 } else if (clicked.type === 'fleet') {
                     GameState.selectFleet(clicked.object);
                 }
             } else {
+                this.lastClick = null;
                 // Start panning
                 this.isDragging = true;
                 this.dragStartX = x;
@@ -435,6 +456,7 @@ const GalaxyMap = {
                 break;
             case 'Escape':
                 GameState.clearSelection();
+                this.hideTooltip();
                 // Also cancel measuring
                 if (this.isMeasuring) {
                     this.isMeasuring = false;
@@ -473,6 +495,85 @@ const GalaxyMap = {
         }
 
         return null;
+    },
+
+    /**
+     * All objects near a world position, stars first then fleets,
+     * alphabetical within each type (FindNearObjects + ItemSorter,
+     * StarMap.cs:971-1014). Own starbase fleets are excluded per
+     * StarMap.cs:977; foreign contacts are included. Divergence from
+     * C#: the C# "near" box is a fixed 40x40 ly area
+     * (PointUtilities.cs:125-137); the web threshold is zoom-relative
+     * to match findObjectAt.
+     */
+    findObjectsAt(worldX, worldY) {
+        const threshold = this.starRadius * 2 / this.zoom;
+
+        const stars = GameState.stars
+            .filter(s => Math.hypot(s.position_x - worldX,
+                                    s.position_y - worldY) < threshold)
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+            .map(s => ({ type: 'star', object: s }));
+
+        const fleets = GameState.allVisibleFleets
+            .filter(f => !f.is_starbase &&
+                         Math.hypot(f.position_x - worldX,
+                                    f.position_y - worldY) < threshold)
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+            .map(f => ({ type: 'fleet', object: f }));
+
+        return stars.concat(fleets);
+    },
+
+    /**
+     * Right-click context menu listing all near objects - stars, a
+     * separator, then fleets (RightMouse + ContextSelect,
+     * StarMap.cs:897-953). Reuses the map tooltip div as the popup.
+     */
+    onContextMenu(e) {
+        e.preventDefault();
+
+        const rect = this.canvas.getBoundingClientRect();
+        const worldPos = this.screenToWorld(e.clientX - rect.left,
+                                            e.clientY - rect.top);
+        const candidates = this.findObjectsAt(worldPos.x, worldPos.y);
+        if (candidates.length === 0 || !this.tooltip) {
+            this.hideTooltip();
+            return;
+        }
+
+        this.tooltipTarget = 'context-menu';
+        let html = '<div class="map-context-menu">';
+        let lastType = null;
+        for (let i = 0; i < candidates.length; i++) {
+            const c = candidates[i];
+            if (lastType && c.type !== lastType) {
+                html += '<hr class="map-context-separator">';
+            }
+            lastType = c.type;
+            const icon = c.type === 'star' ? '*' : '&gt;';
+            html += `<a class="map-context-item" href="#" data-index="${i}">` +
+                    `${icon} ${c.object.name}</a>`;
+        }
+        html += '</div>';
+        this.tooltip.innerHTML = html;
+
+        this.tooltip.querySelectorAll('.map-context-item').forEach(item => {
+            item.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                const picked = candidates[parseInt(item.dataset.index)];
+                this.hideTooltip();
+                if (picked.type === 'star') {
+                    GameState.selectStar(picked.object);
+                } else {
+                    GameState.selectFleet(picked.object);
+                }
+            });
+        });
+
+        this.tooltip.style.left = `${e.clientX + 4}px`;
+        this.tooltip.style.top = `${e.clientY + 4}px`;
+        this.tooltip.classList.remove('hidden');
     },
 
     /**
@@ -566,6 +667,7 @@ const GalaxyMap = {
         this.renderMinefields();
         this.renderStorms();
         this.renderWormholes();
+        this.renderTraders();
 
         // Draw waypoint lines for selected fleet
         if (this.selectedFleet) {
@@ -717,6 +819,75 @@ const GalaxyMap = {
                 ctx.font = 'bold 10px monospace';
                 ctx.textAlign = 'center';
                 ctx.fillText('STORM', sx, sy + 3);
+            }
+            ctx.restore();
+        }
+    },
+
+    /**
+     * Render Mystery Traders: a dashed gold projected-course line from
+     * the trader along its velocity to the map edge, then a filled
+     * gold diamond marker with a pulsing halo (visible to everyone -
+     * universal visibility, no fog).
+     */
+    renderTraders() {
+        const traders = GameState.traders || [];
+        if (!traders.length) return;
+        const ctx = this.ctx;
+        const pulse = 0.75 + 0.25 * Math.sin(Date.now() / 400);
+
+        for (const trader of traders) {
+            const { x: sx, y: sy } = this.worldToScreen(trader.x, trader.y);
+
+            // Projected course: extend the velocity ray far past the
+            // board; the canvas clips it at the viewport
+            const speed = Math.hypot(trader.velocity_x, trader.velocity_y);
+            if (speed > 0) {
+                const reach = 2000;  // ly, beyond any board size
+                const ex = trader.x + trader.velocity_x / speed * reach;
+                const ey = trader.y + trader.velocity_y / speed * reach;
+                const end = this.worldToScreen(ex, ey);
+                ctx.save();
+                ctx.strokeStyle = `rgba(240, 200, 90, ${0.45 * pulse})`;
+                ctx.setLineDash([8, 6]);
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(end.x, end.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+
+            ctx.save();
+            // Pulsing halo
+            const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, 18);
+            halo.addColorStop(0, `rgba(255, 214, 120, ${0.5 * pulse})`);
+            halo.addColorStop(1, 'rgba(255, 214, 120, 0)');
+            ctx.fillStyle = halo;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 18, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Filled gold diamond (rotated square)
+            const r = 6;
+            ctx.fillStyle = 'rgba(255, 214, 120, 0.95)';
+            ctx.strokeStyle = 'rgba(120, 80, 20, 0.9)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(sx, sy - r);
+            ctx.lineTo(sx + r, sy);
+            ctx.lineTo(sx, sy + r);
+            ctx.lineTo(sx - r, sy);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            if (this.zoom >= 0.4) {
+                ctx.fillStyle = 'rgba(255, 224, 150, 0.9)';
+                ctx.font = 'bold 10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('TRADER', sx, sy - r - 4);
             }
             ctx.restore();
         }
@@ -1116,15 +1287,43 @@ const GalaxyMap = {
         // Determine color based on ownership
         let color = fleet.intel === 'scanned' ? this.colors.fleetEnemy : this.colors.fleetFriendly;
 
-        // Draw fleet as diamond
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y - radius);
-        ctx.lineTo(pos.x + radius, pos.y);
-        ctx.lineTo(pos.x, pos.y + radius);
-        ctx.lineTo(pos.x - radius, pos.y);
-        ctx.closePath();
-        ctx.fillStyle = color;
-        ctx.fill();
+        // Mineral packets get a distinct glyph: a small slug with a
+        // motion streak (own via is_packet; scanned contacts by name)
+        const isPacket = fleet.is_packet ||
+            (fleet.intel === 'scanned' && /Mineral Packet/.test(fleet.name || ''));
+
+        if (isPacket) {
+            // Streak trails away from the flight direction when known
+            let angle = Math.PI * 0.75;
+            if (fleet.waypoints && fleet.waypoints.length > 0) {
+                const wp = fleet.waypoints[0];
+                angle = Math.atan2(wp.position_y - fleet.position_y,
+                                   wp.position_x - fleet.position_x);
+            }
+            ctx.strokeStyle = color;
+            ctx.lineWidth = Math.max(1, radius * 0.5);
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(pos.x - Math.cos(angle) * radius * 2.4,
+                       pos.y - Math.sin(angle) * radius * 2.4);
+            ctx.lineTo(pos.x - Math.cos(angle) * radius * 0.6,
+                       pos.y - Math.sin(angle) * radius * 0.6);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, radius * 0.7, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+        } else {
+            // Draw fleet as diamond
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y - radius);
+            ctx.lineTo(pos.x + radius, pos.y);
+            ctx.lineTo(pos.x, pos.y + radius);
+            ctx.lineTo(pos.x - radius, pos.y);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
 
         // Draw name if selected or zoomed in
         if ((fleet === this.selectedFleet || this.zoom >= 1.0) && this.showNames) {
@@ -1559,6 +1758,24 @@ const GalaxyMap = {
      * turn_generator.py MINE_STATS.
      */
     findPhenomenonAt(worldX, worldY) {
+        // Traders first: the marker is small and must win over the
+        // large storm blobs. Numbers mirror backend/core/globals.py
+        // MT_* constants.
+        for (const trader of GameState.traders || []) {
+            const catchRadius = Math.max(8, 10 / this.zoom);
+            if (Math.hypot(worldX - trader.x, worldY - trader.y)
+                    <= catchRadius) {
+                return {
+                    id: `trader-${trader.key}`,
+                    entryId: 'mystery-trader',
+                    title: trader.name,
+                    summary: `Crossing at warp ${trader.warp} - gift `
+                        + '1000+ kT of minerals or colonists at its '
+                        + 'position for a reward'
+                };
+            }
+        }
+
         for (const storm of GameState.storms || []) {
             const local = this.stormIntensityAt(storm, worldX, worldY);
             if (local > 0) {

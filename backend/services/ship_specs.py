@@ -63,6 +63,13 @@ class SimpleDesign:
     # derives these from Cloak / Tachyon Detector properties)
     cloak_units: int = 0
     tachyon_detectors: int = 0
+    # Storm protection (web-only extension; full ShipDesign derives
+    # these from Storm Shield / Armor component properties)
+    storm_shield: float = 0.0
+    has_armor_components: bool = False
+    # Mass driver warp rating (full ShipDesign aggregates Mass Driver
+    # components per MassDriver.cs semantics; 0 = no driver)
+    mass_driver: int = 0
 
     @property
     def power_rating(self) -> int:
@@ -110,6 +117,9 @@ class SimpleDesign:
             "mining_rate": self.mining_rate,
             "cloak_units": self.cloak_units,
             "tachyon_detectors": self.tachyon_detectors,
+            "storm_shield": self.storm_shield,
+            "has_armor_components": self.has_armor_components,
+            "mass_driver": self.mass_driver,
             "weapons": [
                 {"power": w.power, "range": w.range, "initiative": w.initiative,
                  "accuracy": w.accuracy, "group": w.group}
@@ -150,6 +160,9 @@ class SimpleDesign:
         design.mining_rate = data.get("mining_rate", 0)
         design.cloak_units = data.get("cloak_units", 0)
         design.tachyon_detectors = data.get("tachyon_detectors", 0)
+        design.storm_shield = data.get("storm_shield", 0.0)
+        design.has_armor_components = data.get("has_armor_components", False)
+        design.mass_driver = data.get("mass_driver", 0)
         design.weapons = [
             Weapon(power=w.get("power", 0), range=w.get("range", 0),
                    initiative=w.get("initiative", 0), accuracy=w.get("accuracy", 75),
@@ -306,6 +319,9 @@ STARTING_DESIGN_SPECS = [
         "optimal_speed": 6,
     },
     {
+        # No mass_driver here: the PP starting warp-5 accelerator at
+        # the home starbase (PrimaryTraits.cs:59 trait text) is out of
+        # scope - drivers arrive via player starbase designs
         "name": "Starbase",
         "hull_name": "Space Station",
         "cost": {"ironium": 120, "boranium": 80, "germanium": 100, "energy": 400},
@@ -406,6 +422,11 @@ def make_token(design, quantity: int = 1) -> ShipToken:
     token = ShipToken()
     token.design_key = design.key
     token.design_name = design.name
+    # Hull blueprint name (SimpleDesign caches hull_name; ShipDesign
+    # exposes it via blueprint.name) - drives the gate hull-size limit
+    token.hull_name = getattr(design, 'hull_name', '') or (
+        design.blueprint.name
+        if getattr(design, 'blueprint', None) else '')
     token.quantity = quantity
 
     cost = getattr(design, 'cost', None)
@@ -446,6 +467,16 @@ def make_token(design, quantity: int = 1) -> ShipToken:
     # properties, SimpleDesign caches the same fields)
     token.cloak_units = getattr(design, 'cloak_units', 0)
     token.tachyon_detectors = getattr(design, 'tachyon_detectors', 0)
+
+    # Storm protection sources (web-only extension; ShipDesign
+    # aggregates Storm Shield / Armor component properties)
+    token.storm_shield = getattr(design, 'storm_shield', 0.0)
+    token.has_armor_components = getattr(design, 'has_armor_components',
+                                         False)
+
+    # Mass driver warp rating (ShipDesign aggregates Mass Driver
+    # components; SimpleDesign caches the same field)
+    token.mass_driver = getattr(design, 'mass_driver', 0)
 
     # Stargate (ShipDesign aggregates the Gate component; -1 = unlimited)
     gate = getattr(design, 'gate', None)

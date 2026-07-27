@@ -52,12 +52,26 @@ const DesignPanel = {
             const components = await ApiClient.request('GET', '/designs/components');
 
             this.availableHulls = hulls;
-            this.availableComponents = components.filter(
+            this._mountableComponents = components.filter(
                 c => this.mountableItemTypes.includes(c.item_type)
             );
+            this.applyMtFilter();
         } catch (error) {
             console.error('Failed to load components:', error);
         }
+    },
+
+    /**
+     * Hide Mystery Trader hidden-tech items until the trader grants
+     * them (GameState.mtComponents; the server enforces the same gate
+     * in design_builder on save). Re-applied on show() so a mid-game
+     * grant surfaces without reloading the catalog.
+     */
+    applyMtFilter() {
+        this.availableComponents = (this._mountableComponents || []).filter(
+            c => !(c.properties || {})['Mystery Trader Item']
+                || (GameState.mtComponents || []).includes(c.name)
+        );
     },
 
     /**
@@ -68,6 +82,7 @@ const DesignPanel = {
 
         this.isVisible = true;
         this.container.classList.remove('hidden');
+        this.applyMtFilter();
         this.render();
     },
 

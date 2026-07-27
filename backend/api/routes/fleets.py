@@ -227,3 +227,44 @@ async def transfer_cargo_between_fleets(
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+class TraderGift(BaseModel):
+    """Request model for a one-way gift to a Mystery Trader.
+
+    Minerals in kT, colonists in headcount (100 per kT); no fuel,
+    no negative amounts - the trader always keeps the cargo.
+    """
+    empire_id: int
+    trader_key: int
+    ironium: int = 0
+    boranium: int = 0
+    germanium: int = 0
+    colonists: int = 0
+
+
+@router.post("/{fleet_key}/gift")
+async def gift_to_trader(game_id: str, fleet_key: int,
+                         gift: TraderGift) -> dict:
+    """
+    Gift minerals or colonists to a co-located Mystery Trader.
+
+    The gift accumulates per empire; rewards resolve on the next
+    generated turn (canonical Stars! rules, C# has only a TODO).
+    """
+    manager = get_game_manager()
+    result = manager.gift_to_trader(
+        game_id,
+        gift.empire_id,
+        fleet_key,
+        gift.trader_key,
+        {
+            "ironium": gift.ironium,
+            "boranium": gift.boranium,
+            "germanium": gift.germanium,
+            "colonists": gift.colonists,
+        }
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result

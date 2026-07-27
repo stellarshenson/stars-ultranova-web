@@ -15,7 +15,8 @@ from ..globals import (
     MINES_PER_MINE_PRODUCTION_UNIT,
     STARTING_COLONISTS,
     STARTING_COLONISTS_ACCELERATED_BBS,
-    LOW_STARTING_POPULATION_FACTOR
+    LOW_STARTING_POPULATION_FACTOR,
+    STORM_RAD_EXTREME_OPTIMUM
 )
 
 if TYPE_CHECKING:
@@ -116,6 +117,23 @@ class Race:
         if trait.upper() == self.primary_trait.upper():
             return True
         return trait.upper() in {t.upper() for t in self.traits}
+
+    @property
+    def is_radiation_hardened(self) -> bool:
+        """
+        Radiation-hardened race check for storm protection.
+
+        Web-only extension (galactic storm protection, user directive -
+        no C# equivalent). A race qualifies when its radiation
+        habitability is immune, or its radiation optimum (the center of
+        the habitable range) lies in the extreme band at/above
+        STORM_RAD_EXTREME_OPTIMUM. Derived entirely from existing
+        habitability data - no new race-wizard fields.
+        """
+        if self.immune_radiation:
+            return True
+        optimum = (self.radiation_min + self.radiation_max) / 2
+        return optimum >= STORM_RAD_EXTREME_OPTIMUM
 
     def hab_value(self, star: Star) -> float:
         """

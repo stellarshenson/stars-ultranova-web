@@ -99,6 +99,8 @@ def build_ship_design(
     race_traits = _race_traits(empire)
     if not hull_comp.is_available_to_race(race_traits):
         return None, f"{hull_comp.name} is not available to your race"
+    if not _mt_granted(empire, hull_comp):
+        return None, f"{hull_comp.name} requires a Mystery Trader grant"
 
     # Deep copy: Component.clone shares the nested modules list with
     # the catalog, and slot allocation must never mutate the catalog
@@ -133,6 +135,8 @@ def build_ship_design(
             return None, f"Insufficient tech for {comp_name}"
         if not comp.is_available_to_race(race_traits):
             return None, f"{comp.name} is not available to your race"
+        if not _mt_granted(empire, comp):
+            return None, f"{comp.name} requires a Mystery Trader grant"
 
         module["allocated_component"] = comp.name
         module["component_count"] = count
@@ -148,6 +152,23 @@ def build_ship_design(
         return None, "A ship design must have an engine"
 
     return design, None
+
+
+def _mt_granted(empire, component) -> bool:
+    """
+    Gate Mystery Trader hidden-technology items on a per-empire grant.
+
+    Canonical Stars! hidden technology - the C# reference has only a
+    TODO naming the mechanism (GameInitialiser.cs:180 "Mystery Trader
+    Items - probably need to implement the idea of 'hidden'
+    technology"). Components carrying the "Mystery Trader Item"
+    catalog property (components.xml) can never be researched (their
+    Tech is all zero) and are buildable only once the trader has
+    granted them (empire.mt_components, TurnGenerator reward table).
+    """
+    if not component.has_property("Mystery Trader Item"):
+        return True
+    return component.name in getattr(empire, 'mt_components', [])
 
 
 def _race_traits(empire) -> list:

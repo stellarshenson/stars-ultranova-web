@@ -80,6 +80,7 @@ const MenuBar = {
                 { id: 'race-summary', label: 'Race Summary', action: 'raceSummary' },
                 { type: 'separator' },
                 { id: 'score-history', label: 'Score History', action: 'scoreHistory' },
+                { id: 'victory-conditions', label: 'Victory Conditions', action: 'victoryConditions' },
                 { id: 'battle-history', label: 'Battle History', action: 'battleHistory' }
             ]
         },
@@ -532,7 +533,15 @@ const MenuBar = {
                 // Show race summary
                 break;
             case 'scoreHistory':
-                // Show score history graph
+                // Score report tab includes the score history graph
+                if (window.Reports) {
+                    Reports.show('score');
+                }
+                break;
+            case 'victoryConditions':
+                if (window.Dialogs) {
+                    Dialogs.showVictoryConditions();
+                }
                 break;
             case 'battleHistory':
                 if (window.BattleViewer && BattleViewer.showBattleList) {

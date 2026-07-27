@@ -117,6 +117,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 this.setStatus('Ready');
             });
 
+            GameState.on('victory', (victorId) => {
+                // Announce a declared victory once per session; the
+                // game stays playable afterwards (VictoryCheck.cs
+                // "doesn't mean the end of a game"). Deferred so it
+                // opens on top of the turn report dialog.
+                if (!this.victoryShown && window.Dialogs) {
+                    this.victoryShown = true;
+                    setTimeout(() => Dialogs.showVictory(victorId), 0);
+                }
+            });
+
             GameState.on('turnGenerated', (turn) => {
                 this.setStatus(`Turn ${turn} generated`);
                 this.updateTurnIndicator(turn);

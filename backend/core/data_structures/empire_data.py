@@ -71,6 +71,13 @@ class EmpireData:
     star_reports: Dict[str, dict] = field(default_factory=dict)
     fleet_reports: Dict[int, dict] = field(default_factory=dict)
 
+    # Mystery Trader component grants (hidden technology - canonical
+    # Stars! rule; the C# reference has only the TODO
+    # GameInitialiser.cs:180 naming "hidden technology"). Component
+    # names granted by trader rewards; design_builder gates the
+    # "Mystery Trader Item" catalog entries on membership here.
+    mt_components: List[str] = field(default_factory=list)
+
     # Per-year score history: one ScoreRecord dict plus "year" per
     # generated turn. Web extension per user directive (wave 4): the
     # C# reference keeps no history - Intel.AllScores (Intel.cs:67)
@@ -138,6 +145,7 @@ class EmpireData:
             "radiation_mod_capability": self.radiation_mod_capability,
             "temperature_mod_capability": self.temperature_mod_capability,
             "score_history": list(self.score_history),
+            "mt_components": list(self.mt_components),
             "_fleet_counter": self._fleet_counter,
             "_design_counter": self._design_counter
         }
@@ -158,6 +166,7 @@ class EmpireData:
         empire._fleet_counter = data.get("_fleet_counter", 0)
         empire._design_counter = data.get("_design_counter", 0)
         empire.score_history = list(data.get("score_history", []))
+        empire.mt_components = list(data.get("mt_components", []))
 
         if "research_levels" in data:
             empire.research_levels = TechLevel.from_dict(data["research_levels"])

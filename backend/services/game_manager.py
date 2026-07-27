@@ -28,10 +28,18 @@ from ..core.commands.design import DesignCommand
 from ..core.commands.production import ProductionCommand
 from ..core.commands.research import ResearchCommand
 from ..core.commands.relation import RelationCommand
-from ..core.globals import NOBODY, NEBULA_SCAN_PENALTY
+from ..core.data_structures.cargo import Cargo
+from ..core.game_objects.fleet import is_mineral_packet
+from ..core.globals import (
+    NOBODY, NEBULA_SCAN_PENALTY, PACKET_OVERFLING_MAX, PACKET_MAX_WARP,
+    MT_GIFT_THRESHOLD
+)
+from ..core.waypoints.waypoint import Waypoint, NoTaskObj
 from .galaxy_generator import GalaxyGenerator
 from .race_points import calculate_advantage_points
-from .ship_specs import design_from_dict
+from .ship_specs import (
+    design_from_dict, find_design, make_token, SimpleDesign
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +182,8 @@ class GameManager:
         seed: Optional[int] = None,
         race: Optional[dict] = None,
         accelerated_start: bool = False,
-        victory: Optional[dict] = None
+        victory: Optional[dict] = None,
+        mystery_trader: bool = True
     ) -> dict:
         """
         Create a new game.
@@ -189,6 +198,8 @@ class GameManager:
             accelerated_start: Accelerated BBS play (GameSettings.cs:63).
             victory: Optional victory-settings dict (partial allowed);
                 None keeps the C# defaults (GameSettings.cs:49-58).
+            mystery_trader: "Mystery Trader" toggle (default on;
+                canonical feature, C# has only a TODO).
 
         Returns:
             Game metadata dict.
@@ -224,6 +235,9 @@ class GameManager:
         server_data.victory_settings = (
             VictorySettings.from_dict(victory) if victory
             else VictorySettings())
+
+        # Mystery Trader toggle (default on)
+        server_data.mystery_trader_enabled = mystery_trader
 
         # Initial scan so empires start with intel about their surroundings
         TurnGenerator(server_data).assemble_empire_data()
@@ -493,7 +507,9 @@ class GameManager:
         fleets = []
         for fleet in server_data.iterate_all_fleets():
             if empire_id is None or fleet.owner == empire_id:
-                fleets.append(self._fleet_to_dict(fleet))
+                owner = server_data.all_empires.get(fleet.owner)
+                fleets.append(self._fleet_to_dict(
+                    fleet, race=getattr(owner, 'race', None)))
 
         return fleets
 
@@ -514,7 +530,9 @@ class GameManager:
 
         for fleet in server_data.iterate_all_fleets():
             if fleet.key == fleet_key:
-                return self._fleet_to_dict(fleet)
+                owner = server_data.all_empires.get(fleet.owner)
+                return self._fleet_to_dict(
+                    fleet, race=getattr(owner, 'race', None))
 
         return None
 
@@ -614,7 +632,7 @@ class GameManager:
                 "star_radius": star.star_radius,
             }
             if star.owner == empire_id:
-                base.update(self._star_full_view(star, race))
+                base.update(self._star_full_view(star, race, empire))
                 base["intel"] = "owned"
             else:
                 report = empire.star_reports.get(star.name)
@@ -641,7 +659,7 @@ class GameManager:
         # Fleets: own in full, foreign only via fleet reports
         nebula_field = getattr(server_data, 'nebula_field', None)
         fleets = [
-            self._fleet_to_dict(fleet, nebula_field)
+            self._fleet_to_dict(fleet, nebula_field, race)
             for fleet in empire.owned_fleets.values()
         ]
         foreign_fleets = [
@@ -746,6 +764,22 @@ class GameManager:
             for s in getattr(server_data, 'all_storms', {}).values()
         ]
 
+        # Mystery traders are visible to everyone from the moment they
+        # spawn, regardless of scanners (universal visibility, user
+        # directive). Velocity lets the client draw the projected
+        # course; the gift balance is the VIEWER's only - other
+        # empires' gifts are never exposed.
+        traders = [
+            {
+                "key": t.key, "name": t.name,
+                "x": t.x, "y": t.y, "warp": t.warp,
+                "velocity_x": t.velocity_x, "velocity_y": t.velocity_y,
+                "gift_total": t.gifts.get(empire_id, {}).get("total", 0),
+                "gift_threshold": MT_GIFT_THRESHOLD,
+            }
+            for t in getattr(server_data, 'all_traders', {}).values()
+        ]
+
         # Minefields the empire knows about
         minefields = [
             {
@@ -764,6 +798,7 @@ class GameManager:
         # AllScores carries every empire's record), computed live per
         # IntelWriter.cs:79-89; the per-year history is the web
         # extension stored on each empire
+        score_service = Scores(server_data)
         scores = [
             {
                 **record.to_dict(),
@@ -771,12 +806,15 @@ class GameManager:
                     server_data.all_empires.get(record.empire_id),
                     'race_name', ''),
             }
-            for record in Scores(server_data).get_scores()
+            for record in score_service.get_scores()
         ]
         score_history = {
             str(eid): list(getattr(e, 'score_history', []))
             for eid, e in server_data.all_empires.items()
         }
+        victory_status = (
+            VictoryCheck(server_data, score_service).status(empire_id)
+            if server_data.all_stars else None)
 
         return {
             "game_id": game_id,
@@ -784,6 +822,7 @@ class GameManager:
             "victor": getattr(server_data, 'victor', None),
             "scores": scores,
             "score_history": score_history,
+            "victory_status": victory_status,
             "empire": {
                 "id": empire_id,
                 "race_name": empire.race_name,
@@ -802,12 +841,24 @@ class GameManager:
             "research": research,
             "designs": designs,
             "storms": storms,
+            "traders": traders,
+            # Mystery Trader component grants (hidden technology) -
+            # the client hides ungranted MT items from the designer
+            "mt_components": list(getattr(empire, 'mt_components', [])),
             "minefields": minefields,
             "wormholes": wormholes,
         }
 
-    def _star_full_view(self, star: Star, race: Optional[Race]) -> dict:
+    def _star_full_view(self, star: Star, race: Optional[Race],
+                        empire=None) -> dict:
         """Full owner-visible view of a star."""
+        # Mass driver rating on the star's starbase (0 = none) for the
+        # star panel's fling controls
+        mass_driver = 0
+        if empire is not None and star.starbase_key:
+            starbase = empire.owned_fleets.get(star.starbase_key)
+            if starbase is not None:
+                mass_driver = starbase.mass_driver
         view = {
             "owner": star.owner,
             "colonists": star.colonists,
@@ -832,6 +883,7 @@ class GameManager:
             # detail (PlanetDetail.cs:174-178)
             "defense_coverage": compute_defense_coverage(star)["summary"],
             "starbase_key": star.starbase_key,
+            "mass_driver": mass_driver,
             "production_queue": [
                 order.to_dict() for order in star.manufacturing_queue.orders
             ],
@@ -915,6 +967,23 @@ class GameManager:
             return {
                 "turn_year": server_data.turn_year,
                 "status": "applied"
+            }
+        if ctype == "fling_packet":
+            # Mass-driver packet fling (canonical Stars! rules - the
+            # C# reference only defines the driver component property,
+            # MassDriver.cs, and has no packet code). Needs the
+            # server-wide star registry and fleet creation, which
+            # Command.apply_to_state(empire) cannot reach, so it is
+            # handled inline like "detonate_minefield" above.
+            result = self._apply_fling_packet(
+                game_id, server_data, empire, command_data)
+            if "error" in result:
+                return result
+            self._save_game_state(game_id, server_data)
+            return {
+                "turn_year": server_data.turn_year,
+                "status": "applied",
+                "fleet_key": result["fleet_key"]
             }
         if ctype == "design":
             # Design commands need the empire: the design is built and
@@ -1004,6 +1073,103 @@ class GameManager:
             return {"status": "applied"}
 
         return {"error": f"Unknown battle_plan mode '{data.get('mode')}'"}
+
+    def _apply_fling_packet(self, game_id: str, server_data, empire,
+                            data: dict) -> dict:
+        """
+        Fling a mineral packet from a starbase mass driver.
+
+        Canonical Stars! mass-driver rules (C# absent - MassDriver.cs
+        only defines the component property). Payload: {star, target,
+        warp, ironium, boranium, germanium}. The packet is created as
+        a cargo-only pseudo-fleet with one token from a per-empire
+        "Mineral Packet" design (the token keeps cleanup_fleets from
+        deleting it - the salvage pattern, ron_battle_engine.py); it
+        starts flying at the next turn generation, consistent with
+        the command model.
+        """
+        star = empire.owned_stars.get(data.get("star"))
+        if star is None:
+            return {"error": "Star not found or not owned"}
+        starbase = empire.owned_fleets.get(star.starbase_key) \
+            if star.starbase_key else None
+        if starbase is None:
+            return {"error": f"No starbase at {star.name}"}
+        rating = starbase.mass_driver
+        if rating <= 0:
+            return {"error": "No mass driver on the starbase"}
+
+        target = server_data.all_stars.get(data.get("target"))
+        if target is None:
+            return {"error": "Target star not found"}
+        if target.name == star.name:
+            return {"error": "Cannot fling a packet at its own star"}
+
+        try:
+            warp = int(data.get("warp", rating))
+        except (TypeError, ValueError):
+            return {"error": "Invalid fling warp"}
+        max_warp = min(rating + PACKET_OVERFLING_MAX, PACKET_MAX_WARP)
+        if warp < rating or warp > max_warp:
+            return {"error": f"Fling warp must be between {rating} "
+                             f"and {max_warp}"}
+
+        try:
+            amounts = {mineral: int(data.get(mineral, 0))
+                       for mineral in ("ironium", "boranium", "germanium")}
+        except (TypeError, ValueError):
+            return {"error": "Invalid mineral amount"}
+        if any(amount < 0 for amount in amounts.values()):
+            return {"error": "Mineral amounts cannot be negative"}
+        total_kt = sum(amounts.values())
+        if total_kt <= 0:
+            return {"error": "Packet must carry at least 1 kT of "
+                             "minerals"}
+        for mineral, amount in amounts.items():
+            if amount > getattr(star.resources_on_hand, mineral):
+                return {"error": f"Not enough {mineral} on {star.name}"}
+
+        # Take the minerals off the surface
+        star.remove_cargo(Cargo(ironium=amounts["ironium"],
+                                boranium=amounts["boranium"],
+                                germanium=amounts["germanium"]))
+
+        # Per-empire packet pseudo-design (registered once)
+        packet_design = find_design(empire, "Mineral Packet")
+        if packet_design is None:
+            packet_design = SimpleDesign(
+                key=empire.get_next_design_key(), name="Mineral Packet",
+                hull_name="Mineral Packet", optimal_speed=0)
+            empire.designs[packet_design.key] = packet_design
+
+        key = empire.get_next_fleet_key()
+        packet = Fleet(name=f"Mineral Packet #{key & 0xFFFFFFFF}",
+                       position=star.position.copy())
+        packet.key = key
+        token = make_token(packet_design, 1)
+        packet.tokens[token.design_key] = token
+        packet.cargo = Cargo(ironium=amounts["ironium"],
+                             boranium=amounts["boranium"],
+                             germanium=amounts["germanium"])
+        packet.fuel_available = 0
+        packet.packet_warp = warp
+        packet.packet_safe_warp = rating
+        packet.turn_year = server_data.turn_year
+        packet.waypoints = [Waypoint(
+            position_x=target.position.x, position_y=target.position.y,
+            warp_factor=warp, destination=target.name, task=NoTaskObj())]
+        empire.add_or_update_fleet(packet)
+
+        # Confirmation lands in the current message pane immediately
+        # (turn-time all_messages are wiped at the next generation)
+        self._last_messages.setdefault(game_id, []).append(Message(
+            audience=empire.id,
+            text=f"Your starbase at {star.name} has flung a "
+                 f"{total_kt} kT mineral packet at {target.name} "
+                 f"(warp {warp}).",
+            message_type="Star", star_name=star.name))
+
+        return {"status": "applied", "fleet_key": key}
 
     def get_battle_reports(self, game_id: str,
                            empire_id: int) -> Optional[List[dict]]:
@@ -1391,9 +1557,22 @@ class GameManager:
             return {"error": "Empire not found"}
 
         fleet = empire.owned_fleets.get(fleet_key)
-        other = empire.owned_fleets.get(other_fleet_key)
-        if fleet is None or other is None:
+        if fleet is None:
             return {"error": "Fleet not found or not owned"}
+        other = empire.owned_fleets.get(other_fleet_key)
+        if other is None:
+            # Canonical packet interception (Stars! rules, C# absent):
+            # any fleet may fly to a mineral packet in flight and load
+            # (steal) minerals from it. Every other counterparty stays
+            # own-fleet-only.
+            for other_empire in server_data.all_empires.values():
+                candidate = other_empire.owned_fleets.get(other_fleet_key)
+                if candidate is not None and is_mineral_packet(candidate):
+                    other = candidate
+                    break
+            if other is None:
+                return {"error": "Fleet not found or not owned"}
+        other_is_packet = is_mineral_packet(other)
         if fleet is other:
             return {"error": "Cannot transfer cargo with the same fleet"}
         if getattr(fleet, 'is_starbase', False) or \
@@ -1414,6 +1593,10 @@ class GameManager:
         d_col_kt = d_col // 100
         d_fuel = int(delta.get("fuel", 0))
 
+        # Packets carry minerals only - no colonists, no fuel
+        if other_is_packet and (d_col != 0 or d_fuel != 0):
+            return {"error": "Mineral packets carry minerals only"}
+
         # Giver must have the goods (positive: other gives; negative:
         # this fleet gives)
         if d_iron > other.cargo.ironium or -d_iron > fleet.cargo.ironium:
@@ -1429,9 +1612,12 @@ class GameManager:
         if d_fuel > other.fuel_available or -d_fuel > fleet.fuel_available:
             return {"error": "Not enough fuel"}
 
-        # Receiver must have room
+        # Receiver must have room. A packet has no hold - its cargo IS
+        # the packet - so the counterparty clamp is skipped for one
         moved_mass = d_iron + d_bor + d_germ + d_col_kt
-        if fleet.cargo.mass + moved_mass > fleet.total_cargo_capacity or \
+        if fleet.cargo.mass + moved_mass > fleet.total_cargo_capacity:
+            return {"error": "Cargo capacity exceeded"}
+        if not other_is_packet and \
                 other.cargo.mass - moved_mass > other.total_cargo_capacity:
             return {"error": "Cargo capacity exceeded"}
         if fleet.fuel_available + d_fuel > fleet.total_fuel_capacity or \
@@ -1449,12 +1635,119 @@ class GameManager:
         fleet.fuel_available += d_fuel
         other.fuel_available -= d_fuel
 
+        # An emptied packet vanishes
+        if other_is_packet and other.cargo.mass == 0:
+            for other_empire in server_data.all_empires.values():
+                other_empire.owned_fleets.pop(other.key, None)
+                other_empire.fleet_reports.pop(other.key, None)
+
         self._save_game_state(game_id, server_data)
 
         return {
             "status": "ok",
             "fleet": self._fleet_to_dict(fleet),
             "other_fleet": self._fleet_to_dict(other),
+        }
+
+    def gift_to_trader(
+        self,
+        game_id: str,
+        empire_id: int,
+        fleet_key: int,
+        trader_key: int,
+        delta: dict
+    ) -> dict:
+        """
+        Gift minerals or colonists to a co-located Mystery Trader.
+
+        Canonical Stars! Mystery Trader intercept-and-gift (the C#
+        reference has only a TODO, GameInitialiser.cs:180; user
+        directive, acc-crit Mystery Trader section). Modeled on
+        transfer_cargo_between_fleets, but strictly ONE-WAY: minerals
+        (kT) and colonists (headcount, 100 per kT) flow to the trader,
+        never back, and fuel is not accepted. The gift accumulates in
+        the trader's per-empire ledger; rewards resolve on the seeded
+        per-turn RNG in TurnGenerator._process_traders, never here
+        (keeps the determinism criterion - API calls happen outside
+        the seeded window). The trader always keeps the cargo.
+
+        Args:
+            game_id: Game identifier.
+            empire_id: Gifting empire.
+            fleet_key: Gifting fleet (must be at the trader's position).
+            trader_key: Target trader.
+            delta: {ironium, boranium, germanium, colonists} amounts.
+
+        Returns:
+            Result with the updated fleet, running gift total and the
+            reward threshold, or error.
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return {"error": "Game not found"}
+
+        empire = server_data.all_empires.get(empire_id)
+        if empire is None:
+            return {"error": "Empire not found"}
+
+        fleet = empire.owned_fleets.get(fleet_key)
+        if fleet is None:
+            return {"error": "Fleet not found or not owned"}
+        if getattr(fleet, 'is_starbase', False):
+            return {"error": "Starbases cannot gift to the trader"}
+
+        trader = getattr(server_data, 'all_traders', {}).get(trader_key)
+        if trader is None:
+            return {"error": "Mystery Trader not found"}
+
+        # Co-location gate (merge tolerance)
+        dx = fleet.position.x - trader.x
+        dy = fleet.position.y - trader.y
+        if (dx * dx + dy * dy) > 1.0:
+            return {"error": "Fleet must be at the trader's position"}
+
+        d_iron = int(delta.get("ironium", 0))
+        d_bor = int(delta.get("boranium", 0))
+        d_germ = int(delta.get("germanium", 0))
+        d_col = int(delta.get("colonists", 0))
+        d_col_kt = d_col // 100
+
+        # One-way gift: no negative amounts, no fuel
+        if any(v < 0 for v in (d_iron, d_bor, d_germ, d_col)):
+            return {"error": "Gift amounts cannot be negative"}
+        if int(delta.get("fuel", 0)) != 0:
+            return {"error": "The trader does not accept fuel"}
+
+        total_kt = d_iron + d_bor + d_germ + d_col_kt
+        if total_kt <= 0:
+            return {"error": "Gift must carry at least 1 kT"}
+
+        if d_iron > fleet.cargo.ironium:
+            return {"error": "Not enough ironium"}
+        if d_bor > fleet.cargo.boranium:
+            return {"error": "Not enough boranium"}
+        if d_germ > fleet.cargo.germanium:
+            return {"error": "Not enough germanium"}
+        if d_col_kt > fleet.cargo.colonists_in_kilotons:
+            return {"error": "Not enough colonists"}
+
+        fleet.cargo.ironium -= d_iron
+        fleet.cargo.boranium -= d_bor
+        fleet.cargo.germanium -= d_germ
+        fleet.cargo.colonists_in_kilotons -= d_col_kt
+
+        entry = trader.gifts.setdefault(
+            empire_id, {"total": 0, "fleet_key": fleet_key})
+        entry["total"] += total_kt
+        entry["fleet_key"] = fleet_key
+
+        self._save_game_state(game_id, server_data)
+
+        return {
+            "status": "ok",
+            "fleet": self._fleet_to_dict(fleet),
+            "gift_total": entry["total"],
+            "threshold": MT_GIFT_THRESHOLD,
         }
 
     # =========================================================================
@@ -1704,7 +1997,8 @@ class GameManager:
             "star_radius": star.star_radius,
         }
 
-    def _fleet_to_dict(self, fleet: Fleet, nebula_field=None) -> dict:
+    def _fleet_to_dict(self, fleet: Fleet, nebula_field=None,
+                       race=None) -> dict:
         """Convert Fleet to API response dict."""
         warp = 0
         if fleet.waypoints:
@@ -1726,6 +2020,8 @@ class GameManager:
         return {
             "scan_range": scan_range,
             "in_dust": round(in_dust, 2),
+            # Fleet-min storm protection (web extension, wave 4)
+            "storm_protection": round(fleet.storm_protection(race), 2),
             "key": fleet.key,
             "name": fleet.name,
             "owner": fleet.owner,
@@ -1744,6 +2040,8 @@ class GameManager:
             },
             "in_orbit": fleet.in_orbit_name,
             "is_starbase": fleet.is_starbase,
+            "is_packet": bool(is_mineral_packet(fleet)),
+            "packet_warp": fleet.packet_warp,
             "can_colonize": fleet.can_colonize,
             "mining_rate": fleet.total_mining_rate,
             "warp_factor": warp,
@@ -1767,10 +2065,21 @@ class GameManager:
                     "warp_factor": wp.warp_factor,
                     "destination": wp.destination or "",
                     "task_type": str(wp.task.__class__.__name__) if wp.task else "NoTask",
+                    # Full task dict so a warp-only Edit can round-trip
+                    # the task with its parameters intact (C# preserves
+                    # the Task object on speed edits, FleetDetail.cs:110)
+                    "task": wp.to_dict()["task"],
                 }
                 for wp in fleet.waypoints
             ],
             "waypoint_count": len(fleet.waypoints),
+            # Fuel consumption (mg/year) at each warp 0-10, for the
+            # client leg time/fuel readout (FleetDetail.cs:391-439;
+            # Fleet.FuelConsumption port at Fleet.cs:817-839)
+            "fuel_consumption_by_warp": [
+                round(fleet.fuel_consumption(w, race), 2)
+                for w in range(11)
+            ],
         }
 
 

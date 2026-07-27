@@ -6,7 +6,7 @@ Verification checklist derived from [ORIGINAL_GAME_MECHANICS.md](ORIGINAL_GAME_M
 |---|---|---|---|
 | Galaxy generation (density, named stars, homeworlds) | 1. Universe and game setup | tests/unit/test_api.py::TestGalaxyGenerator | covered |
 | Seeded reproducible games (galaxy + turn generation) | 1. Universe and game setup | tests/e2e/test_harness.py::TestReproducibility | covered |
-| Game settings: 8 tunable victory targets, minimum game time | 1. Universe and game setup | - | pending |
+| Game settings: 8 tunable victory targets, minimum game time | 1. Universe and game setup | tests/unit/test_scores.py::TestSerialization; tests/e2e/test_score_victory.py::TestVictoryDeclaration::test_victory_settings_default; tests/e2e/test_wave4_integration.py | covered |
 | Starting conditions: PRT starting tech, starting fleets per PRT, leftover-point spend, accelerated-BBS start | 1. Universe and game setup | tests/unit/test_research.py::TestStartingTech; tests/unit/test_starting_conditions.py; tests/e2e/test_starting_conditions.py | covered |
 | Population growth (rate, hab scaling, crowding, PRT max pop) | 2. Planets and economy | tests/regression/test_parity.py::TestPopulationGrowthParity | covered |
 | Resource generation (colonists + factories, operable limits) | 2. Planets and economy | tests/regression/test_parity.py::TestResourceGenerationParity | covered |
@@ -28,7 +28,7 @@ Verification checklist derived from [ORIGINAL_GAME_MECHANICS.md](ORIGINAL_GAME_M
 | Component catalog: 228 components load with stats/restrictions | 6. Ship design and components | tests/unit/test_component_loader.py | covered |
 | Ship design rules (engine mandatory, slot enforcement, obsolete, delete strips fleets) | 6. Ship design and components | tests/unit/test_ship_design.py; tests/unit/test_commands.py::TestDesignCommand | covered |
 | Battle speed, initiative, power rating formulas | 6. Ship design and components | tests/regression/test_parity.py::TestBattleSpeedParity, TestGlobalConstantsParity | covered |
-| Component battle effects: jammer/capacitor/deflector/computer | 6. Ship design and components | tests/unit/test_ship_design.py::TestElectronicsAggregation; tests/unit/test_battle_engine.py::TestElectronicsInBattle; tests/e2e/test_electronics_battle.py | covered |
+| Component battle effects: jammer/capacitor/deflector/computer | 6. Ship design and components | tests/unit/test_ship_design.py::TestElectronicsAggregation; tests/unit/test_battle_engine.py::TestElectronicsInBattle; tests/e2e/test_electronics_battle.py; tests/e2e/test_wave4_integration.py | covered |
 | Fleet movement: fuel tables, multi-leg, free-warp, ram-scoop (live pipeline) | 7. Fleets and movement | tests/regression/test_integration.py::TestFleetMovementIntegration | partial |
 | Fleet ops: split/merge, rename, scrap recovery %, repair/refuel | 7. Fleets and movement | tests/unit/test_turn_generator.py::TestScrapFleetStep, TestSplitFleetStep, TestRegenerateFleet; tests/e2e/test_repair_refuel.py; tests/e2e/test_wave3_integration.py | covered |
 | Cargo transfer: immediate fleet-star dialog | 7. Fleets and movement | tests/unit/test_cargo.py; tests/unit/test_remote_mining.py::TestCargoAtUninhabitedStar | covered |
@@ -39,32 +39,40 @@ Verification checklist derived from [ORIGINAL_GAME_MECHANICS.md](ORIGINAL_GAME_M
 | Minefields: laying, decay, radius, safe speed, strike formula, damage | 9. Minefields | tests/unit/test_phenomena.py::TestMinefieldStrikes; tests/unit/test_turn_generator.py::TestFirstStep | covered |
 | Mine sweeping by beam weapons, detonating fields (SD) | 9. Minefields | tests/unit/test_mine_sweeping.py; tests/e2e/test_mine_sweeping.py | covered |
 | Stargates: safe mass/range, over-limit losses | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargates | covered |
+| Gate hull limit (small/medium only; large/capital refused outright) | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargateHullLimit; tests/e2e/test_stargate_rework.py | covered |
+| Star-fuelled gate range (spectral factor O-M, "any" clamped to 800 ly) | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargateStarFuelledRange; tests/e2e/test_stargate_rework.py | covered |
+| No minerals through gates (colonists IT-only, fuel free) | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargateCargoRules; tests/e2e/test_stargate_rework.py | covered |
 | Wormholes: pairs, drift, scan discovery, transit | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestWormholes | covered |
 | Battle engine: stacks, grid, initiative movement, targeting, damage pools, reports | 11. Combat | tests/unit/test_battle_engine.py | covered |
-| Battle plans: editing, target types, tactics honored | 11. Combat | tests/unit/test_battle_engine.py::TestBattlePlan/TestAreEnemies/TestRonTargetPriority/TestTactics; tests/e2e/test_battle_plans.py | covered |
-| Player relations (Enemy/Neutral/Friend) | 11. Combat | tests/unit/test_relations.py; tests/e2e/test_relations.py | covered |
+| Battle plans: editing, target types, tactics honored | 11. Combat | tests/unit/test_battle_engine.py::TestBattlePlan/TestAreEnemies/TestRonTargetPriority/TestTactics; tests/e2e/test_battle_plans.py; tests/e2e/test_wave4_integration.py | covered |
+| Player relations (Enemy/Neutral/Friend) | 11. Combat | tests/unit/test_relations.py; tests/e2e/test_relations.py; tests/e2e/test_wave4_integration.py | covered |
 | Bombing (pop kill, min kill, installations, smart bombs, starbase protection) | 12. Bombing and colonization | tests/unit/test_turn_generator.py::TestBombingStep | covered |
 | Colonization (ship consumed, colonists landed) | 12. Bombing and colonization | tests/unit/test_turn_generator.py::TestPostBombingStep | covered |
 | Scanning: best-scanner stacking, pen-scan, fleet detection, report aging | 13. Intel, scanning, cloaking | tests/unit/test_turn_generator.py::TestScanStep; tests/unit/test_phenomena.py | covered |
 | Enemy design hull learning on detection | 13. Intel, scanning, cloaking | tests/unit/test_turn_generator.py::TestScanStepCloaking; tests/unit/test_battle_engine.py::TestBattleDesignLearning; tests/e2e/test_cloaking_intel.py | covered |
 | Cloaking effect on detection, tachyon counter | 13. Intel, scanning, cloaking | tests/unit/test_ship_design.py::TestCloaking; tests/unit/test_turn_generator.py::TestScanStepCloaking; tests/e2e/test_cloaking_intel.py | covered |
 | Empire intel records (star/fleet reports) | 13. Intel, scanning, cloaking | tests/unit/test_turn_generator.py::TestScanStep | covered |
-| Messages: types, audience filter, goto-linkage | 14. Messages, score, victory | tests/unit/test_commands.py::TestMessage; TechAdvance names the research field: tests/unit/test_research.py::TestSpillover::test_tech_advance_message_names_field; tests/e2e/test_research.py | partial |
-| Score: formula, history, score report | 14. Messages, score, victory | - | pending |
-| Victory: last-standing + 8 configurable targets | 14. Messages, score, victory | - | pending |
+| Messages: types, audience filter, goto-linkage | 14. Messages, score, victory | tests/unit/test_commands.py::TestMessage (star_name roundtrip); TechAdvance names the research field: tests/unit/test_research.py::TestSpillover::test_tech_advance_message_names_field; tests/e2e/test_research.py; tests/e2e/test_client_parity.py::TestMessageGotoLinkage (star_name/fleet_key resolve, battle location matches report; Goto button browser-verified in wave 6) | covered |
+| Score: formula, history, score report | 14. Messages, score, victory | tests/unit/test_scores.py::TestScoreFormula; tests/e2e/test_score_victory.py::TestScoresInPlayerState; tests/e2e/test_wave4_integration.py | covered |
+| Victory: last-standing + 8 configurable targets | 14. Messages, score, victory | tests/unit/test_scores.py::TestVictoryCheck; tests/e2e/test_score_victory.py::TestVictoryDeclaration; tests/e2e/test_wave4_integration.py | covered |
 | Client parity: dialogs, reports, battle viewer, race designer | 15. Client features | - (browser verification, later wave) | pending |
-| Multi-fleet picker, waypoint leg editing | 15. Client features | - | pending |
+| Multi-fleet picker, waypoint leg editing | 15. Client features | tests/unit/test_api.py::TestClientParityState (task dict roundtrip, fuel_consumption_by_warp, Edit/Insert order); tests/e2e/test_client_parity.py::TestWaypointLegEditing, TestMultiFleetSharedPosition (map click cycling and leg editor UI browser-verified in wave 6) | covered |
 | AI: planet production, fleet scout/colonize/attack, planner | 16. AI and turn model | tests/unit/test_ai.py | covered |
 | Turn submission model (locking per empire, multiplayer story) | 16. AI and turn model | - | pending |
-| Mineral packets and mass drivers | 17. Absent in C# (canonical) | - | pending |
-| Mystery trader | 17. Absent in C# (canonical) | - | pending |
+| Mineral packets and mass drivers | 17. Absent in C# (canonical) | tests/unit/test_packets.py; tests/e2e/test_packets.py | covered |
+| Mystery trader | 17. Absent in C# (canonical) | tests/unit/test_traders.py, tests/e2e/test_mystery_trader.py | done |
 | Random events (comet strikes etc.) | 17. Absent in C# (canonical) | - | pending |
 | Pop transfers between own worlds via waypoints | 17. Absent in C# (canonical) | - | pending |
 | Dust nebulae slow ships and dampen scanners | 18. Web-only extensions | tests/unit/test_phenomena.py::TestNebulaDust | covered |
+| Emission nebula glare (scan dampening 0.15 x density, composed with dust; no speed effect) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestNebulaGlare; tests/e2e/test_stargate_rework.py | covered |
 | Galactic storms (drift, damage, ship loss, persistence) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestGalacticStorms | covered |
 | Galactic storm blob shape and local intensity field (contains, ramp, serialization incl. legacy) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestStormShape | covered |
 | Galactic storm hazards (locally-scaled damage, warp mishap, scan dampening, colonist attrition) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestStormHazards; tests/e2e/test_storms.py | covered |
 | Galactic storm nebula-biased spawning | 18. Web-only extensions | tests/unit/test_phenomena.py::TestStormSpawning | covered |
+| Storm protection model (additive sources, clamp at immunity, fleet-min, effect scaling by 1 - protection) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestStormProtection; tests/e2e/test_storms.py::TestStormProtectionE2E; tests/e2e/test_wave4_integration.py | covered |
+| Storm shield components (3-tier catalog line, best tier wins, shield slots, top tier = immunity) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestStormShieldComponents; tests/e2e/test_wave4_integration.py (Storm Bulwark design crosses a storm unharmed) | covered |
+| Orbit safe harbor (planets and orbiting fleets/starbases untouched by storms; scan dampening stays) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestStormProtection; tests/e2e/test_storms.py::TestStormProtectionE2E | covered |
+| Radiation-hardened races (immune or extreme radiation optimum -> fleet-wide storm resilience) | 18. Web-only extensions | tests/unit/test_phenomena.py::TestStormProtection | covered |
 | In-game encyclopedia (Help menu; 6 phenomena entries with live numbers) | 18. Web-only extensions | - (frontend: node --check + served-asset check; browser evidence wave 6) | covered |
 | Phenomena map tooltips (storm/wormhole/minefield/dust) linking to encyclopedia | 18. Web-only extensions | - (frontend: node --check + served-asset check; browser evidence wave 6) | covered |
 | Zoom-out clamp (min zoom = best-fit / 1.2 in all zoom paths) | 18. Web-only extensions | - (frontend: node --check + served-asset check; browser evidence wave 6) | covered |

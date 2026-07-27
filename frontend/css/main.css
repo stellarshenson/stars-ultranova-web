@@ -605,6 +605,24 @@ footer a:hover {
 .waypoint-item {
     flex-wrap: wrap;
     gap: 0.25rem;
+    cursor: pointer;
+}
+
+.waypoint-item.selected {
+    background-color: #2a3a5e;
+    outline: 1px solid #4a6aae;
+}
+
+.waypoint-leg-details {
+    padding: 0.35rem 0.5rem;
+    margin-bottom: 0.5rem;
+    background-color: #14142a;
+    border-radius: 3px;
+    font-size: 0.85rem;
+}
+
+.waypoint-leg-details input[type="range"] {
+    width: 55%;
 }
 
 .waypoint-dest {
@@ -648,9 +666,11 @@ footer a:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.5rem;
+    margin-bottom: 1rem;
     flex-wrap: wrap;
     gap: 0.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #333;
 }
 
 /* Planet display in star panel */
@@ -1805,7 +1825,7 @@ footer a:hover {
     position: static;
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 0.5rem 1.25rem;
     padding: 0.75rem 1rem;
     background: #2a2a4e;
     border-bottom: 1px solid #333;
@@ -2372,6 +2392,31 @@ button:active:not(:disabled) {
     cursor: pointer;
 }
 
+/* Right-click near-object menu (rendered inside the map tooltip) */
+.map-context-menu {
+    display: flex;
+    flex-direction: column;
+    min-width: 140px;
+}
+
+.map-context-item {
+    color: #c0c0c0;
+    text-decoration: none;
+    padding: 0.15rem 0.25rem;
+    cursor: pointer;
+}
+
+.map-context-item:hover {
+    background-color: #2a3a5e;
+    color: #ffffff;
+}
+
+.map-context-separator {
+    border: none;
+    border-top: 1px solid #444;
+    margin: 0.25rem 0;
+}
+
 /* Encyclopedia dialog */
 .dialog-content.encyclopedia-dialog {
     max-width: 860px;
@@ -2439,4 +2484,21 @@ button:active:not(:disabled) {
     border: 1px solid rgba(120, 140, 200, 0.25);
     margin: 0 0 14px 0;
     box-shadow: 0 2px 14px rgba(0, 0, 0, 0.5);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PANEL POLISH - left-column spacing (user directive, 8/12px scale)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Star/fleet/production panels render content directly into .panel, which
+   the classic layout strips to padding 0 - restore consistent inner padding
+   so no text, bar or button sits flush against a panel border */
+#left-column > .panel {
+    padding: 0.75rem 1rem 1rem;
+}
+
+/* Last section inside a panel: the panel padding provides the bottom gap */
+#left-column .star-section:last-child,
+#left-column .fleet-section:last-child {
+    margin-bottom: 0;
 }

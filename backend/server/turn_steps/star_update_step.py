@@ -99,7 +99,8 @@ class StarUpdateStep(ITurnStep):
                     messages.append(Message(
                         audience=star.owner,
                         text=f"{star.name} has been instaformed ({detail})",
-                        message_type="Star"
+                        message_type="Star",
+                        star_name=star.name
                     ))
 
             # Update minerals (mining with concentration depletion)
@@ -124,7 +125,8 @@ class StarUpdateStep(ITurnStep):
                     audience=star.owner,
                     text=f"{died:,} of your colonists have been killed by the "
                          f"environment on {star.name}",
-                    message_type="Star"
+                    message_type="Star",
+                    star_name=star.name
                 ))
 
             # Manufacturing
@@ -451,7 +453,8 @@ class StarUpdateStep(ITurnStep):
                     messages.append(Message(
                         audience=star.owner,
                         text=f"{star.name} has completed terraforming",
-                        message_type="Star"
+                        message_type="Star",
+                        star_name=star.name
                     ))
                     continue
 
@@ -462,7 +465,8 @@ class StarUpdateStep(ITurnStep):
                 messages.append(Message(
                     audience=star.owner,
                     text=f"{star.name} could not build '{order.name}' - unknown item",
-                    message_type="Star"
+                    message_type="Star",
+                    star_name=star.name
                 ))
                 continue
 
@@ -615,7 +619,8 @@ class StarUpdateStep(ITurnStep):
                 audience=star.owner,
                 text=f"{star.name} has built {count} factor"
                      f"{'ies' if count > 1 else 'y'}",
-                message_type="Star"
+                message_type="Star",
+                star_name=star.name
             ))
 
         elif order.production_type == ProductionType.MINE:
@@ -623,7 +628,8 @@ class StarUpdateStep(ITurnStep):
             messages.append(Message(
                 audience=star.owner,
                 text=f"{star.name} has built {count} mine{'s' if count > 1 else ''}",
-                message_type="Star"
+                message_type="Star",
+                star_name=star.name
             ))
 
         elif order.production_type == ProductionType.DEFENSE:
@@ -632,7 +638,8 @@ class StarUpdateStep(ITurnStep):
                 audience=star.owner,
                 text=f"{star.name} has built {count} defense"
                      f"{'s' if count > 1 else ''}",
-                message_type="Star"
+                message_type="Star",
+                star_name=star.name
             ))
 
         elif order.production_type == ProductionType.ALCHEMY:
@@ -648,7 +655,8 @@ class StarUpdateStep(ITurnStep):
                 audience=star.owner,
                 text=f"{star.name} has transmuted resources into "
                      f"{count} kT of each mineral",
-                message_type="Star"
+                message_type="Star",
+                star_name=star.name
             ))
 
         elif order.production_type == ProductionType.TERRAFORM:
@@ -673,7 +681,8 @@ class StarUpdateStep(ITurnStep):
                 messages.append(Message(
                     audience=star.owner,
                     text=f"{star.name} has been terraformed ({detail})",
-                    message_type="Star"
+                    message_type="Star",
+                    star_name=star.name
                 ))
 
         elif order.production_type in (ProductionType.SHIP, ProductionType.STARBASE):
@@ -714,7 +723,8 @@ class StarUpdateStep(ITurnStep):
             messages.append(Message(
                 audience=star.owner,
                 text=f"{star.name} has built a new {design.name}",
-                message_type="Star"
+                message_type="Star",
+                star_name=star.name
             ))
             return messages
 
@@ -732,7 +742,8 @@ class StarUpdateStep(ITurnStep):
             text=f"{star.name} has built {count} new {design.name}"
                  f"{'s' if count > 1 else ''}",
             message_type="Star",
-            fleet_key=fleet.key
+            fleet_key=fleet.key,
+            star_name=star.name
         ))
 
         return messages

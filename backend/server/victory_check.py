@@ -95,7 +95,7 @@ class VictoryCheck:
             if record.empire_id == empire_id:
                 own_score = record.score
                 own_capitals = record.capital_ships
-            elif record.rank == 2:
+            if record.rank == 2:
                 second_place = record.score
 
         empire = self.server_state.all_empires[empire_id]
@@ -287,12 +287,18 @@ class VictoryCheck:
         if not settings.second_place_score.enabled:
             return 0
 
+        # C# uses an else-if here (VictoryCheck.cs:344-354), which
+        # leaves secondPlaceScore at 0 when the checked empire is
+        # itself the rank-2 record - under the corrected gate that
+        # would let any runner-up with a nonzero score win instantly.
+        # The rank-2 record is therefore found unconditionally: the
+        # second-highest score overall is the canonical reference.
         our_score = 0
         second_place_score = 0
         for score_detail in self.scores.get_scores():
             if score_detail.empire_id == empire_id:
                 our_score = score_detail.score
-            elif score_detail.rank == 2:
+            if score_detail.rank == 2:
                 second_place_score = score_detail.score
 
         # C# multiplies bare (secondPlaceScore *= NumericValue,

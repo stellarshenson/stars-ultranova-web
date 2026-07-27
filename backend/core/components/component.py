@@ -15,14 +15,16 @@ from ..game_objects.item import Item, ItemType
 from ..race.traits import RaceRestriction
 
 
-# Property type keys matching C# Component.PropertyKeys
+# Property type keys matching C# Component.PropertyKeys.
+# "Storm Shield" is a web-only extension (galactic storm protection
+# components, user directive - no C# equivalent).
 PROPERTY_KEYS = [
     "Armor", "Beam Deflector", "Bomb", "Battle Movement", "Capacitor", "Cargo",
     "Cloak", "Colonizer", "Computer", "Defense", "Deflector", "Energy Dampener",
     "Engine", "Fuel", "Gate", "Hull", "Hull Affinity", "Jammer", "Mass Driver",
     "Mine Layer", "Mine Layer Efficiency", "Robot", "Orbital Adjuster",
-    "Radiation", "Scanner", "Shield", "Tachyon Detector", "Terraforming",
-    "Transport Ships Only", "Weapon"
+    "Radiation", "Scanner", "Shield", "Storm Shield", "Tachyon Detector",
+    "Terraforming", "Transport Ships Only", "Weapon"
 ]
 
 

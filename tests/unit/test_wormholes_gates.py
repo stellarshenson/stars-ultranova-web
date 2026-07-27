@@ -151,3 +151,168 @@ class TestStargates:
         assert not handled
         assert fleet.position.x == 100  # did not move
         assert wp.warp_factor == 9  # clamped to normal max
+
+
+class TestStargateHullLimit:
+    """Only small and medium hulls may gate (user directive
+    2026-07-13); large and capital hulls are refused outright."""
+
+    def _setup(self, hull_name):
+        fleet = make_fleet(1, 1, 100, 100)
+        fleet.tokens[1].hull_name = hull_name
+        state = make_state(fleet)
+        empire = state.all_empires[1]
+        origin = _gated_star(state, empire, "Home", 100, 100)
+        dest = _gated_star(state, empire, "Colony", 300, 100)
+        fleet.in_orbit = origin
+        fleet.in_orbit_name = "Home"
+        wp = Waypoint(position_x=dest.position.x, position_y=dest.position.y,
+                      warp_factor=10, destination="Colony", task=NoTaskObj())
+        fleet.waypoints.append(wp)
+        gen = TurnGenerator(state)
+        gen.rand.seed(7)
+        return fleet, wp, state, empire, gen
+
+    @pytest.mark.parametrize("hull", ["Battleship", "Dreadnought",
+                                      "Battle Cruiser", "Large Freighter"])
+    def test_large_and_capital_hulls_refused_outright(self, hull):
+        fleet, wp, state, empire, gen = self._setup(hull)
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert not handled
+        assert fleet.position.x == 100  # did not move
+        # Refused, not gambled: no losses, no damage
+        assert fleet.tokens[1].quantity == 1
+        assert fleet.tokens[1].damage_percent == 0
+        assert wp.warp_factor == 9
+        assert any(m.message_type == "Invalid Command" and
+                   "too large" in m.text for m in state.all_messages)
+
+    @pytest.mark.parametrize("hull", ["Scout", "Frigate", "Destroyer",
+                                      "Cruiser", "Medium Freighter"])
+    def test_small_and_medium_hulls_gate(self, hull):
+        fleet, wp, state, empire, gen = self._setup(hull)
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert handled
+        assert fleet.position.x == 300
+
+    def test_unknown_hull_refused(self):
+        fleet, wp, state, empire, gen = self._setup("Mystery Hull")
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert not handled
+        assert fleet.position.x == 100
+
+
+class TestStargateStarFuelledRange:
+    """Gate range scales with the host star's spectral class, and no
+    gate is unlimited (user directive 2026-07-13)."""
+
+    def _gate_at(self, spectral, gate_range):
+        fleet = make_fleet(1, 1, 100, 100)
+        state = make_state(fleet)
+        empire = state.all_empires[1]
+        star = _gated_star(state, empire, "Home", 100, 100,
+                           gate_range=gate_range)
+        star.spectral_class = spectral
+        gen = TurnGenerator(state)
+        return gen._star_gate(star)
+
+    @pytest.mark.parametrize("spectral,factor", [
+        ("O", 2.0), ("B", 1.6), ("A", 1.3), ("F", 1.1),
+        ("G", 1.0), ("K", 0.8), ("M", 0.6),
+    ])
+    def test_spectral_class_scales_range(self, spectral, factor):
+        mass, eff_range = self._gate_at(spectral, 600)
+        assert eff_range == pytest.approx(600 * factor)
+
+    def test_any_range_gate_clamps_to_max(self):
+        # SafeRange -1 ("any") clamps to GATE_MAX_BASE_RANGE before
+        # the star factor - never unlimited
+        from backend.core.globals import GATE_MAX_BASE_RANGE
+        mass, eff_range = self._gate_at("G", -1)
+        assert eff_range == pytest.approx(GATE_MAX_BASE_RANGE)
+        mass, eff_range = self._gate_at("O", -1)
+        assert eff_range == pytest.approx(GATE_MAX_BASE_RANGE * 2.0)
+
+    def test_small_star_shrinks_jump_to_over_range_gamble(self):
+        # 400 ly jump: safe through G-star 600 ly gates, over-range
+        # through M-star gates (600 * 0.6 = 360 ly) - the canonical
+        # 25% loss / 50% damage gamble applies to the allowed hull
+        fleet = make_fleet(1, 1, 100, 100, quantity=8)
+        state = make_state(fleet)
+        empire = state.all_empires[1]
+        origin = _gated_star(state, empire, "Home", 100, 100)
+        dest = _gated_star(state, empire, "Colony", 500, 100)
+        for star in (origin, dest):
+            star.spectral_class = "M"
+        fleet.in_orbit = origin
+        fleet.in_orbit_name = "Home"
+        wp = Waypoint(position_x=500, position_y=100, warp_factor=10,
+                      destination="Colony", task=NoTaskObj())
+        fleet.waypoints.append(wp)
+        gen = TurnGenerator(state)
+        gen.rand.seed(7)
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert handled
+        token = fleet.tokens.get(1)
+        assert token is None or token.quantity < 8 or \
+            token.damage_percent >= 50
+
+
+class TestStargateCargoRules:
+    """Minerals never gate (user directive 2026-07-13); colonists
+    gate only for IT races (canonical); fuel always travels."""
+
+    def _setup(self, prt=None):
+        fleet = make_fleet(1, 1, 100, 100)
+        state = make_state(fleet)
+        empire = state.all_empires[1]
+        if prt is not None:
+            from backend.core.race.race import Race
+            empire.race = Race(primary_trait=prt)
+        origin = _gated_star(state, empire, "Home", 100, 100)
+        dest = _gated_star(state, empire, "Colony", 300, 100)
+        fleet.in_orbit = origin
+        fleet.in_orbit_name = "Home"
+        wp = Waypoint(position_x=dest.position.x, position_y=dest.position.y,
+                      warp_factor=10, destination="Colony", task=NoTaskObj())
+        fleet.waypoints.append(wp)
+        gen = TurnGenerator(state)
+        gen.rand.seed(7)
+        return fleet, wp, state, empire, gen
+
+    def test_mineral_cargo_refused(self):
+        fleet, wp, state, empire, gen = self._setup()
+        fleet.cargo.ironium = 10
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert not handled
+        assert fleet.position.x == 100
+        assert any(m.message_type == "Invalid Command" and
+                   "mineral cargo" in m.text for m in state.all_messages)
+
+    def test_mineral_cargo_refused_even_for_it(self):
+        fleet, wp, state, empire, gen = self._setup(prt="IT")
+        fleet.cargo.germanium = 5
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert not handled
+
+    def test_colonists_refused_for_non_it(self):
+        fleet, wp, state, empire, gen = self._setup(prt="JOAT")
+        fleet.cargo.colonists_in_kilotons = 5
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert not handled
+        assert any("Interstellar Traveler" in m.text
+                   for m in state.all_messages)
+
+    def test_colonists_gate_for_it(self):
+        fleet, wp, state, empire, gen = self._setup(prt="IT")
+        fleet.cargo.colonists_in_kilotons = 5
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert handled
+        assert fleet.position.x == 300
+
+    def test_fuel_gates_freely(self):
+        fleet, wp, state, empire, gen = self._setup()
+        fuel_before = fleet.fuel_available
+        handled = gen._gate_travel(fleet, wp, empire)
+        assert handled
+        assert fleet.fuel_available == fuel_before

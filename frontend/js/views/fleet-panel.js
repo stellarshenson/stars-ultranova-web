@@ -17,6 +17,24 @@ const FleetPanel = {
     // Waypoint editing state
     editingWaypoints: false,
 
+    // Selected waypoint leg index (-1 = auto-select last,
+    // FleetDetail.cs:482-486)
+    selectedWaypointIndex: -1,
+
+    // UI task names mapped to the task types the backend accepts.
+    // The C# LoadTask defect (Waypoint.cs:132 - Replace() result
+    // discarded, so "Unload Cargo"/"Lay Mines" silently degraded to
+    // NoTask) is NOT ported: names map to the real task types here.
+    waypointTaskTypes: {
+        'None': 'NoTask',
+        'Colonise': 'Colonise',
+        'Invade': 'Invade',
+        'Scrap': 'Scrap',
+        'Transfer Cargo': 'Cargo',
+        'Lay Mines': 'LayMines',
+        'Remote Mining': 'RemoteMine'
+    },
+
     /**
      * Initialize the fleet panel.
      */
@@ -43,6 +61,10 @@ const FleetPanel = {
     async show(fleet) {
         if (!fleet || !this.container) return;
 
+        // Switching fleets resets the leg selection to the last leg
+        if (!this.currentFleet || this.currentFleet.key !== fleet.key) {
+            this.selectedWaypointIndex = -1;
+        }
         this.currentFleet = fleet;
         this.container.classList.remove('hidden');
 
@@ -73,6 +95,7 @@ const FleetPanel = {
         }
         this.currentFleet = null;
         this.editingWaypoints = false;
+        this.selectedWaypointIndex = -1;
     },
 
     /**
@@ -276,6 +299,14 @@ const FleetPanel = {
         const heading = nextWp
             ? (nextWp.destination || `(${Math.round(nextWp.position_x)}, ${Math.round(nextWp.position_y)})`)
             : (fleet.in_orbit ? `Orbiting ${fleet.in_orbit}` : 'Holding position');
+        // Fleet-min storm protection (web extension, wave 4); shown
+        // only when some source (storm shields, shields, armor,
+        // radiation-hardened race) grants protection
+        const stormRow = fleet.storm_protection > 0 ? `
+                <div class="stat-row">
+                    <span>Storm protection:</span>
+                    <span class="stat-value">${Math.round(fleet.storm_protection * 100)}%</span>
+                </div>` : '';
         return `
             <div class="fleet-section">
                 <h3>Movement</h3>
@@ -286,16 +317,24 @@ const FleetPanel = {
                 <div class="stat-row">
                     <span>Warp Speed:</span>
                     <span class="stat-value">Warp ${fleet.warp_factor || 0}</span>
-                </div>
+                </div>${stormRow}
             </div>
         `;
     },
 
     /**
-     * Render waypoints.
+     * Render waypoints - clickable leg list plus a details editor for
+     * the selected leg (FleetDetail.cs WaypointListBox + leg controls).
      */
     renderWaypoints(fleet) {
         const waypoints = fleet.waypoints || [];
+
+        // Default-select the LAST leg (FleetDetail.cs:482-486); clamp
+        // after deletes
+        if (this.selectedWaypointIndex < 0 ||
+                this.selectedWaypointIndex >= waypoints.length) {
+            this.selectedWaypointIndex = waypoints.length - 1;
+        }
 
         let html = `
             <div class="fleet-section">
@@ -308,19 +347,21 @@ const FleetPanel = {
             html += '<ol class="waypoint-list">';
             for (let i = 0; i < waypoints.length; i++) {
                 const wp = waypoints[i];
-                const task = (wp.task_type || 'NoTask').replace('TaskObj', '').replace('NoTask', 'None');
+                const task = this.taskDisplayName(wp);
                 const dest = wp.destination || `(${wp.position_x}, ${wp.position_y})`;
+                const selected = i === this.selectedWaypointIndex ? ' selected' : '';
 
                 html += `
-                    <li class="waypoint-item" data-index="${i}">
+                    <li class="waypoint-item${selected}" data-index="${i}">
                         <div class="waypoint-dest">${dest}</div>
                         <div class="waypoint-task">Task: ${task}</div>
-                        <div class="waypoint-warp">Warp ${wp.warp_factor || 5}</div>
+                        <div class="waypoint-warp">Warp ${wp.warp_factor || 0}</div>
                         <button class="btn-tiny btn-delete-wp" data-index="${i}">X</button>
                     </li>
                 `;
             }
             html += '</ol>';
+            html += this.renderLegDetails(fleet);
         }
 
         html += `
@@ -332,6 +373,120 @@ const FleetPanel = {
         `;
 
         return html;
+    },
+
+    /**
+     * Display name of a waypoint's task.
+     */
+    taskDisplayName(wp) {
+        const raw = (wp.task && wp.task.type) || wp.task_type || 'NoTask';
+        const norm = raw.replace('TaskObj', '').replace('Task', '');
+        switch (norm) {
+            case 'No': case '': return 'None';
+            case 'Cargo': return 'Transfer Cargo';
+            case 'LayMines': return 'Lay Mines';
+            case 'RemoteMine': return 'Remote Mining';
+            case 'SplitMerge': return 'Split Merge';
+            default: return norm;  // Colonise, Invade, Scrap
+        }
+    },
+
+    /**
+     * Leg distance/time/fuel for one leg (FleetDetail.cs:391-412):
+     * time = dist / warp^2, fuel = FuelConsumption(warp) * time. The
+     * leg origin is the previous waypoint - or the fleet position for
+     * leg 0 (web semantics: the list holds destinations, unlike the
+     * C# list whose waypoint 0 is the fleet's current position).
+     */
+    legStats(fleet, index) {
+        const waypoints = fleet.waypoints || [];
+        const wp = waypoints[index];
+        const warp = wp ? (wp.warp_factor || 0) : 0;
+        if (!wp || warp <= 0) return { dist: 0, time: 0, fuel: 0 };
+
+        const ox = index > 0 ? waypoints[index - 1].position_x : fleet.position_x;
+        const oy = index > 0 ? waypoints[index - 1].position_y : fleet.position_y;
+        const dist = Math.hypot(wp.position_x - ox, wp.position_y - oy);
+        const time = dist / (warp * warp);
+        const perYear = (fleet.fuel_consumption_by_warp || [])[warp] || 0;
+        return { dist: dist, time: time, fuel: perYear * time };
+    },
+
+    /**
+     * Route fuel total over every leg with warp > 0
+     * (FleetDetail.cs:414-432).
+     */
+    routeFuel(fleet) {
+        const waypoints = fleet.waypoints || [];
+        let total = 0;
+        for (let i = 0; i < waypoints.length; i++) {
+            total += this.legStats(fleet, i).fuel;
+        }
+        return total;
+    },
+
+    /**
+     * Render the selected leg's editor: warp slider (TrackBar default
+     * bounds 0-10, FleetDetail.Designer.cs:141-149), task selector,
+     * and the leg/route readouts (FleetDetail.cs:376-439).
+     */
+    renderLegDetails(fleet) {
+        const waypoints = fleet.waypoints || [];
+        const idx = this.selectedWaypointIndex;
+        if (idx < 0 || idx >= waypoints.length) return '';
+
+        const wp = waypoints[idx];
+        const warp = wp.warp_factor || 0;
+        const stats = this.legStats(fleet, idx);
+        const route = this.routeFuel(fleet);
+        // Route fuel turns red when it exceeds the fuel aboard
+        // (FleetDetail.cs:434-439)
+        const routeStyle = route > (fleet.fuel_available || 0)
+            ? ' style="color: #ff4444"' : '';
+
+        const current = this.taskDisplayName(wp);
+        const tasks = ['None', 'Colonise', 'Invade', 'Scrap',
+                       'Transfer Cargo', 'Lay Mines'];
+        // Remote mining only for fleets carrying mining robots
+        if ((fleet.mining_rate || 0) > 0) tasks.push('Remote Mining');
+        // Keep a non-editable task (e.g. Split Merge) visible
+        if (!tasks.includes(current)) tasks.push(current);
+        const taskOptions = tasks.map(t =>
+            `<option value="${t}" ${t === current ? 'selected' : ''}>${t}</option>`
+        ).join('');
+
+        return `
+            <div class="waypoint-leg-details">
+                <div class="stat-row">
+                    <span>Warp <span id="wp-warp-value">${warp}</span></span>
+                    <input type="range" id="wp-warp-slider" min="0" max="10"
+                           value="${warp}">
+                </div>
+                <div class="stat-row">
+                    <span>Task:</span>
+                    <select class="form-select" id="wp-task-select">
+                        ${taskOptions}
+                    </select>
+                </div>
+                <div class="stat-row">
+                    <span>Leg distance:</span>
+                    <span class="stat-value">${stats.dist.toFixed(1)} ly</span>
+                </div>
+                <div class="stat-row">
+                    <span>Leg time:</span>
+                    <span class="stat-value">${stats.time.toFixed(1)} years</span>
+                </div>
+                <div class="stat-row">
+                    <span>Leg fuel:</span>
+                    <span class="stat-value">${stats.fuel.toFixed(1)} mg</span>
+                </div>
+                <div class="stat-row">
+                    <span>Route fuel:</span>
+                    <span class="stat-value"${routeStyle}>${route.toFixed(1)} mg</span>
+                </div>
+                <button class="btn-small" id="btn-insert-waypoint">Insert Before</button>
+            </div>
+        `;
     },
 
     /**
@@ -352,6 +507,12 @@ const FleetPanel = {
                     </select>
                 </div>` : '';
 
+        // Gift is enabled only with a Mystery Trader at the fleet's
+        // position (co-location, merge tolerance)
+        const traderHere = (GameState.traders || []).some(t =>
+            Math.hypot(t.x - fleet.position_x,
+                       t.y - fleet.position_y) < 1.0);
+
         return `
             <div class="fleet-section">
                 <h3>Actions</h3>
@@ -359,6 +520,7 @@ const FleetPanel = {
                 <div class="action-buttons">
                     <button class="btn-small" id="btn-transfer-cargo">Cargo</button>
                     <button class="btn-small" id="btn-transfer-fleet">Xfer Fleet</button>
+                    <button class="btn-small" id="btn-gift-trader" ${traderHere ? '' : 'disabled'}>Gift</button>
                     <button class="btn-small" id="btn-rename-fleet">Rename</button>
                     <button class="btn-small" id="btn-split-fleet">Split</button>
                     <button class="btn-small" id="btn-merge-fleet">Merge</button>
@@ -384,7 +546,11 @@ const FleetPanel = {
             clearBtn.addEventListener('click', () => this.clearWaypoints());
         }
 
-        // Delete individual waypoints
+        // Delete individual waypoints. Any index is deletable: the web
+        // waypoint list holds destinations, so deleting index 0 cancels
+        // the current leg - the C# "waypoint 0 undeletable" rule
+        // (FleetDetail.cs:204/237) guards its current-position entry
+        // and does not apply here.
         const deleteButtons = this.container.querySelectorAll('.btn-delete-wp');
         deleteButtons.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -392,6 +558,46 @@ const FleetPanel = {
                 this.deleteWaypoint(index);
             });
         });
+
+        // Select a waypoint leg (WaypointSelection, FleetDetail.cs:154-163)
+        this.container.querySelectorAll('.waypoint-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.classList.contains('btn-delete-wp')) return;
+                this.selectedWaypointIndex = parseInt(item.dataset.index);
+                this.render();
+            });
+        });
+
+        // Warp slider: live label on input, submit on release
+        // (C# submits per TrackBar Scroll tick and coalesces commands,
+        // FleetDetail.cs:98-146; the web submits once on 'change'
+        // because commands apply server-side immediately)
+        const warpSlider = document.getElementById('wp-warp-slider');
+        if (warpSlider) {
+            warpSlider.addEventListener('input', () => {
+                const label = document.getElementById('wp-warp-value');
+                if (label) label.textContent = warpSlider.value;
+            });
+            warpSlider.addEventListener('change', () => {
+                this.editWaypoint(this.selectedWaypointIndex,
+                                  { warp_factor: parseInt(warpSlider.value) });
+            });
+        }
+
+        // Task selector (WaypointTaskChanged, FleetDetail.cs:266-312)
+        const taskSelect = document.getElementById('wp-task-select');
+        if (taskSelect) {
+            taskSelect.addEventListener('change', () =>
+                this.onWaypointTaskChanged(taskSelect.value));
+        }
+
+        // Insert a leg before the selected one (web extension: the C#
+        // client only appends via StarMap Shift+click, StarMap.cs:787-852)
+        const insertBtn = document.getElementById('btn-insert-waypoint');
+        if (insertBtn) {
+            insertBtn.addEventListener('click', () =>
+                this.showAddWaypointDialog(this.selectedWaypointIndex));
+        }
 
         // Fleet actions
         const renameBtn = document.getElementById('btn-rename-fleet');
@@ -407,6 +613,11 @@ const FleetPanel = {
         const fleetXferBtn = document.getElementById('btn-transfer-fleet');
         if (fleetXferBtn) {
             fleetXferBtn.addEventListener('click', () => this.showFleetTransferDialog());
+        }
+
+        const giftBtn = document.getElementById('btn-gift-trader');
+        if (giftBtn) {
+            giftBtn.addEventListener('click', () => this.showGiftDialog());
         }
 
         const scrapBtn = document.getElementById('btn-scrap-fleet');
@@ -533,9 +744,101 @@ const FleetPanel = {
     },
 
     /**
-     * Show add waypoint dialog - pick a destination star, warp, and task.
+     * Submit an Edit command for one leg, copying the untouched
+     * fields from the current leg (WaypointSpeedChanged builds a new
+     * Waypoint copying Destination/Position/Task, FleetDetail.cs:106-114;
+     * the task round-trips intact per FleetDetail.cs:110).
      */
-    async showAddWaypointDialog() {
+    async editWaypoint(index, changes) {
+        const fleet = this.currentFleet;
+        if (!fleet || !GameState.game) return;
+        const wp = (fleet.waypoints || [])[index];
+        if (!wp) return;
+
+        try {
+            await GameState.submitCommand('waypoint', {
+                mode: 'Edit',
+                fleet_key: fleet.key,
+                index: index,
+                waypoint: {
+                    position_x: wp.position_x,
+                    position_y: wp.position_y,
+                    warp_factor: wp.warp_factor,
+                    destination: wp.destination,
+                    task: wp.task || { type: 'NoTask' },
+                    ...changes
+                }
+            });
+
+            await GameState.refreshState();
+            this.refresh();
+            if (window.GalaxyMap) GalaxyMap.render();
+        } catch (error) {
+            ApiClient.showStatus('Failed to edit waypoint: ' + error.message, 'error');
+            this.refresh();
+        }
+    },
+
+    /**
+     * Replace the selected leg's task with a fresh default task of the
+     * chosen type (WaypointTaskChanged semantics, FleetDetail.cs:266-312).
+     */
+    async onWaypointTaskChanged(taskName) {
+        const fleet = this.currentFleet;
+        if (!fleet) return;
+        const wp = (fleet.waypoints || [])[this.selectedWaypointIndex];
+        if (!wp) return;
+
+        let taskPayload;
+        if (taskName === 'Transfer Cargo') {
+            taskPayload = await this.promptCargoTask(wp.destination);
+            if (taskPayload === null) {
+                this.refresh();  // cancelled - restore the selector
+                return;
+            }
+        } else {
+            taskPayload = { type: this.waypointTaskTypes[taskName] || 'NoTask' };
+        }
+
+        this.editWaypoint(this.selectedWaypointIndex, { task: taskPayload });
+    },
+
+    /**
+     * Prompt for a cargo task's mode and per-commodity amounts
+     * (CargoTaskObj.from_dict schema). Returns null when cancelled.
+     */
+    async promptCargoTask(targetName) {
+        const modeIdx = await Dialogs.selectOption(
+            'Cargo Task', 'Cargo operation:',
+            ['Load', 'Unload', 'Set Amount To']);
+        if (modeIdx === null) return null;
+
+        const amount = {};
+        for (const [label, key] of [
+                ['Ironium', 'ironium'],
+                ['Boranium', 'boranium'],
+                ['Germanium', 'germanium'],
+                ['Colonists', 'colonists_in_kilotons']]) {
+            const value = await Dialogs.promptText(
+                'Cargo Amount', `${label} (kT):`, '0');
+            if (value === null) return null;
+            amount[key] = Math.max(0, parseInt(value) || 0);
+        }
+
+        return {
+            type: 'Cargo',
+            mode: ['LOAD', 'UNLOAD', 'SET'][modeIdx],
+            amount: amount,
+            target_name: targetName
+        };
+    },
+
+    /**
+     * Show add waypoint dialog - pick a destination star, warp, and
+     * task. With insertIndex the new leg is inserted BEFORE that
+     * index instead of appended.
+     */
+    async showAddWaypointDialog(insertIndex = null) {
         const fleet = this.currentFleet;
         if (!fleet) return;
 
@@ -560,7 +863,16 @@ const FleetPanel = {
             }
         }
 
-        const targets = stars.concat(wormholeTargets);
+        // Mystery traders: the submitted waypoint carries the trader
+        // name as destination, which the turn generator's retarget
+        // pass re-resolves every turn - a moving intercept course
+        const traderTargets = (GameState.traders || []).map(t => ({
+            star: { name: t.name, position_x: t.x, position_y: t.y },
+            dist: Math.hypot(t.x - fleet.position_x,
+                             t.y - fleet.position_y)
+        }));
+
+        const targets = stars.concat(wormholeTargets, traderTargets);
         const choiceIdx = await Dialogs.selectOption(
             'Add Waypoint',
             'Destination:',
@@ -589,57 +901,44 @@ const FleetPanel = {
         // (CargoTaskObj.from_dict schema)
         let taskPayload = null;
         if (tasks[taskIdx] === 'Transfer Cargo') {
-            const modeIdx = await Dialogs.selectOption(
-                'Cargo Task', 'Cargo operation:',
-                ['Load', 'Unload', 'Set Amount To']);
-            if (modeIdx === null) return;
-
-            const amount = {};
-            for (const [label, key] of [
-                    ['Ironium', 'ironium'],
-                    ['Boranium', 'boranium'],
-                    ['Germanium', 'germanium'],
-                    ['Colonists', 'colonists_in_kilotons']]) {
-                const value = await Dialogs.promptText(
-                    'Cargo Amount', `${label} (kT):`, '0');
-                if (value === null) return;
-                amount[key] = Math.max(0, parseInt(value) || 0);
-            }
-
-            taskPayload = {
-                type: 'Cargo',
-                mode: ['LOAD', 'UNLOAD', 'SET'][modeIdx],
-                amount: amount,
-                target_name: target.name
-            };
+            taskPayload = await this.promptCargoTask(target.name);
+            if (taskPayload === null) return;
         }
 
-        this.addWaypoint(target, warp, tasks[taskIdx], taskPayload);
+        this.addWaypoint(target, warp, tasks[taskIdx], taskPayload, insertIndex);
     },
 
     /**
-     * Add a waypoint (canonical waypoint command).
+     * Add a waypoint (canonical waypoint command). With insertIndex
+     * the waypoint is inserted at that index (backend INSERT mode, a
+     * web extension - C# only appends, StarMap.cs:787-852).
      */
-    async addWaypoint(targetStar, warpFactor, task, taskPayload = null) {
+    async addWaypoint(targetStar, warpFactor, task, taskPayload = null,
+                      insertIndex = null) {
         if (!this.currentFleet || !GameState.game) return;
 
         try {
             await GameState.submitCommand('waypoint', {
-                mode: 'Add',
+                mode: insertIndex === null ? 'Add' : 'Insert',
                 fleet_key: this.currentFleet.key,
-                index: (this.currentFleet.waypoints || []).length,
+                index: insertIndex === null
+                    ? (this.currentFleet.waypoints || []).length
+                    : insertIndex,
                 waypoint: {
                     position_x: targetStar.position_x,
                     position_y: targetStar.position_y,
                     warp_factor: warpFactor,
                     destination: targetStar.name,
                     task: taskPayload ||
-                          { type: task === 'None' ? 'NoTask'
-                                 : task === 'Lay Mines' ? 'LayMines'
-                                 : task === 'Remote Mining' ? 'RemoteMine'
-                                 : task }
+                          { type: this.waypointTaskTypes[task] || 'NoTask' }
                 }
             });
+
+            // Re-select the list end after an append (UpdateWaypointList,
+            // FleetDetail.cs:823-828); keep the inserted leg selected
+            // on an insert
+            this.selectedWaypointIndex = insertIndex === null
+                ? -1 : insertIndex;
 
             await GameState.refreshState();
             this.refresh();
@@ -863,6 +1162,86 @@ const FleetPanel = {
                 ApiClient.showStatus('Cargo transferred', 'info');
             } catch (error) {
                 ApiClient.showStatus('Transfer failed: ' + error.message, 'error');
+            }
+        });
+    },
+
+    /**
+     * One-way gift of minerals/colonists to a co-located Mystery
+     * Trader. The trader always keeps the cargo; a 1000+ kT running
+     * total earns a reward on the next turn.
+     */
+    async showGiftDialog() {
+        const fleet = this.currentFleet;
+        if (!fleet || !GameState.game) return;
+
+        const trader = (GameState.traders || []).find(t =>
+            Math.hypot(t.x - fleet.position_x,
+                       t.y - fleet.position_y) < 1.0);
+        if (!trader) {
+            ApiClient.showStatus('No Mystery Trader at this position', 'info');
+            return;
+        }
+
+        const cargo = fleet.cargo || {};
+        const html = `
+            <div class="dialog-header">
+                <h2>Gift to ${trader.name}</h2>
+                <button class="btn-close" id="btn-gift-cancel-x">X</button>
+            </div>
+            <div class="dialog-body">
+                <p class="info-text">The trader keeps whatever you give.
+                   A running total of ${trader.gift_threshold} kT or more
+                   earns a reward next year
+                   (gifted so far: ${trader.gift_total} kT).</p>
+                <div class="form-group">
+                    <label>Ironium (aboard: ${cargo.ironium || 0})</label>
+                    <input type="number" id="gift-ironium" class="form-input" value="0" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Boranium (aboard: ${cargo.boranium || 0})</label>
+                    <input type="number" id="gift-boranium" class="form-input" value="0" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Germanium (aboard: ${cargo.germanium || 0})</label>
+                    <input type="number" id="gift-germanium" class="form-input" value="0" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Colonists (aboard: ${cargo.colonists || 0},
+                           in units of 100)</label>
+                    <input type="number" id="gift-colonists" class="form-input" value="0" min="0" step="100">
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn-primary" id="btn-gift-confirm">Gift</button>
+                <button class="btn-secondary" id="btn-gift-cancel">Cancel</button>
+            </div>
+        `;
+
+        Dialogs.show(html);
+
+        const close = () => Dialogs.close();
+        document.getElementById('btn-gift-cancel')?.addEventListener('click', close);
+        document.getElementById('btn-gift-cancel-x')?.addEventListener('click', close);
+        document.getElementById('btn-gift-confirm')?.addEventListener('click', async () => {
+            const delta = {
+                ironium: parseInt(document.getElementById('gift-ironium')?.value) || 0,
+                boranium: parseInt(document.getElementById('gift-boranium')?.value) || 0,
+                germanium: parseInt(document.getElementById('gift-germanium')?.value) || 0,
+                colonists: parseInt(document.getElementById('gift-colonists')?.value) || 0
+            };
+            Dialogs.close();
+            try {
+                const result = await ApiClient.giftToTrader(
+                    GameState.game.id, fleet.key, GameState.empireId,
+                    trader.key, delta);
+                await GameState.refreshState();
+                this.refresh();
+                ApiClient.showStatus(
+                    `Gifted - ${result.gift_total} of ` +
+                    `${result.threshold} kT toward a reward`, 'info');
+            } catch (error) {
+                ApiClient.showStatus('Gift failed: ' + error.message, 'error');
             }
         });
     },

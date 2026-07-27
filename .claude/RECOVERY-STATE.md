@@ -1,6 +1,44 @@
 # Recovery State
 
-## BRACE 2026-07-13 ~23:37 CEST - usage limit hit mid-wave-4 (limit reset 23:00, resuming)
+## BRACE 2026-07-27 ~20:20 CEST - user-ordered brace mid-wave-5
+
+**HORIZON: SESSION-ONLY (assumed - user gave none; matches prior usage-limit braces).** Cold-restart commands below cover a full server restart too.
+
+### State at brace (all persisted)
+
+- Wave 5 workflow `wf_c3d773f2-2d3` **explicitly PAUSED via TaskStop (task w328ga0nb) at 2026-07-27 ~20:20 CEST** - **8/10 agent results cached** in `journal.jsonl` (3 spec scouts + 5 of 6 implementers; the in-flight implementer was killed mid-run, its partial file edits may sit in the working tree - agents re-read files before editing, re-run is safe). Remaining live work on resume: last implementer(s) + verify:wave5
+- **RESUME COMMAND** (first action of next session):
+  `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/wave5-trader-parity-ui.js", resumeFromRunId: "wf_c3d773f2-2d3"})`
+- Per-agent results: `.../subagents/workflows/wf_c3d773f2-2d3/journal.jsonl`
+- Dev server: gunicorn :9800 DETACHED via `./start.sh` (health 200 at `/health`, NOT /api/health) - survives SESSION-ONLY; after server restart relaunch with `./start.sh`
+- Suite baseline 808 green at wave-4 close; wave-5 partials in working tree not yet verified
+- Task list: #24 wave 5 in progress (this workflow), #25 correspondence play, #26 wave 6 gate, #27 commit remainder (NEEDS EXPLICIT USER APPROVAL - post-brace-checkpoint commits still gated)
+- KNOWN FIX QUEUED: wave-5 agents stamp log date 2026-07-14 (script kept byte-identical for cache) - after wave completes, correct wave-5 `log:` dates to the actual completion date in acc-crit/mechanics/checklist docs
+- Stop-hook goal SUSPENDED by brace: all features implemented, game plays end-to-end, all checklist features gameplay-checked, seeded reproducible e2e testing every feature, all passing
+
+### FIRST ACTION next session (/brace-resume)
+
+1. Read this section + TaskList; verify dev server (`curl -s http://localhost:9800/health`), `./start.sh` if down
+2. **RESUME the paused wave-5 workflow** via the command above (already TaskStopped - safe to resume immediately; 8 cached agents replay, remainder runs live)
+3. On completion: review verify, screenshot pass to `walkthrough/final/wave5/`, fix stale log dates, journal entry via /journal:update, close #24, proceed to #25 correspondence play then #26 wave-6 gate
+
+## PREVIOUS 2026-07-27 ~18:40 CEST - Wave 5 RESUMED after credits outage
+
+- 2026-07-14 outage: 7 of 9 wave-5 agents died on usage credits; 2 spec scouts (client-parity, mystery-trader) cached in journal.jsonl
+- 2026-07-27: dev server relaunched via ./start.sh (health 200), workflow RESUMED via resumeFromRunId wf_c3d773f2-2d3 (task w328ga0nb) - cached scouts replay, 7 agents run live
+- Task list recreated: #24 wave 5 (in progress), #25 correspondence play, #26 wave 6 gate, #27 commit (needs user approval)
+- NOTE: wave-5 agents log with CTX date 2026-07-14 (script kept byte-identical to preserve cache) - correct log dates to 2026-07-27 in tracking docs after wave completes
+
+## PREVIOUS 2026-07-14 ~01:30 CEST - Wave 4 CLOSED (808 green), Wave 5 IN FLIGHT
+
+- Wave 4 verified: 808 passed, integration e2e + wave4-regression PASS, evidence walkthrough/final/wave4/ (4 frames), task #19 done, journal entries 36 (agent-written score/victory) + 37 (wave-4 close)
+- Checkpoint 6ec3157 pushed; post-checkpoint wave-4 remainder uncommitted (score-victory + storm-protection + evidence) - commit needs user approval
+- **Wave 5 RUNNING**: `wf_c3d773f2-2d3` (10 agents: 3 scouts, 6 implementers - client-parity trio, mineral packets FLESH decision, stargate rework + emission glare, mystery trader, panel polish, race icons - verifier). If killed, RESUME:
+  `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/wave5-trader-parity-ui.js", resumeFromRunId: "wf_c3d773f2-2d3"})`
+- On wave-5 completion: review verify, screenshots to walkthrough/final/wave5/, close #20, then decide correspondence-play slot (#23, own mini-wave) before the wave-6 gate (#21)
+- Dev server 9800 detached (health at /health); suite baseline 808
+
+## BRACE 2026-07-13 ~23:37 CEST - usage limit hit mid-wave-4 (RESOLVED - wave 4 recovered and completed)
 
 **HORIZON: SESSION-ONLY.** Wave 4 workflow `wf_761e6d66-939` COMPLETED PARTIALLY - its last 5 agents died on the session limit (resets 23:00 Europe/Warsaw). Not paused - the workflow task finished; recovery = RESUME by run id.
 

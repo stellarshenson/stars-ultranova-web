@@ -45,6 +45,21 @@ class TestMessage:
         assert m.message_type == "Error"
         assert m.fleet_key == 123
 
+    def test_star_name_roundtrip(self):
+        """star_name (web port of the C# Message.Event goto linkage,
+        Message.cs:38) survives to_dict/from_dict."""
+        m = Message(audience=1, text="Alpha has built 2 mines",
+                    message_type="Star", star_name="Alpha")
+        data = m.to_dict()
+        assert data["star_name"] == "Alpha"
+        m2 = Message.from_dict(data)
+        assert m2.star_name == "Alpha"
+
+    def test_star_name_default_for_old_payloads(self):
+        """Payloads persisted before star_name existed still load."""
+        m = Message.from_dict({"audience": 1, "text": "old", "type": "Star"})
+        assert m.star_name == ""
+
 
 class TestWaypointCommand:
     """Tests for WaypointCommand."""

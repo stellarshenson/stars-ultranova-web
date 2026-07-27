@@ -400,6 +400,12 @@ class ShipDesign(Item):
         return self._summary_properties.get("Gate")
 
     @property
+    def mass_driver(self) -> int:
+        """Aggregated mass driver warp rating (0 = no driver)."""
+        self._ensure_updated()
+        return self._get_int_property("Mass Driver")
+
+    @property
     def has_weapons(self) -> bool:
         """Check if design has weapons."""
         self._ensure_updated()
@@ -431,6 +437,35 @@ class ShipDesign(Item):
         if prop is None:
             return 0
         return prop.get("Count", 0)
+
+    @property
+    def storm_shield(self) -> float:
+        """Best storm-shield protection fraction fitted (0.0 to 1.0).
+
+        Web-only extension (galactic storm protection, user directive -
+        no C# equivalent). The best tier aboard wins; storm shields
+        never sum, so a component is never double-counted.
+        """
+        self._ensure_updated()
+        prop = self._summary_properties.get("Storm Shield")
+        if prop is None:
+            return 0.0
+        return float(prop.get("Value", 0.0))
+
+    @property
+    def has_armor_components(self) -> bool:
+        """Whether any armor COMPONENT is mounted (web-only extension,
+        galactic storm protection). The hull's inherent armor strength
+        does not count - only fitted armor plates do."""
+        hull = self.hull
+        if hull is None:
+            return False
+        for module in hull.modules:
+            comp = module.allocated_component
+            if (comp is not None and module.component_count > 0
+                    and comp.has_property("Armor")):
+                return True
+        return False
 
     @property
     def is_bomber(self) -> bool:
@@ -737,6 +772,40 @@ class ShipDesign(Item):
                 self._summary_properties["Cloak"]["Units"] += units
             else:
                 self._summary_properties["Cloak"] = {"Units": units}
+
+        elif prop_type == "Storm Shield":
+            # Web-only extension (galactic storm protection, user
+            # directive - no C# equivalent). The BEST tier aboard wins:
+            # storm shields never sum, so no stack of low-tier
+            # deflectors reaches immunity and no component is ever
+            # double-counted.
+            value = float(values.get("Value", 0.0))
+            if "Storm Shield" in self._summary_properties:
+                self._summary_properties["Storm Shield"]["Value"] = max(
+                    self._summary_properties["Storm Shield"]["Value"], value)
+            else:
+                self._summary_properties["Storm Shield"] = {"Value": value}
+
+        elif prop_type == "Mass Driver":
+            # Driver warp rating (MassDriver.cs). C# never aggregates
+            # this: SumProperty case "Driver" (ShipDesign.cs:624) is
+            # dead because Component.cs:362 stores the raw xml key
+            # "Mass Driver" - the same dead-key pattern as the "Mining
+            # Robot" case above. We aggregate under the stored key.
+            # Per-slot Scale (MassDriver.cs:132-139): the comment says
+            # "+1 warp speed if more than one" but the code adds +1
+            # for scalar >= 1 (a bug like Computer.cs:117); we port
+            # the INTENDED math (+1 only for a stack of 2+).
+            # Cross-slot Add (MassDriver.cs:113-123): equal ratings
+            # give value + 1, else the better of the two wins.
+            value = values.get("Value", 0)
+            scaled = value + 1 if count >= 2 else value
+            if "Mass Driver" in self._summary_properties:
+                old = self._summary_properties["Mass Driver"]["Value"]
+                self._summary_properties["Mass Driver"]["Value"] = \
+                    old + 1 if old == scaled else max(old, scaled)
+            else:
+                self._summary_properties["Mass Driver"] = {"Value": scaled}
 
         elif prop_type == "Tachyon Detector":
             # Aggregate the device COUNT, not the XML value (5 =

@@ -8969,4 +8969,255 @@ This scanner is capable of determining planetary statistics up to 200 ly away.</
       <Type>Hull</Type>
     </Property>
   </Component>
+  <!-- Storm Shields (web-only extension, user directive - not in the
+       original Stars! catalog). A three-tier researchable line that
+       protects fleets from galactic storms: the Storm Shield property
+       Value is the protection fraction added to the fleet's storm
+       protection (backend/core/globals.py STORM_* constants; the
+       top tier alone grants total immunity). Mountable in shield
+       slots; they carry no conventional Shield rating. -->
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Storm Deflector</Name>
+      <Type>Shield</Type>
+    </Item>
+    <Mass>3</Mass>
+    <Cost>
+      <Ironium>4</Ironium>
+      <Germanium>6</Germanium>
+      <Energy>10</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>6</Energy>
+      <Propulsion>6</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>0</Construction>
+    </Tech>
+    <Description>Deflects galactic storm plasma around the hull. Grants 40% storm protection.</Description>
+    <Race_Restrictions />
+    <Image>Shield/Cow-hide_Shield.png</Image>
+    <Property>
+      <Value>0.40</Value>
+      <Type>Storm Shield</Type>
+    </Property>
+  </Component>
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Storm Barrier</Name>
+      <Type>Shield</Type>
+    </Item>
+    <Mass>4</Mass>
+    <Cost>
+      <Ironium>8</Ironium>
+      <Germanium>10</Germanium>
+      <Energy>22</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>12</Energy>
+      <Propulsion>12</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>0</Construction>
+    </Tech>
+    <Description>Projects a coherent barrier against storm discharges. Grants 70% storm protection.</Description>
+    <Race_Restrictions />
+    <Image>Shield/Mole-skin_Shield.png</Image>
+    <Property>
+      <Value>0.70</Value>
+      <Type>Storm Shield</Type>
+    </Property>
+  </Component>
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Storm Bulwark</Name>
+      <Type>Shield</Type>
+    </Item>
+    <Mass>6</Mass>
+    <Cost>
+      <Ironium>15</Ironium>
+      <Germanium>18</Germanium>
+      <Energy>40</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>18</Energy>
+      <Propulsion>18</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>0</Construction>
+    </Tech>
+    <Description>Wraps the ship in a full storm-proof envelope. Grants complete storm immunity.</Description>
+    <Race_Restrictions />
+    <Image>Shield/Bear_Neutrino_Shield.png</Image>
+    <Property>
+      <Value>1.00</Value>
+      <Type>Storm Shield</Type>
+    </Property>
+  </Component>
+  <!-- Mystery Trader items (canonical Stars! hidden technology - the
+       C# reference has only a TODO, GameInitialiser.cs:180 "Mystery
+       Trader Items - probably need to implement the idea of 'hidden'
+       technology"). Never researchable: the "Mystery Trader Item"
+       property gates them behind a per-empire trader grant
+       (empire.mt_components, backend/services/design_builder.py);
+       Tech is all zero so research never unlocks them. Granted by the
+       trader reward table (backend/server/turn_generator.py). -->
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Multi-Function Pod</Name>
+      <Type>Electrical</Type>
+    </Item>
+    <Mass>2</Mass>
+    <Cost>
+      <Ironium>2</Ironium>
+      <Germanium>4</Germanium>
+      <Energy>10</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>0</Construction>
+    </Tech>
+    <Description>A Mystery Trader artifact: cloaking, jamming and thrust in one impossibly small pod. Cannot be researched - only the trader parts with it.</Description>
+    <Race_Restrictions />
+    <Image>Electrical/Multi_Function_Pod.png</Image>
+    <Property>
+      <Value>30</Value>
+      <Type>Cloak</Type>
+    </Property>
+    <Property>
+      <Value>0.25</Value>
+      <Type>Battle Movement</Type>
+    </Property>
+    <Property>
+      <Value>10</Value>
+      <Type>Jammer</Type>
+    </Property>
+    <Property>
+      <Value>1</Value>
+      <Type>Mystery Trader Item</Type>
+    </Property>
+  </Component>
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Anti-Matter Torpedo</Name>
+      <Type>Torpedoes</Type>
+    </Item>
+    <Mass>8</Mass>
+    <Cost>
+      <Ironium>3</Ironium>
+      <Boranium>8</Boranium>
+      <Germanium>1</Germanium>
+      <Energy>50</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>0</Construction>
+    </Tech>
+    <Description>A Mystery Trader artifact: a long-range annihilation warhead of uncanny accuracy. Cannot be researched - only the trader parts with it.</Description>
+    <Race_Restrictions />
+    <Image>Torpedo/Anti_Matter_Torpedo.png</Image>
+    <Property>
+      <Initiative>0</Initiative>
+      <Power>60</Power>
+      <Accuracy>85</Accuracy>
+      <Range>6</Range>
+      <Group>torpedo</Group>
+      <Type>Weapon</Type>
+    </Property>
+    <Property>
+      <Value>1</Value>
+      <Type>Mystery Trader Item</Type>
+    </Property>
+  </Component>
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Mega Poly Shell</Name>
+      <Type>Shield</Type>
+    </Item>
+    <Mass>20</Mass>
+    <Cost>
+      <Ironium>14</Ironium>
+      <Boranium>5</Boranium>
+      <Germanium>5</Germanium>
+      <Energy>52</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>0</Construction>
+    </Tech>
+    <Description>A Mystery Trader artifact: shield, armor, cloak and scanner fused in one hybrid shell. Cannot be researched - only the trader parts with it.</Description>
+    <Race_Restrictions />
+    <Image>Shield/Mega_Poly_Shell.png</Image>
+    <Property>
+      <Value>100</Value>
+      <Type>Shield</Type>
+    </Property>
+    <Property>
+      <Value>400</Value>
+      <Type>Armor</Type>
+    </Property>
+    <Property>
+      <Value>20</Value>
+      <Type>Cloak</Type>
+    </Property>
+    <Property>
+      <NormalScan>80</NormalScan>
+      <PenetratingScan>40</PenetratingScan>
+      <Type>Scanner</Type>
+    </Property>
+    <Property>
+      <Value>1</Value>
+      <Type>Mystery Trader Item</Type>
+    </Property>
+  </Component>
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Genesis Device</Name>
+      <Type>Mechanical</Type>
+    </Item>
+    <Mass>10</Mass>
+    <Cost>
+      <Ironium>20</Ironium>
+      <Boranium>20</Boranium>
+      <Germanium>20</Germanium>
+      <Energy>5000</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>0</Construction>
+    </Tech>
+    <Description>A Mystery Trader artifact of legend, said to remake worlds from bare rock. Its power sleeps; no shipyard has ever woken it. Cannot be researched - only the trader parts with it.</Description>
+    <Race_Restrictions />
+    <Image>Mechanical/Genesis_Device.png</Image>
+    <Property>
+      <Value>1</Value>
+      <Type>Mystery Trader Item</Type>
+    </Property>
+  </Component>
 </ROOT>
