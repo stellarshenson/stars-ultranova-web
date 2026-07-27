@@ -1473,6 +1473,47 @@ footer a:hover {
     color: #7cb3ff;
 }
 
+/* Race emblem icons (race-icons.js) */
+.race-icon {
+    display: block;
+}
+
+img.race-icon-custom {
+    object-fit: contain;
+    border-radius: 50%;
+    background-color: #0d1420;
+}
+
+.custom-icon-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.custom-icon-preview {
+    cursor: default;
+}
+
+.race-select-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.race-select-row .form-select {
+    flex: 1;
+}
+
+.summary-race-icon .race-icon {
+    display: block;
+}
+
+.report-table td.race-cell .race-icon {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 0.4rem;
+}
+
 /* PRT Grid */
 .prt-grid {
     display: grid;
@@ -1835,7 +1876,7 @@ footer a:hover {
 #left-column #empire-summary .summary-section {
     min-width: 50px;
     flex-direction: row;
-    gap: 0.35rem;
+    gap: 0.5rem;
 }
 
 #left-column #empire-summary .summary-label {
@@ -2488,6 +2529,9 @@ button:active:not(:disabled) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PANEL POLISH - left-column spacing (user directive, 8/12px scale)
+   Spacing scale inside #left-column: 4px micro (stat rows, h3 underline),
+   8px item gaps (bars, list rows, label-value), 12px inner padding,
+   16px between sections and around panel edges
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Star/fleet/production panels render content directly into .panel, which
@@ -2501,4 +2545,36 @@ button:active:not(:disabled) {
 #left-column .star-section:last-child,
 #left-column .fleet-section:last-child {
     margin-bottom: 0;
+}
+
+/* Section separation on the scale (base rule is 1.25rem) */
+#left-column .star-section,
+#left-column .fleet-section {
+    margin-bottom: 1rem;
+}
+
+/* Bars and mineral rows: 8px vertical rhythm (base rules use 0.35rem) */
+#left-column .progress-bar {
+    margin: 0.5rem 0;
+}
+
+#left-column .resource-row,
+#left-column .concentration-row {
+    margin-bottom: 0.5rem;
+}
+
+/* List rows: 8px inner padding so text clears the row background edges */
+#left-column .ship-item,
+#left-column .waypoint-item,
+#left-column .queue-item {
+    padding: 0.5rem;
+}
+
+#left-column .waypoint-leg-details {
+    padding: 0.5rem 0.75rem;
+}
+
+/* Habitability badge under the planet: 4px/8px padding (base is 0.15rem) */
+#left-column .habitability-indicator {
+    padding: 0.25rem 0.5rem;
 }

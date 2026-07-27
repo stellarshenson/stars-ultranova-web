@@ -39,7 +39,7 @@ Verification checklist derived from [ORIGINAL_GAME_MECHANICS.md](ORIGINAL_GAME_M
 | Minefields: laying, decay, radius, safe speed, strike formula, damage | 9. Minefields | tests/unit/test_phenomena.py::TestMinefieldStrikes; tests/unit/test_turn_generator.py::TestFirstStep | covered |
 | Mine sweeping by beam weapons, detonating fields (SD) | 9. Minefields | tests/unit/test_mine_sweeping.py; tests/e2e/test_mine_sweeping.py | covered |
 | Stargates: safe mass/range, over-limit losses | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargates | covered |
-| Gate hull limit (small/medium only; large/capital refused outright) | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargateHullLimit; tests/e2e/test_stargate_rework.py | covered |
+| Gate hull limit (small/medium only; large/capital refused outright) | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargateHullLimit; tests/e2e/test_stargate_rework.py; tests/e2e/test_wave5_integration.py | covered |
 | Star-fuelled gate range (spectral factor O-M, "any" clamped to 800 ly) | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargateStarFuelledRange; tests/e2e/test_stargate_rework.py | covered |
 | No minerals through gates (colonists IT-only, fuel free) | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestStargateCargoRules; tests/e2e/test_stargate_rework.py | covered |
 | Wormholes: pairs, drift, scan discovery, transit | 10. Stargates and wormholes | tests/unit/test_wormholes_gates.py::TestWormholes | covered |
@@ -56,11 +56,13 @@ Verification checklist derived from [ORIGINAL_GAME_MECHANICS.md](ORIGINAL_GAME_M
 | Score: formula, history, score report | 14. Messages, score, victory | tests/unit/test_scores.py::TestScoreFormula; tests/e2e/test_score_victory.py::TestScoresInPlayerState; tests/e2e/test_wave4_integration.py | covered |
 | Victory: last-standing + 8 configurable targets | 14. Messages, score, victory | tests/unit/test_scores.py::TestVictoryCheck; tests/e2e/test_score_victory.py::TestVictoryDeclaration; tests/e2e/test_wave4_integration.py | covered |
 | Client parity: dialogs, reports, battle viewer, race designer | 15. Client features | - (browser verification, later wave) | pending |
-| Multi-fleet picker, waypoint leg editing | 15. Client features | tests/unit/test_api.py::TestClientParityState (task dict roundtrip, fuel_consumption_by_warp, Edit/Insert order); tests/e2e/test_client_parity.py::TestWaypointLegEditing, TestMultiFleetSharedPosition (map click cycling and leg editor UI browser-verified in wave 6) | covered |
+| Multi-fleet picker, waypoint leg editing | 15. Client features | tests/unit/test_api.py::TestClientParityState (task dict roundtrip, fuel_consumption_by_warp, Edit/Insert order); tests/e2e/test_client_parity.py::TestWaypointLegEditing, TestMultiFleetSharedPosition (map click cycling and leg editor UI browser-verified in wave 6); tests/e2e/test_wave5_integration.py | covered |
+| Left-column panel polish (consistent 4/8/12/16px spacing, no text flush against panel borders) | 15. Client features | tests/e2e/test_panel_polish.py (served stylesheet rules + seeded state; browser evidence wave 6) | covered |
+| Race icons: 16 SVG emblems, custom upload (128 kB PNG/JPG/SVG), icon persistence + 422 rejection | 15. Client features | tests/unit/test_race_icons.py; tests/e2e/test_race_icons.py (browser evidence wave 6) | covered |
 | AI: planet production, fleet scout/colonize/attack, planner | 16. AI and turn model | tests/unit/test_ai.py | covered |
-| Turn submission model (locking per empire, multiplayer story) | 16. AI and turn model | - | pending |
-| Mineral packets and mass drivers | 17. Absent in C# (canonical) | tests/unit/test_packets.py; tests/e2e/test_packets.py | covered |
-| Mystery trader | 17. Absent in C# (canonical) | tests/unit/test_traders.py, tests/e2e/test_mystery_trader.py | done |
+| Turn submission model (locking per empire, multiplayer story) | 16. AI and turn model | tests/e2e/test_correspondence.py::TestTurnLocking, TestSubmissionsStatus | covered |
+| Mineral packets and mass drivers | 17. Absent in C# (canonical) | tests/unit/test_packets.py; tests/e2e/test_packets.py; tests/e2e/test_wave5_integration.py | covered |
+| Mystery trader | 17. Absent in C# (canonical) | tests/unit/test_traders.py; tests/e2e/test_mystery_trader.py; tests/e2e/test_wave5_integration.py | covered |
 | Random events (comet strikes etc.) | 17. Absent in C# (canonical) | - | pending |
 | Pop transfers between own worlds via waypoints | 17. Absent in C# (canonical) | - | pending |
 | Dust nebulae slow ships and dampen scanners | 18. Web-only extensions | tests/unit/test_phenomena.py::TestNebulaDust | covered |
@@ -76,6 +78,12 @@ Verification checklist derived from [ORIGINAL_GAME_MECHANICS.md](ORIGINAL_GAME_M
 | In-game encyclopedia (Help menu; 6 phenomena entries with live numbers) | 18. Web-only extensions | - (frontend: node --check + served-asset check; browser evidence wave 6) | covered |
 | Phenomena map tooltips (storm/wormhole/minefield/dust) linking to encyclopedia | 18. Web-only extensions | - (frontend: node --check + served-asset check; browser evidence wave 6) | covered |
 | Zoom-out clamp (min zoom = best-fit / 1.2 in all zoom paths) | 18. Web-only extensions | - (frontend: node --check + served-asset check; browser evidence wave 6) | covered |
+| Correspondence play: per-empire turn package export (fog envelope) | 16. AI and turn model | tests/e2e/test_correspondence.py::TestTurnPackage | covered |
+| Correspondence play: orders file round-trip (record, export, import-replay, live-digest parity) | 16. AI and turn model | tests/e2e/test_correspondence.py::TestOrdersRoundTrip; tests/unit/test_correspondence_files.py::TestOrdersLog | covered |
+| Correspondence play: full-game export/import handoff | 16. AI and turn model | tests/e2e/test_correspondence.py::TestFullGameHandoff | covered |
+| Race password (MD5 hash per PasswordUtility.cs, X-Empire-Password gate) | 16. AI and turn model | tests/unit/test_correspondence_files.py::TestPasswordHash, TestRacePassword; tests/e2e/test_correspondence.py::TestRacePassword | covered |
+| Turn locking: submit-orders flags, all-humans-in gate, AI auto-submit, submissions status | 16. AI and turn model | tests/e2e/test_correspondence.py::TestTurnLocking, TestSubmissionsStatus | covered |
+| Stale orders file rejected with clear message, nothing corrupted | 16. AI and turn model | tests/e2e/test_correspondence.py::TestStaleOrders | covered |
 | Turn processing: year increment, step order, multi-empire isolation | 16. AI and turn model | tests/unit/test_turn_generator.py::TestTurnGenerator; tests/regression/test_integration.py | covered |
 | State persistence round-trip (empire/star/fleet serialization) | 16. AI and turn model | tests/regression/test_integration.py::TestStateSerializationIntegration | covered |
 | HTTP API surface (games, stars, fleets, empires, commands, health) | 16. AI and turn model | tests/unit/test_api.py | covered |

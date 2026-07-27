@@ -204,7 +204,8 @@ const Reports = {
                     <tbody>
                         ${sortedScores.map(s => `
                             <tr class="report-row">
-                                <td>${s.race_name || `Empire ${s.empire_id}`}</td>
+                                <td class="race-cell">${s.empire_id === GameState.empireId && window.RaceIcons
+                                    ? RaceIcons.renderRace(GameState.race, 18) : ''}${s.race_name || `Empire ${s.empire_id}`}</td>
                                 <td class="number">${s.rank}</td>
                                 <td class="number">${s.score}</td>
                                 <td class="number">${s.planets}</td>

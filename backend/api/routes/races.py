@@ -1,7 +1,7 @@
 """
 Race design API routes.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict
 
@@ -30,7 +30,11 @@ async def validate_race(race: dict) -> RaceValidateResponse:
     start (clamped 0-50, Race.cs:215-221), and the running raw point
     total after each calculator step (RaceAdvantagePointCalculator.cs).
     """
-    core_race = _race_from_wizard(race)
+    try:
+        core_race = _race_from_wizard(race)
+    except ValueError as e:
+        # Invalid custom icon upload (non-image or oversized data URI)
+        raise HTTPException(status_code=422, detail=str(e))
     breakdown: Dict[str, int] = {}
     points = calculate_advantage_points(core_race, breakdown)
     return RaceValidateResponse(

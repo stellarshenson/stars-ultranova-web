@@ -10,6 +10,7 @@ const GameState = {
     // Current game data
     game: null,
     empireId: 1,           // Single-player: human is always empire 1
+    empirePassword: null,  // Race password for this session (correspondence play)
     stars: [],             // Player-visible view of every star
     fleets: [],            // Own fleets, full detail
     foreignFleets: [],     // Scanned foreign fleet contacts
@@ -72,7 +73,25 @@ const GameState = {
      * Reload the player-scoped state snapshot.
      */
     async refreshState() {
-        const state = await ApiClient.getPlayerState(this.game.id, this.empireId);
+        let state;
+        try {
+            state = await ApiClient.getPlayerState(this.game.id, this.empireId);
+        } catch (error) {
+            // Password-protected empire (correspondence play): prompt
+            // once, keep the password for the session, retry
+            if (error.status === 401 && window.Dialogs && Dialogs.promptText) {
+                const password = await Dialogs.promptText(
+                    'Race Password',
+                    'This empire is password protected. Enter the race password:',
+                    ''
+                );
+                if (password === null) throw error;
+                this.empirePassword = password;
+                state = await ApiClient.getPlayerState(this.game.id, this.empireId);
+            } else {
+                throw error;
+            }
+        }
         this.game.turn = state.turn_year;
         this.stars = state.stars;
         this.fleets = state.fleets;
@@ -156,6 +175,15 @@ const GameState = {
             throw new Error(result.error || 'Command rejected');
         }
         return result;
+    },
+
+    /**
+     * Submit (lock) this empire's orders for the year
+     * (correspondence play; OrderWriter.cs:63-64 analog).
+     */
+    async submitOrders() {
+        if (!this.game) return null;
+        return await ApiClient.submitOrders(this.game.id, this.empireId);
     },
 
     /**

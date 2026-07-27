@@ -186,6 +186,13 @@ document.addEventListener('DOMContentLoaded', () => {
         updateEmpireSummary() {
             if (!GameState.game) return;
 
+            // Race emblem (uploaded custom icon wins over the standard set)
+            const iconEl = document.getElementById('summary-race-icon');
+            if (iconEl && window.RaceIcons) {
+                iconEl.innerHTML = RaceIcons.renderRace(GameState.race, 26);
+                iconEl.title = (GameState.race && GameState.race.name) || '';
+            }
+
             // Count player's planets and calculate totals
             const playerStars = GameState.stars.filter(s => s.intel === 'owned');
             const playerFleets = GameState.fleets;

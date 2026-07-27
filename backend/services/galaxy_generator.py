@@ -90,12 +90,13 @@ STAR_NAMES = [
     "Azha", "Acamar", "Zaurak", "Rana", "Cursa",
 ]
 
-# Default race templates (using string trait keys from traits.py)
+# Default race templates (using string trait keys from traits.py).
+# Icons index the client's 16 standard SVG emblems (race-icons.js).
 DEFAULT_RACES = [
-    {"name": "Humanoids", "prt": "JOAT", "icon": "humanoid"},
-    {"name": "Rabbitoids", "prt": "HE", "icon": "rabbitoid"},
-    {"name": "Insectoids", "prt": "WM", "icon": "insectoid"},
-    {"name": "Siliconoids", "prt": "AR", "icon": "siliconoid"},
+    {"name": "Humanoids", "prt": "JOAT", "icon": 0},
+    {"name": "Rabbitoids", "prt": "HE", "icon": 1},
+    {"name": "Insectoids", "prt": "WM", "icon": 2},
+    {"name": "Siliconoids", "prt": "AR", "icon": 3},
 ]
 
 
@@ -121,7 +122,8 @@ class GalaxyGenerator:
         player_count: int = 2,
         universe_size: str = "medium",
         player_race: Optional[Race] = None,
-        accelerated_start: bool = False
+        accelerated_start: bool = False,
+        human_players: int = 1
     ) -> ServerData:
         """
         Generate a new game.
@@ -133,6 +135,10 @@ class GalaxyGenerator:
             accelerated_start: Accelerated BBS play (GameSettings.cs:63);
                 its only effect is the higher starting population
                 (Race.cs GetStartingPopulation, lines 340-355).
+            human_players: How many empires (1..N, from empire 1 up)
+                are human-controlled (PlayerSettings.AiProgram "Human",
+                Common/DataStructures/PlayerSettings.cs). Correspondence
+                play needs 2+ human empires.
 
         Returns:
             Initialized ServerData.
@@ -177,7 +183,7 @@ class GalaxyGenerator:
             server_data.all_players.append(PlayerSettings(
                 player_number=i + 1,
                 race_name=race.name,
-                ai_program="Human" if i == 0 else "Default AI"
+                ai_program="Human" if i < human_players else "Default AI"
             ))
 
         # Create empires with home worlds
@@ -730,7 +736,7 @@ class GalaxyGenerator:
                 race.name = f"{template['name']} {i + 1}"
 
             race.plural_name = race.name
-            race.icon = template.get("icon", "humanoid")
+            race.icon = template.get("icon", 0)
             race.primary_trait = template.get("prt", "JOAT")
 
             # Default habitability ranges (centered, wide range)

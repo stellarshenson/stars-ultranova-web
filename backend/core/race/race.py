@@ -80,6 +80,22 @@ class Race:
     research_costs: Dict[str, int] = field(
         default_factory=lambda: {key: 100 for key in RESEARCH_KEYS})
 
+    # Race icon (RaceIcon.cs stores a bitmap + source name; the web
+    # keeps an index into the client's 16 standard SVG emblems plus an
+    # optional player-uploaded custom icon as a base64 data URI - user
+    # directive, wave 5)
+    icon: int = 0
+    custom_icon: str = ""
+
+    # Race password HASH (Race.cs:50 stores the hash string produced by
+    # PasswordUtility.CalculateHash - MD5 over ASCII bytes as an
+    # uppercase hex dash-joined string). Empty = no password. The C#
+    # CheckPassword/PasswordUtility gate has no live call sites in the
+    # reference (scaffolding only); the web port wires the canonical
+    # intent: the hash gates opening the empire's view and submitting
+    # its orders (backend/services/game_manager.py).
+    password: str = ""
+
     # Traits
     traits: Set[str] = field(default_factory=set)
 
@@ -220,6 +236,9 @@ class Race:
             "immune_gravity": self.immune_gravity,
             "immune_temperature": self.immune_temperature,
             "immune_radiation": self.immune_radiation,
+            "icon": self.icon,
+            "custom_icon": self.custom_icon,
+            "password": self.password,
             "research_costs": dict(self.research_costs),
             "traits": list(self.traits),
             "primary_trait": self.primary_trait,
@@ -250,6 +269,9 @@ class Race:
         race.immune_gravity = data.get("immune_gravity", False)
         race.immune_temperature = data.get("immune_temperature", False)
         race.immune_radiation = data.get("immune_radiation", False)
+        race.icon = data.get("icon", 0)
+        race.custom_icon = data.get("custom_icon", "")
+        race.password = data.get("password", "")
         race.research_costs = {
             key: int(data.get("research_costs", {}).get(key, 100))
             for key in RESEARCH_KEYS

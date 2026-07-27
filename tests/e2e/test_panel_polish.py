@@ -49,4 +49,48 @@ def test_left_column_panel_polish_served(harness):
     # Cache-buster bumped so clients pick up the polished stylesheet
     index = harness.client.get("/")
     assert index.status_code == 200
-    assert "static/css/main.css?v=8" in index.text
+    assert "static/css/main.css?v=10" in index.text
+
+
+def test_left_column_spacing_scale(harness):
+    """The polish block normalizes off-scale values (0.35rem items,
+    1.25rem sections, 0.15rem badge padding) to the 4/8/12/16px scale
+    within #left-column, leaving dialogs and reports untouched."""
+    harness.create_game(SEED, size="small", players=2)
+
+    css = harness.client.get("/static/css/main.css")
+    assert css.status_code == 200
+    text = css.text
+
+    def rule(selector):
+        assert selector in text, f"missing polish rule for {selector}"
+        # Return the declaration block that follows the selector's rule
+        # opening (selector may share a rule via a comma group)
+        idx = text.index(selector)
+        return text[idx:].split("{", 1)[1].split("}", 1)[0]
+
+    # Sections separated by 16px inside the left column
+    assert "margin-bottom: 1rem;" in rule("#left-column .star-section,")
+
+    # Bars and mineral rows on the 8px rhythm
+    assert "margin: 0.5rem 0;" in rule("#left-column .progress-bar")
+    assert "margin-bottom: 0.5rem;" in rule("#left-column .resource-row,")
+
+    # List rows: 8px inner padding
+    assert "padding: 0.5rem;" in rule("#left-column .ship-item,")
+    assert "padding: 0.5rem 0.75rem;" in rule(
+        "#left-column .waypoint-leg-details")
+
+    # Habitability badge: 4px/8px padding
+    assert "padding: 0.25rem 0.5rem;" in rule(
+        "#left-column .habitability-indicator")
+
+    # Empire summary label-value gap on the 8px step
+    section = text.split(
+        "#left-column #empire-summary .summary-section {", 1)[1].split("}")[0]
+    assert "gap: 0.5rem;" in section
+
+    # Base rules outside the left column keep their original values
+    # (polish is scoped, not a redesign)
+    base_item = text.split("\n.ship-item,", 1)[1].split("}")[0]
+    assert "padding: 0.35rem 0.5rem;" in base_item

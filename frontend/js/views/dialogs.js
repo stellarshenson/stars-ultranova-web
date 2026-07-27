@@ -176,12 +176,15 @@ const Dialogs = {
 
                 <div class="form-group">
                     <label for="player-race">Your Race</label>
-                    <select id="player-race" class="form-select">
-                        <option value="">Default (Humanoids)</option>
-                        ${this.getCustomRaces().map((r, i) =>
-                            `<option value="${i}">${r.name} (${r.prt || 'JOAT'})</option>`
-                        ).join('')}
-                    </select>
+                    <div class="race-select-row">
+                        <span id="player-race-icon">${RaceIcons.svg(0, 28)}</span>
+                        <select id="player-race" class="form-select">
+                            <option value="">Default (Humanoids)</option>
+                            ${this.getCustomRaces().map((r, i) =>
+                                `<option value="${i}">${r.name} (${r.prt || 'JOAT'})</option>`
+                            ).join('')}
+                        </select>
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -228,6 +231,17 @@ const Dialogs = {
             } catch (error) {
                 alert('Failed to create game: ' + error.message);
             }
+        });
+
+        // Race emblem preview follows the selected race
+        document.getElementById('player-race')?.addEventListener('change', (e) => {
+            const iconEl = document.getElementById('player-race-icon');
+            if (!iconEl) return;
+            const selected = e.target.value === '' ? null
+                : (this.getCustomRaces()[parseInt(e.target.value)] || null);
+            iconEl.innerHTML = selected
+                ? RaceIcons.render(selected.icon || 0, selected.customIcon, 28)
+                : RaceIcons.svg(0, 28);
         });
 
         // Bind race designer button: reopen New Game afterwards so the

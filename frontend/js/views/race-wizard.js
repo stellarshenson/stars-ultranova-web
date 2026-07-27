@@ -18,6 +18,7 @@ const RaceWizard = {
         name: 'Humanoids',
         pluralName: 'Humanoids',
         icon: 0,
+        customIcon: null,  // uploaded icon as a base64 data URI
         prt: 'JOAT',  // Primary Racial Trait
         lrts: [],     // Lesser Racial Traits
 
@@ -154,6 +155,7 @@ const RaceWizard = {
             name: 'Humanoids',
             pluralName: 'Humanoids',
             icon: 0,
+            customIcon: null,
             prt: 'JOAT',
             lrts: [],
             factoryCost: 10,
@@ -277,11 +279,26 @@ const RaceWizard = {
                     <label>Race Icon</label>
                     <div class="icon-grid">
                         ${icons.map(i => `
-                            <div class="icon-option ${this.raceData.icon === i ? 'selected' : ''}"
+                            <div class="icon-option ${!this.raceData.customIcon && this.raceData.icon === i ? 'selected' : ''}"
+                                 title="${RaceIcons.NAMES[i]}"
                                  onclick="RaceWizard.selectIcon(${i})">
-                                ${i + 1}
+                                ${RaceIcons.svg(i, 30)}
                             </div>
                         `).join('')}
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="race-icon-upload">Custom Icon (PNG, JPG or SVG, max 128 kB)</label>
+                    <div class="custom-icon-row">
+                        <input type="file" id="race-icon-upload"
+                               accept="image/png,image/jpeg,image/svg+xml,.png,.jpg,.jpeg,.svg"
+                               onchange="RaceWizard.uploadIcon(this)">
+                        ${this.raceData.customIcon ? `
+                            <span class="icon-option selected custom-icon-preview"
+                                  title="Custom icon (click a standard icon to revert)">
+                                ${RaceIcons.render(0, this.raceData.customIcon, 30)}
+                            </span>` : ''}
                     </div>
                 </div>
             </div>
@@ -596,11 +613,40 @@ const RaceWizard = {
     },
 
     /**
-     * Select race icon.
+     * Select race icon (a standard emblem replaces any custom upload).
      */
     selectIcon(index) {
         this.raceData.icon = index;
+        this.raceData.customIcon = null;
         this.render();
+    },
+
+    /**
+     * Handle a custom icon upload (user directive, wave 5): PNG, JPG
+     * or SVG up to 128 kB, stored with the race as a base64 data URI.
+     * Invalid uploads are rejected with a message and the current
+     * icon selection stays unchanged.
+     */
+    uploadIcon(input) {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const allowed = ['image/png', 'image/jpeg', 'image/svg+xml'];
+        if (!allowed.includes(file.type)) {
+            input.value = '';
+            alert('Custom icon must be a PNG, JPG or SVG image.');
+            return;
+        }
+        if (file.size > 128 * 1024) {
+            input.value = '';
+            alert('Custom icon file is too large (maximum 128 kB).');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            this.raceData.customIcon = reader.result;
+            this.render();
+        };
+        reader.readAsDataURL(file);
     },
 
     /**

@@ -21,6 +21,8 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
 - [Mystery Trader](#mystery-trader)
 - [Client UI](#client-ui)
 - [AI and Harness](#ai-and-harness)
+- [Functional Browser Harness](#functional-browser-harness)
+- [LLM Playtest Forensics](#llm-playtest-forensics)
 - [Correspondence Play](#correspondence-play)
 - [Extensions](#extensions)
 - [API](#api)
@@ -158,13 +160,14 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
   - log: 2026-07-13 pre-campaign (v0.1.0)
 - [x] **Gate hull limit** - only small and medium hulls may gate; large and capital hulls are refused outright (no over-limit gamble for them) - deliberate deviation from canonical, keeps heavy fleets flying conventionally while light forces teleport
   - log: 2026-07-13 user directive - "no stargates for large ships, only small up to medium ones"; scheduled wave 5
-  - log: 2026-07-14 landed wave 5 - GATE_HULL_SIZE hull-name table + GATE_ALLOWED_HULL_SIZES in globals.py, hull_name cached on ShipToken via make_token; _gate_travel refuses any large/capital (or unclassified) hull with an Invalid Command message and clamps to warp 9; tests/unit/test_wormholes_gates.py::TestStargateHullLimit, tests/e2e/test_stargate_rework.py (battleship refused where a scout gates)
+  - log: 2026-07-27 landed wave 5 - GATE_HULL_SIZE hull-name table + GATE_ALLOWED_HULL_SIZES in globals.py, hull_name cached on ShipToken via make_token; _gate_travel refuses any large/capital (or unclassified) hull with an Invalid Command message and clamps to warp 9; tests/unit/test_wormholes_gates.py::TestStargateHullLimit, tests/e2e/test_stargate_rework.py (battleship refused where a scout gates)
+  - log: 2026-07-27 wave-5 verifier - cross-feature seeded game tests/e2e/test_wave5_integration.py re-proves the pair on class-B gates: a Long Range Scout jumps the full leg in one turn with no fuel spent while a Battleship-hull fleet ordered through the same gate is refused with the too-large message
 - [x] **Star-fuelled gate range** - gates are powered by their host star: reach scales with the star's size (the larger the star, the farther the gate throws), always bounded - no unlimited-range gates
   - log: 2026-07-13 user directive - "not too far... fuelled by the presence of the nearby star (the larger the star, the larger the distance)"; scheduled wave 5
-  - log: 2026-07-14 landed wave 5 - GATE_SPECTRAL_RANGE_FACTOR (O 2.0, B 1.6, A 1.3, F 1.1, G 1.0, K 0.8, M 0.6) and GATE_MAX_BASE_RANGE 800 ly in globals.py; _star_gate multiplies the model's safe range ("any" -> clamped to 800) by the host star's factor, tighter of the two gates applies; over-range small/medium hulls keep the canonical 25% loss / 50% damage gamble; tests/unit/test_wormholes_gates.py::TestStargateStarFuelledRange, tests/e2e/test_stargate_rework.py (class-B pair throws 960 ly)
+  - log: 2026-07-27 landed wave 5 - GATE_SPECTRAL_RANGE_FACTOR (O 2.0, B 1.6, A 1.3, F 1.1, G 1.0, K 0.8, M 0.6) and GATE_MAX_BASE_RANGE 800 ly in globals.py; _star_gate multiplies the model's safe range ("any" -> clamped to 800) by the host star's factor, tighter of the two gates applies; over-range small/medium hulls keep the canonical 25% loss / 50% damage gamble; tests/unit/test_wormholes_gates.py::TestStargateStarFuelledRange, tests/e2e/test_stargate_rework.py (class-B pair throws 960 ly)
 - [x] **No minerals through gates** - gates move ships only; loose mineral logistics stay with mass drivers (packets) and freighters
   - log: 2026-07-13 user directive; scheduled wave 5 with the packets decision
-  - log: 2026-07-14 landed wave 5 - mineral cargo (ironium/boranium/germanium/silicoxium) refuses the jump for everyone incl. IT; colonists gate only for Interstellar Traveler races (canonical cargo rule) and fuel always travels free, both documented in _gate_travel and the encyclopedia Stargates entry; tests/unit/test_wormholes_gates.py::TestStargateCargoRules, tests/e2e/test_stargate_rework.py (ironium-laden scout refused with message)
+  - log: 2026-07-27 landed wave 5 - mineral cargo (ironium/boranium/germanium/silicoxium) refuses the jump for everyone incl. IT; colonists gate only for Interstellar Traveler races (canonical cargo rule) and fuel always travels free, both documented in _gate_travel and the encyclopedia Stargates entry; tests/unit/test_wormholes_gates.py::TestStargateCargoRules, tests/e2e/test_stargate_rework.py (ironium-laden scout refused with message)
 - [x] **Wormholes** - pairs drift by stability, discovered by scan, transit via waypoint within 5 ly
   - log: 2026-07-13 pre-campaign (v0.1.0)
 - [ ] **Edge: gate without destination gate** - jump rejected/no-op with message
@@ -267,7 +270,7 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
   - log: 2026-07-14 storms entry extended wave 4 - Safe harbor bullet (orbit shelter) and a Protection paragraph mirroring the storm-protection constants (storm shield tiers 40/70/100% with tech costs, shields 35%, armor 15%, rad races 25%, additive with 100% cap, fleet-min, scan static never cleared); fleet panel shows "Storm protection: NN%" when > 0 (storm_protection in fleet API payload)
 - [x] **Emission nebula glare** - emission nebulae are not inert: their glow washes out sensors for a small scanner-range penalty at high glow density (constant in globals, far milder than dust), no effect on ship speed; encyclopedia entry updated to match
   - log: 2026-07-13 user directive - "must have some small effect, not entirely inert... maybe small sensor hit?"; scheduled wave 5
-  - log: 2026-07-14 landed wave 5 - NEBULA_GLARE_SCAN_PENALTY 0.15 in globals.py, scaled by local emission density (new NebulaField emission grid) and composed with dust and storm dampening in scan_step.py; speed untouched; Emission Nebulae encyclopedia entry replaces "No gameplay effect" with the Sensor glare / No drag bullets; tests/unit/test_phenomena.py::TestNebulaGlare, tests/e2e/test_stargate_rework.py (scout provably scans shorter inside the glow)
+  - log: 2026-07-27 landed wave 5 - NEBULA_GLARE_SCAN_PENALTY 0.15 in globals.py, scaled by local emission density (new NebulaField emission grid) and composed with dust and storm dampening in scan_step.py; speed untouched; Emission Nebulae encyclopedia entry replaces "No gameplay effect" with the Sensor glare / No drag bullets; tests/unit/test_phenomena.py::TestNebulaGlare, tests/e2e/test_stargate_rework.py (scout provably scans shorter inside the glow)
 - [x] **Encyclopedia imagery** - every phenomenon entry carries beautiful, hand-painted-feel artwork (deterministic procedural painting, consistent style across entries, no external assets)
   - log: 2026-07-13 user directive - "beautiful, like-hand-painted imagery" for all phenomena
   - log: 2026-07-13 implemented - EncyclopediaArt in encyclopedia.js: seeded painterly canvas per entry (layered brush strokes, gradient billows, grain, vignette); all 6 entries browser-verified (walkthrough/final/wave3/07-12)
@@ -296,6 +299,7 @@ Canonical Stars! feature the C# reference never implemented (only a TODO in Game
 - [x] **Hidden technology** - trader-exclusive components (canonical MT items such as Multi-Function Pod, Anti-Matter Torpedo, Genesis Device) cannot be researched; once granted, the empire can build them and they appear in its component catalog
   - log: 2026-07-13 user directive; matches the C# TODO's "hidden technology" note; scheduled wave 5
   - log: 2026-07-27 implemented wave 5 - four catalog items in components.xml (Multi-Function Pod, Anti-Matter Torpedo, Mega Poly Shell, Genesis Device), each with the "Mystery Trader Item" marker property, Tech all zero and empty race restrictions; per-empire grant list EmpireData.mt_components (serialized, exposed in player state); design_builder._mt_granted gates hull and slot components server-side ("requires a Mystery Trader grant"); design-panel.js hides ungranted items client-side; Genesis Device is a buildable trophy only - its planet-reforming effect is DEFERRED (out of this criterion's scope: grant -> buildable -> in catalog); tests/unit TestHiddenTechGating (zero-tech empire passes _tech_ok, grant unlocks build), e2e phase 4 (granted item mounts for the giver, second empire refused)
+  - log: 2026-07-27 wave-5 verifier - cross-feature seeded game tests/e2e/test_wave5_integration.py re-proves the grant chain: an injected trader is intercepted, gifted 4000 kT per pass on the seeded per-turn RNG until the component band lands, and the granted MT item mounts on a real Destroyer design through the design command
 - [x] **Moving waypoint target** - fleets can set the trader as a waypoint target; intercept course recomputed each turn
   - log: 2026-07-13 criterion added; scheduled wave 5
   - log: 2026-07-27 implemented wave 5 - waypoints carry the trader NAME as destination (C# Waypoint.cs is position-only, so this is a web extension); _process_traders retargets every matching waypoint to the trader's post-move position each turn BEFORE the fleet move loop (co-location at the turn boundary); departed traders freeze the waypoint into a "Space at x,y" positional leg; fleet-panel Add Waypoint lists live traders as destinations; tests/unit test_moving_waypoint_retarget, e2e phase 2 co-location
@@ -328,15 +332,19 @@ Canonical Stars! feature the C# reference never implemented (only a TODO in Game
 - [x] **Waypoint editing** - insert/modify legs, per-leg warp incl. warp-10 gate; multi-fleet same-location picker
   - log: 2026-07-13 criterion added, scheduled wave 5
   - log: 2026-07-27 met wave 5 - fleet panel leg editor: clickable leg list (last selected by default per FleetDetail.cs:482-486), per-leg warp slider 0-10 incl. gate warp-10 (Edit command on release), task selector mapping UI names to real task types (C# LoadTask Replace() defect Waypoint.cs:132 not ported), Insert Before via backend INSERT, delete any leg (web waypoint-zero divergence documented), leg distance/time/fuel + route fuel readout red over fuel aboard (FleetDetail.cs:376-439); player state ships full waypoint task dicts + fuel_consumption_by_warp (Fleet.cs:817-839); map left-click cycles stacked objects within 10 px repeat clicks, right-click near-object menu stars-then-fleets (StarMap.cs:859-953); tests/unit/test_api.py::TestClientParityState, tests/e2e/test_client_parity.py::TestWaypointLegEditing (mixed warps/tasks list shaped via Add/Edit/Insert/Delete executes exactly over several turns), TestMultiFleetSharedPosition
+  - log: 2026-07-27 wave-5 verifier - cross-feature seeded game tests/e2e/test_wave5_integration.py re-proves the command stream: a Teamster route shaped via Add/Edit/Insert/Delete (warp-only Edit keeps the CargoTask intact) executes exactly - load at home, checkpoint leg, unload on arrival at the target
 - [ ] **Reports** - planets, fleets, battles (viewer replay), score
   - log: 2026-07-13 partial pre-campaign; score report wave 4
   - log: 2026-07-13 score report landed wave 4 - Reports Score tab (Race/Rank/Score/Planets/Starbases/Unarmed/Escort/Capital/Tech Levels/Resources per ScoreReport.Designer.cs) + score history graph, Report -> Score History menu wired; battles viewer replay still pending
-- [ ] **Panel polish** - no text touching panel borders in the left column; consistent margins/padding on sections, labels, values, bars; clean at 1080p and 1440p
+- [x] **Panel polish** - no text touching panel borders in the left column; consistent margins/padding on sections, labels, values, bars; clean at 1080p and 1440p
   - log: 2026-07-13 user directive; scheduled wave 5
-- [ ] **Race icons** - 16 designed SVG emblem icons replace numbered boxes; custom icon upload per player, stored with the race, shown in wizard/race select/empire summary/reports
+  - log: 2026-07-27 met wave 5 - PANEL POLISH block in main.css scoped to #left-column on a 4/8/12/16px scale: panel inner padding 12/16px restored (classic layout stripped .panel to 0 so text sat flush), sections separated 16px with last-child collapse, fleet panel header separated like the star panel header, bars and mineral rows on the 8px rhythm, ship/waypoint/queue rows 8px inner padding, waypoint leg details 8/12px, habitability badge 4/8px, empire summary 8px gaps; base rules outside the left column untouched (dialogs/reports keep original values); panel JS inline styles are data-driven bar widths only - no stylesheet conflicts, star-panel.js and fleet-panel.js pass node --check; main.css cache-buster -> v=9; tests/e2e/test_panel_polish.py (served stylesheet rules + seeded state, scope guard on base rules); browser evidence wave 6
+- [x] **Race icons** - 16 designed SVG emblem icons replace numbered boxes; custom icon upload per player, stored with the race, shown in wizard/race select/empire summary/reports
   - log: 2026-07-13 user directive; scheduled wave 5
-- [ ] **Edge: invalid icon upload** - non-image or oversized upload rejected with a clear message, selection unchanged
+  - log: 2026-07-27 met wave 5 - race-icons.js: 16 designed SVG emblems keyed 0-15 (48x48 viewBox, shared dark emblem disc, silver linework with one accent colour per sigil, named, readable 24-64px) replace the numbered boxes in the wizard grid; custom upload per player (file input, PNG/JPG/SVG up to 128 kB) stored as a base64 data URI in the race payload; Race model gained icon/custom_icon fields serialized through game creation and player state (AI template races carry emblem indexes 0-3); icon shown in wizard grid + upload preview, New Game race selector preview, empire summary bar, Reports score table own-empire row; tests/unit/test_race_icons.py (field persistence, wizard mapping), tests/e2e/test_race_icons.py (seeded round-trip through turns); touched JS passes node --check; browser evidence wave 6
+- [x] **Edge: invalid icon upload** - non-image or oversized upload rejected with a clear message, selection unchanged
   - log: 2026-07-13 criterion added, scheduled wave 5
+  - log: 2026-07-27 met wave 5 - client rejects wrong type or oversized file with a clear alert before storing (file input cleared, icon selection unchanged); server _validate_custom_icon enforces data URI shape, PNG/JPEG/SVG mime, base64 validity and decoded size up to 128 kB, ValueError -> HTTP 422 from POST /api/games/ and POST /api/races/validate with no game created; tests/unit/test_race_icons.py::TestCustomIconValidation + TestIconUploadApi, tests/e2e/test_race_icons.py::test_invalid_uploads_rejected_without_game; browser evidence wave 6
 - [x] **Credits dedication** - the game credits (Help menu About dialog) carry the dedication "For my beloved son Henry, alienated from his father for so long..." and the thanks "with thanks to my beloved wife Ewa" - each named once; present in every build, verified in the browser pass
   - log: 2026-07-13 user directive - the dedication is a permanent, non-negotiable credit
   - log: 2026-07-13 dedication wording finalized by the user
@@ -351,28 +359,80 @@ Canonical Stars! feature the C# reference never implemented (only a TODO in Game
 - [ ] **Full acceptance harness** - seeded e2e scenarios exercise every criterion above marked for e2e, JSONL recordings kept, full suite + autoplay regression green, browser gameplay pass recorded (screenshots per wave in walkthrough/final/)
   - log: 2026-07-13 harness live wave 1; full gate scheduled wave 6
 
+## Functional Browser Harness
+
+A separate functional test harness drives the real UI in a real browser, verifying the load-bearing functions of the game and its workflow end to end - distinct from the unit/e2e suite, which uses in-process clients.
+
+- [x] **Playwright harness** - tests/functional/ drives the served frontend in headless Chrome (Playwright) against a dedicated server instance on its own port with an isolated database; opt-in (RUN_FUNCTIONAL=1) so the default suite stays fast
+  - log: 2026-07-27 user directive - "start making functional tests - in a separate funcitonal harness with playwright, so that load bearing functions of the game and workflow (complete gamethrough in the fixed seed - are set)"
+  - log: 2026-07-27 met - tests/functional/conftest.py boots uvicorn on port 9820 from a temp workdir (backend/frontend symlinked, SQLite db isolated there), system headless Chrome with --no-sandbox at 2560x1440; RUN_FUNCTIONAL gate verified (default suite: 960 passed, 8 skipped); runner scripts/run_functional.sh
+- [x] **Load-bearing functions** - functional tests cover through the real UI: new-game creation via the dialogs, race designer save, star selection and production queue edit, fleet waypoint editing, turn generation, message goto, encyclopedia entries rendering their artwork, score report
+  - log: 2026-07-27 criterion added
+  - log: 2026-07-27 met - tests/functional/ test_new_game, test_race_designer, test_star_panel, test_fleet_waypoints, test_turn_and_messages, test_encyclopedia, test_reports; all via real clicks on the served frontend, two consecutive green runs
+- [x] **Fixed-seed gamethrough** - a complete browser gamethrough on a fixed seed advances the game turn by turn through the UI and reproduces recorded golden outcomes deterministically
+  - log: 2026-07-27 criterion added
+  - log: 2026-07-27 met - tests/functional/test_gamethrough.py: seed 4242, 2 players, small, 30 turns via the Turn menu; golden tests/functional/golden/gamethrough_seed4242.json (year 2130, planets 1, fleets 7, score 38) written on first run and reproduced exactly on the second
+- [x] **Console forensics** - browser console errors during any functional test fail that test and are recorded to logs/functional/
+  - log: 2026-07-27 criterion added
+  - log: 2026-07-27 met - page fixture collects console messages and pageerror events; console.error/pageerror entries fail the test, every message written to logs/functional/<test-name>-console.log
+
+## LLM Playtest Forensics
+
+A full-length game played by two LLM commanders against the real backend, mined for defects. Runs after all implementation (wave 5 and correspondence play) and before the final verification gate, so the gate verifies the post-fix game.
+
+- [ ] **Hundred-turn LLM game** - an end-to-end 100-turn two-empire game plays through the real backend API with claude -p commanding both sides; the run is detached, checkpoints every turn and resumes after interruption
+  - log: 2026-07-27 user directive - "play end to end 100 turns game, variate both sides strategy, make the other side inherit context of what happened (claude -p for both sides) and analyse and collect forensics from the game to fix"; scheduled after all implementation per follow-up "after all is implemented that is"
+- [ ] **Strategy variation** - the two sides play distinct strategy personas and adapt them across game phases; each turn's chosen strategy is recorded
+  - log: 2026-07-27 criterion added
+- [ ] **Context inheritance** - each side inherits the history of what happened: a persistent strategy memo the commander rewrites every turn plus the recent event record feeds the next turn's decisions
+  - log: 2026-07-27 criterion added
+- [ ] **Forensics collection** - per-turn full state dumps, server traceback scan, anomaly detectors (negative stockpiles, rejected orders, stuck fleets, turn generation time) and commander-reported oddities are recorded to disk under results/playtest/
+  - log: 2026-07-27 criterion added
+- [ ] **Loop resilience** - a failed order, an unparseable commander reply or a server outage never aborts the game; the event is logged as forensic evidence and the turn proceeds
+  - log: 2026-07-27 criterion added
+- [ ] **Forensics to fixes** - the collected forensics are analysed into a defect list (docs/defects.md) and confirmed defects are fixed with tests before the wave-6 gate
+  - log: 2026-07-27 criterion added
+
 ## Correspondence Play
 
 The C# reference's turn-submission model (per-player orders files, turn-submitted flags, race passwords - [C# ok] in the mechanics inventory) adapted to the web port: the game travels between people as files so each may play their turn.
 
-- [ ] **Turn package export** - the host exports a per-empire turn package: that empire's fog-of-war player state for the current year, as a portable versioned JSON file
+- [x] **Turn package export** - the host exports a per-empire turn package: that empire's fog-of-war player state for the current year, as a portable versioned JSON file
   - log: 2026-07-13 user requirement; awaits campaign slot (wave 5 candidate)
-- [ ] **Orders file round-trip** - the recipient plays their turn against the package and exports an orders file (commands only); the host imports it and the orders apply exactly as if entered live
+  - log: 2026-07-27 GET /api/games/{id}/empires/{eid}/turn-package returns the versioned envelope (format/version/game_id/empire_id/turn_year) around get_player_state - the IntelWriter.cs analog; tests/e2e/test_correspondence.py::TestTurnPackage
+  - log: 2026-07-27 correspondence verifier - re-proved via tests/e2e/test_correspondence.py (9 passed) and full suite 960 passed 8 skipped
+- [x] **Orders file round-trip** - the recipient plays their turn against the package and exports an orders file (commands only); the host imports it and the orders apply exactly as if entered live
   - log: 2026-07-13 user requirement
-- [ ] **Full-game handoff** - alternatively the entire game file travels: the recipient imports it, plays only their own empire, and sends it onward - hot-seat by correspondence
+  - log: 2026-07-27 per-empire orders_log records every applied command and fleet op at submission (EmpireData, cleared on year advance); GET .../orders-file exports it (Orders.cs ToXml year-first analog), POST /api/games/{id}/import/orders validates then replays each entry through the identical live code path and locks the turn (OrderReader.cs ReadPlayerTurn); tests/e2e/test_correspondence.py::TestOrdersRoundTrip
+  - log: 2026-07-27 correspondence verifier - re-proved via e2e re-run; round-trip digest equality confirmed against the live game
+- [x] **Full-game handoff** - alternatively the entire game file travels: the recipient imports it, plays only their own empire, and sends it onward - hot-seat by correspondence
   - log: 2026-07-13 user requirement - "sending a turn / game state file to another person, so they may play their turn"
-- [ ] **Race password** - each empire may set a password per the C# reference; opening an empire's view or submitting its orders requires it
+  - log: 2026-07-27 GET /api/games/{id}/export wraps the full save-state serialization in a versioned envelope; POST /api/games/import creates a new game from it with seed and determinism intact; tests/e2e/test_correspondence.py::TestFullGameHandoff
+  - log: 2026-07-27 correspondence verifier - re-proved via e2e re-run; post-handoff digests equal across both copies after a further turn
+- [x] **Race password** - each empire may set a password per the C# reference; opening an empire's view or submitting its orders requires it
   - log: 2026-07-13 criterion added (C# parity: password per race)
-- [ ] **Turn locking** - an empire's orders lock once submitted (turn-submitted flag per C#); the year advances only when every human empire has submitted
+  - log: 2026-07-27 Race.password stores the MD5 hash (Race.cs:50; PasswordUtility.cs CalculateHash ported exactly, C# BitConverter format); wizard payload "password" hashed server-side; X-Empire-Password header gates state/commands/turn-package/orders-file/submit-orders (401 mirrors CheckPassword.cs); orders import verifies the file's auth hash; the C# gate itself is scaffolding without call sites - the web wires the canonical intent; tests/unit/test_correspondence_files.py, tests/e2e/test_correspondence.py::TestRacePassword
+  - log: 2026-07-27 correspondence verifier - re-proved via e2e re-run (401 wrong/missing, 200 correct, no-password empire open)
+- [x] **Turn locking** - an empire's orders lock once submitted (turn-submitted flag per C#); the year advances only when every human empire has submitted
   - log: 2026-07-13 criterion added (C# parity: turn-submitted flags)
-- [ ] **Fog integrity** - a per-empire package contains only that empire's fog-of-war view; the full game file is meant for the host/carrier and says so on import
+  - log: 2026-07-27 submit-orders sets turn_submitted/last_turn_submitted (OrderWriter.cs:63-64); all command and fleet-op paths reject once locked; generate_turn enforces the NovaConsole.cs:450 gate (409 with waiting_on) when the game has 2+ human empires (human_players game option); single-human games keep one-button generation; AI empires auto-submit in _run_ai_empires (RunAI parity); tests/e2e/test_correspondence.py::TestTurnLocking
+  - log: 2026-07-27 correspondence verifier - re-proved via e2e re-run (two-human 409 gate, locked-command rejection, flag reset, single-human ungated)
+- [x] **Fog integrity** - a per-empire package contains only that empire's fog-of-war view; the full game file is meant for the host/carrier and says so on import
   - log: 2026-07-13 criterion added
-- [ ] **Determinism** - a game played by correspondence replays to the same digest as the identical game played live
+  - log: 2026-07-27 turn package body is exactly get_player_state (nothing global added - fog by construction); the game file envelope carries a "host/carrier only" note and the import UI displays it; tests/e2e/test_correspondence.py::TestTurnPackage, TestFullGameHandoff
+  - log: 2026-07-27 correspondence verifier - re-proved via e2e re-run (package state equals fogged player state, all fleets owner-scoped)
+- [x] **Determinism** - a game played by correspondence replays to the same digest as the identical game played live
   - log: 2026-07-13 criterion added
-- [ ] **UI** - Game menu: export turn package / export game file / import orders / import game; submission status per empire visible
+  - log: 2026-07-27 proven end to end: same-seed game exported/imported as the host copy, orders file replayed into it, turn generated - per-empire sha256 state digests equal the live game's; tests/e2e/test_correspondence.py::TestOrdersRoundTrip::test_correspondence_matches_live_digest
+  - log: 2026-07-27 correspondence verifier - assertion proven non-vacuous: same seed with vs without orders produces different digests, so the equality is order-sensitive
+- [x] **UI** - Game menu: export turn package / export game file / import orders / import game; submission status per empire visible
   - log: 2026-07-13 criterion added
-- [ ] **Edge: stale package** - orders produced against an outdated year are rejected with a clear message, nothing corrupted
+  - log: 2026-07-27 File menu gains Export Turn Package / Export Orders File / Export Game File / Import Orders File / Import Game File (JSON download/upload); Turn menu Submit Orders and Wait for All wired to submit-orders and the per-empire submission status dialog ("No Orders" until first submission); 401 prompts for the race password once per session; cache busters bumped (client.js v8, game-state.js v7, menu-bar.js v8)
+  - log: 2026-07-27 correspondence verifier - node --check clean on all 7 changed frontend/js files; live server regression scripts/autoplay.py seed 118 20 turns PASS
+- [x] **Edge: stale package** - orders produced against an outdated year are rejected with a clear message, nothing corrupted
   - log: 2026-07-13 criterion added
+  - log: 2026-07-27 orders import validates the year before touching state and returns 409 "Orders file is for year X but the game is at year Y - orders rejected, nothing applied" (the web surfaces what OrderReader.cs:96-102 silently skips); digest-before equals digest-after; tests/e2e/test_correspondence.py::TestStaleOrders
+  - log: 2026-07-27 correspondence verifier - re-proved via e2e re-run (409 with year in message, digests unchanged)
 
 ## Extensions
 
@@ -605,6 +665,7 @@ Declared exclusions for this campaign - future candidates, not acceptance blocke
   - log: 2026-07-13 decision deferred to wave 5
   - log: 2026-07-13 user embraced packet relay + trade agreements extensions - weighs the wave 5 decision strongly toward implementing packets
   - log: 2026-07-27 implemented canonical packets - fling command from starbase drivers (MassDriver.cs aggregation semantics), warp^2 flight with overfling decay (10/25/50 pct, min 10 kT), catch/impact formulas (/160 divisor, 1/3 recovery, defense coverage), map rendering, scannable contacts, fleet loading from packets, encyclopedia entry with art; remnant replaced; tests tests/unit/test_packets.py + tests/e2e/test_packets.py
+  - log: 2026-07-27 wave-5 verifier - cross-feature seeded game tests/e2e/test_wave5_integration.py re-proves exchange and impact in one game: driver-to-driver packets land every kT at the rated warp while a 30000 kT packet wipes the undefended enemy homeworld; full suite 939 green, all 62 e2e green, live 30-turn autoplay regression PASS (logs/wave5-regression.log)
 - [ ] **Multiplayer turn submission** - per-player order files, passwords, turn locking; web port is single-human live API
   - log: 2026-07-13 excluded by scope decision
   - log: 2026-07-13 partial reversal: correspondence (file-based) play is now a user requirement - see the Correspondence Play section; live simultaneous multiplayer remains excluded

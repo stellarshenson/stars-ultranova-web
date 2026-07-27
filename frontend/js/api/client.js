@@ -86,6 +86,12 @@ const ApiClient = {
                 }
             };
 
+            // Race password for this session (correspondence play);
+            // servers ignore the header on empires with no password
+            if (window.GameState && GameState.empirePassword) {
+                fetchOptions.headers['X-Empire-Password'] = GameState.empirePassword;
+            }
+
             if (body) {
                 fetchOptions.body = JSON.stringify(body);
             }
@@ -99,7 +105,9 @@ const ApiClient = {
                 } catch {
                     error = { detail: `HTTP ${response.status}: ${response.statusText}` };
                 }
-                throw new Error(error.detail || 'API request failed');
+                const apiError = new Error(error.detail || 'API request failed');
+                apiError.status = response.status;
+                throw apiError;
             }
 
             return response.json();
@@ -275,6 +283,36 @@ const ApiClient = {
      */
     async flingPacket(gameId, empireId, data) {
         return this.submitCommand(gameId, empireId, 'fling_packet', data);
+    },
+
+    // Correspondence play (acc-crit Correspondence Play section):
+    // versioned JSON file envelopes served by the games routes
+    async getTurnPackage(gameId, empireId) {
+        return this.request('GET', `/games/${gameId}/empires/${empireId}/turn-package`);
+    },
+
+    async getOrdersFile(gameId, empireId) {
+        return this.request('GET', `/games/${gameId}/empires/${empireId}/orders-file`);
+    },
+
+    async importOrders(gameId, ordersFile) {
+        return this.request('POST', `/games/${gameId}/import/orders`, ordersFile);
+    },
+
+    async exportGame(gameId) {
+        return this.request('GET', `/games/${gameId}/export`);
+    },
+
+    async importGame(gameFile) {
+        return this.request('POST', '/games/import', gameFile);
+    },
+
+    async submitOrders(gameId, empireId) {
+        return this.request('POST', `/games/${gameId}/empires/${empireId}/submit-orders`);
+    },
+
+    async getSubmissions(gameId) {
+        return this.request('GET', `/games/${gameId}/submissions`);
     },
 
     // Designs

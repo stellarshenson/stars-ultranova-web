@@ -22,6 +22,12 @@ const MenuBar = {
                 { id: 'save-game', label: 'Save Game', shortcut: 'Ctrl+S', action: 'saveGame' },
                 { id: 'save-as', label: 'Save Game As...', action: 'saveGameAs' },
                 { type: 'separator' },
+                { id: 'export-turn-package', label: 'Export Turn Package...', action: 'exportTurnPackage' },
+                { id: 'export-orders-file', label: 'Export Orders File...', action: 'exportOrdersFile' },
+                { id: 'export-game-file', label: 'Export Game File...', action: 'exportGameFile' },
+                { id: 'import-orders-file', label: 'Import Orders File...', action: 'importOrdersFile' },
+                { id: 'import-game-file', label: 'Import Game File...', action: 'importGameFile' },
+                { type: 'separator' },
                 { id: 'exit', label: 'Exit', action: 'exit' }
             ]
         },
@@ -403,6 +409,23 @@ const MenuBar = {
                 this.closeGame();
                 break;
 
+            // Correspondence play (File menu)
+            case 'exportTurnPackage':
+                this.exportTurnPackage();
+                break;
+            case 'exportOrdersFile':
+                this.exportOrdersFile();
+                break;
+            case 'exportGameFile':
+                this.exportGameFile();
+                break;
+            case 'importOrdersFile':
+                this.importOrdersFile();
+                break;
+            case 'importGameFile':
+                this.importGameFile();
+                break;
+
             // View menu
             case 'toggleScannerPane':
                 // Toggle the scanner pane visibility
@@ -457,10 +480,10 @@ const MenuBar = {
                 }
                 break;
             case 'waitForAll':
-                // Multiplayer feature
+                this.showSubmissionStatus();
                 break;
             case 'submitOrders':
-                // Multiplayer feature
+                this.submitOrders();
                 break;
 
             // Commands menu
@@ -604,6 +627,172 @@ const MenuBar = {
     async saveGameAs() {
         // For now, just save
         this.saveGame();
+    },
+
+    // =========================================================================
+    // Correspondence play (acc-crit Correspondence Play section):
+    // the game travels between people as versioned JSON files
+    // =========================================================================
+
+    /**
+     * Download a JSON payload as a file.
+     */
+    downloadJson(data, filename) {
+        const blob = new Blob([JSON.stringify(data, null, 2)],
+            { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    },
+
+    /**
+     * Pick a local JSON file and pass the parsed object to callback.
+     */
+    pickJsonFile(callback) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.addEventListener('change', async () => {
+            const file = input.files[0];
+            if (!file) return;
+            try {
+                callback(JSON.parse(await file.text()));
+            } catch (error) {
+                ApiClient.showStatus('Not a valid JSON file', 'error');
+            }
+        });
+        input.click();
+    },
+
+    _requireGame() {
+        if (!window.GameState || !GameState.game) {
+            ApiClient.showStatus('No game loaded', 'error');
+            return false;
+        }
+        return true;
+    },
+
+    /**
+     * Export this empire's fog-of-war turn package.
+     */
+    async exportTurnPackage() {
+        if (!this._requireGame()) return;
+        try {
+            const pkg = await ApiClient.getTurnPackage(
+                GameState.game.id, GameState.empireId);
+            this.downloadJson(pkg,
+                `empire-${pkg.empire_id}-${pkg.turn_year}.turn.json`);
+            ApiClient.showStatus('Turn package exported', 'success');
+        } catch (error) { /* status already shown */ }
+    },
+
+    /**
+     * Export this empire's orders for the current year.
+     */
+    async exportOrdersFile() {
+        if (!this._requireGame()) return;
+        try {
+            const orders = await ApiClient.getOrdersFile(
+                GameState.game.id, GameState.empireId);
+            this.downloadJson(orders,
+                `empire-${orders.empire_id}-${orders.turn_year}.orders.json`);
+            ApiClient.showStatus(
+                `Orders file exported (${orders.orders.length} orders)`,
+                'success');
+        } catch (error) { /* status already shown */ }
+    },
+
+    /**
+     * Export the full game file (host/carrier only).
+     */
+    async exportGameFile() {
+        if (!this._requireGame()) return;
+        try {
+            const file = await ApiClient.exportGame(GameState.game.id);
+            this.downloadJson(file,
+                `${GameState.game.name}-${file.turn_year}.game.json`);
+            ApiClient.showStatus('Game file exported', 'success');
+        } catch (error) { /* status already shown */ }
+    },
+
+    /**
+     * Import a player's orders file into the current game.
+     */
+    importOrdersFile() {
+        if (!this._requireGame()) return;
+        this.pickJsonFile(async (data) => {
+            try {
+                const result = await ApiClient.importOrders(
+                    GameState.game.id, data);
+                await GameState.refreshState();
+                ApiClient.showStatus(
+                    `Orders imported for empire ${result.empire_id}: ` +
+                    `${result.orders_applied} applied, turn locked`,
+                    'success');
+            } catch (error) {
+                // 409 stale year / 401 password surfaced verbatim by
+                // ApiClient.showStatus already
+            }
+        });
+    },
+
+    /**
+     * Import a full game file as a new game and load it.
+     */
+    importGameFile() {
+        this.pickJsonFile(async (data) => {
+            try {
+                const imported = await ApiClient.importGame(data);
+                if (window.Dialogs && data.note) {
+                    // The game file is host/carrier material and
+                    // says so on import (fog integrity criterion)
+                    Dialogs.showMessage('Game File Imported',
+                        `${data.note}\n\nImported as "${imported.name}" ` +
+                        `at year ${imported.turn}.`);
+                }
+                await GameState.loadGame(imported.id);
+                document.getElementById('menu-container')?.classList.add('hidden');
+                document.getElementById('game-container')?.classList.remove('hidden');
+            } catch (error) { /* status already shown */ }
+        });
+    },
+
+    /**
+     * Submit (lock) this empire's orders for the year.
+     */
+    async submitOrders() {
+        if (!this._requireGame()) return;
+        try {
+            const result = await GameState.submitOrders();
+            ApiClient.showStatus(
+                `Orders submitted for ${result.turn_year}`, 'success');
+            this.showSubmissionStatus();
+        } catch (error) { /* status already shown */ }
+    },
+
+    /**
+     * Per-empire submission status (the C# console player list:
+     * "No Orders" until an empire first submits).
+     */
+    async showSubmissionStatus() {
+        if (!this._requireGame()) return;
+        try {
+            const subs = await ApiClient.getSubmissions(GameState.game.id);
+            const lines = subs.map(s => {
+                const status = s.turn_submitted
+                    ? `Submitted ${s.last_turn_submitted}`
+                    : (s.last_turn_submitted === 0
+                        ? 'No Orders'
+                        : `Waiting (last ${s.last_turn_submitted})`);
+                return `${s.race_name} (${s.ai_program}): ${status}`;
+            });
+            if (window.Dialogs) {
+                Dialogs.showMessage('Turn Submissions', lines.join('\n'));
+            }
+        } catch (error) { /* status already shown */ }
     },
 
     /**

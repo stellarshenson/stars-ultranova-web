@@ -222,6 +222,10 @@ class TurnGenerator:
         for empire in self.server_state.all_empires.values():
             empire.turn_year = self.server_state.turn_year
             empire.turn_submitted = False
+            # The per-year orders log covers exactly one turn; a fresh
+            # year starts with an empty log (correspondence play)
+            if hasattr(empire, 'orders_log'):
+                empire.orders_log.clear()
 
         # Run turn steps in priority order
         for step in self.turn_steps.values():

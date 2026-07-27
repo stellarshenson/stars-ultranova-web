@@ -293,3 +293,13 @@ STRATEGY_NAMES = [
     "Move to enemy centre of mass and self destruct",
     "Shield the bombers", "Shield the Starbase"
 ]
+
+# Correspondence play file envelopes (web analog of the C# game-folder
+# file extensions .orders/.race/.intel, Common/GlobalDefinitions.cs:66-68;
+# per-empire intel file written by ServerState/Persistence/IntelWriter.cs,
+# orders file by Nova/Client/OrderWriter.cs). The web port exchanges
+# versioned JSON files instead of XML files in a shared folder.
+TURN_PACKAGE_FORMAT = "stars-ultranova-turn-package"
+ORDERS_FILE_FORMAT = "stars-ultranova-orders"
+GAME_FILE_FORMAT = "stars-ultranova-game"
+CORRESPONDENCE_FILE_VERSION = 1

@@ -4,6 +4,9 @@ Stars Nova Web - Game Manager
 Central service for game lifecycle management.
 """
 
+import base64
+import binascii
+import hashlib
 import json
 import logging
 import random
@@ -32,7 +35,8 @@ from ..core.data_structures.cargo import Cargo
 from ..core.game_objects.fleet import is_mineral_packet
 from ..core.globals import (
     NOBODY, NEBULA_SCAN_PENALTY, PACKET_OVERFLING_MAX, PACKET_MAX_WARP,
-    MT_GIFT_THRESHOLD
+    MT_GIFT_THRESHOLD, TURN_PACKAGE_FORMAT, ORDERS_FILE_FORMAT,
+    GAME_FILE_FORMAT, CORRESPONDENCE_FILE_VERSION
 )
 from ..core.waypoints.waypoint import Waypoint, NoTaskObj
 from .galaxy_generator import GalaxyGenerator
@@ -57,6 +61,53 @@ COMMAND_TYPES = {
 # Wizard research cost choices -> integer percent (the race designer
 # radio buttons, ControlLibrary/ResearchCost.cs:160-176)
 _RESEARCH_COST_PERCENTS = {"cheap": 50, "normal": 100, "expensive": 175}
+
+
+# Custom race icon upload limits (user directive, wave 5: PNG, JPEG or
+# SVG up to 128 kB, stored with the race as a base64 data URI)
+RACE_ICON_MAX_BYTES = 128 * 1024
+RACE_ICON_MIME_TYPES = ("image/png", "image/jpeg", "image/svg+xml")
+
+
+def _validate_custom_icon(data_uri: str) -> str:
+    """
+    Validate a custom race icon data URI (user directive, wave 5).
+
+    Accepts only base64 data URIs of type image/png, image/jpeg or
+    image/svg+xml whose decoded payload is at most 128 kB. Returns the
+    URI unchanged; raises ValueError on a non-image or oversized upload
+    (surfaced as HTTP 422 by the race/game API routes).
+    """
+    header, sep, payload = data_uri.partition(";base64,")
+    if not sep or not header.startswith("data:"):
+        raise ValueError(
+            "Custom race icon must be a base64 image data URI")
+    if header[len("data:"):] not in RACE_ICON_MIME_TYPES:
+        raise ValueError(
+            "Custom race icon must be a PNG, JPEG or SVG image")
+    try:
+        decoded = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError(
+            "Custom race icon is not valid base64 image data")
+    if len(decoded) > RACE_ICON_MAX_BYTES:
+        raise ValueError(
+            "Custom race icon exceeds the 128 kB size limit")
+    return data_uri
+
+
+def calculate_password_hash(password: str) -> str:
+    """
+    Race password hash.
+
+    Port of Common/PasswordUtility.cs CalculateHash (lines 30-36):
+    MD5 over the ASCII bytes of the password, formatted as C#
+    BitConverter.ToString does - uppercase hex pairs joined by dashes.
+    Non-ASCII characters become '?', matching Encoding.ASCII.GetBytes.
+    """
+    digest = hashlib.md5(
+        password.encode("ascii", errors="replace")).digest()
+    return "-".join(f"{b:02X}" for b in digest)
 
 
 def _race_from_wizard(data: dict) -> Race:
@@ -99,7 +150,16 @@ def _race_from_wizard(data: dict) -> Race:
                 for t in (data.get("lrts") or [])},
     )
     race.plural_name = data.get("pluralName") or race.name
-    race.icon = data.get("icon") or "humanoid"
+    # Optional race password: the wizard sends plaintext, the race
+    # stores only the hash (Race.cs:50; PasswordUtility.cs:30-36)
+    password = data.get("password") or ""
+    race.password = calculate_password_hash(password) if password else ""
+    # Standard emblem index (0-15) plus optional uploaded custom icon
+    # (validated data URI); rejection raises ValueError -> HTTP 422
+    race.icon = int(data.get("icon") or 0)
+    custom_icon = data.get("customIcon") or ""
+    race.custom_icon = (
+        _validate_custom_icon(custom_icon) if custom_icon else "")
 
     # Per-field research cost percents; wizard keys are lowercase
     # field names with 'cheap'/'normal'/'expensive' values
@@ -183,7 +243,8 @@ class GameManager:
         race: Optional[dict] = None,
         accelerated_start: bool = False,
         victory: Optional[dict] = None,
-        mystery_trader: bool = True
+        mystery_trader: bool = True,
+        human_players: int = 1
     ) -> dict:
         """
         Create a new game.
@@ -200,6 +261,8 @@ class GameManager:
                 None keeps the C# defaults (GameSettings.cs:49-58).
             mystery_trader: "Mystery Trader" toggle (default on;
                 canonical feature, C# has only a TODO).
+            human_players: Empires 1..human_players are human-controlled
+                (correspondence play); the rest run the default AI.
 
         Returns:
             Game metadata dict.
@@ -229,7 +292,8 @@ class GameManager:
         generator = GalaxyGenerator(seed)
         server_data = generator.generate(player_count, universe_size,
                                          player_race=player_race,
-                                         accelerated_start=accelerated_start)
+                                         accelerated_start=accelerated_start,
+                                         human_players=human_players)
 
         # Victory condition settings, C# defaults unless overridden
         server_data.victory_settings = (
@@ -342,6 +406,28 @@ class GameManager:
         if not server_data:
             return {"error": "Game not found"}
 
+        # Turn-submission gate (NovaConsole.cs SetPlayerList, line 450:
+        # empire null / wrong TurnYear / not TurnSubmitted -> "don't
+        # allow the turn to be generated"). Enforced only when the game
+        # has 2+ human empires: single-human games keep the one-button
+        # flow, matching the C# console's force-generate affordance.
+        human_players = [p for p in server_data.all_players
+                         if p.ai_program == "Human"]
+        if len(human_players) >= 2:
+            waiting_on = []
+            for player in human_players:
+                empire = server_data.all_empires.get(player.player_number)
+                if (empire is None
+                        or empire.turn_year != server_data.turn_year
+                        or not empire.turn_submitted):
+                    waiting_on.append(player.race_name)
+            if waiting_on:
+                return {
+                    "error": "Waiting for orders from: "
+                             + ", ".join(waiting_on),
+                    "waiting_on": waiting_on,
+                }
+
         # Deterministic turn generation (web extension; the original C#
         # server used unseeded Random). When the game was created with a
         # seed, re-seed Python's global random module from
@@ -421,6 +507,12 @@ class GameManager:
             except Exception:
                 logger.exception("AI move failed for empire %s", empire_id)
                 continue
+
+            # AI empires submit automatically (NovaConsole.cs RunAI,
+            # lines 519-556, launches the AI for every non-submitted
+            # computer empire; its orders file marks it submitted)
+            empire.turn_submitted = True
+            empire.last_turn_submitted = server_data.turn_year
 
             # Keep the global star registry in sync with AI changes
             for star in empire.owned_stars.values():
@@ -927,6 +1019,10 @@ class GameManager:
         if empire is None:
             return {"error": "Empire not found"}
 
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
+
         ctype = (command_type or "").strip().lower()
         if ctype == "battle_plan":
             # Battle plan CRUD. No C# command exists (the Nova dialog's
@@ -938,6 +1034,7 @@ class GameManager:
             result = self._apply_battle_plan_command(empire, command_data)
             if "error" in result:
                 return result
+            self._record_order(empire, ctype, command_data)
             self._save_game_state(game_id, server_data)
             return {
                 "turn_year": server_data.turn_year,
@@ -963,6 +1060,7 @@ class GameManager:
                 return {"error": "Only standard minefields can be "
                                  "detonated"}
             minefield.detonate = bool(command_data.get("detonate", False))
+            self._record_order(empire, ctype, command_data)
             self._save_game_state(game_id, server_data)
             return {
                 "turn_year": server_data.turn_year,
@@ -979,6 +1077,7 @@ class GameManager:
                 game_id, server_data, empire, command_data)
             if "error" in result:
                 return result
+            self._record_order(empire, ctype, command_data)
             self._save_game_state(game_id, server_data)
             return {
                 "turn_year": server_data.turn_year,
@@ -1013,12 +1112,52 @@ class GameManager:
         for star in empire.owned_stars.values():
             server_data.all_stars[star.name] = star
 
+        self._record_order(empire, ctype, command_data)
         self._save_game_state(game_id, server_data)
 
         return {
             "turn_year": server_data.turn_year,
             "status": "applied"
         }
+
+    def _empire_locked(self, empire) -> Optional[dict]:
+        """
+        Reject state-changing orders once the empire has submitted.
+
+        Web analog of the C# turn-submitted lock: after WriteOrders
+        sets TurnSubmitted (OrderWriter.cs:63-64) the client's turn is
+        final until the year advances (TurnGenerator resets the flag).
+        """
+        if empire.turn_submitted:
+            return {"error": f"Orders already submitted for year "
+                             f"{empire.turn_year}"}
+        return None
+
+    def _record_order(self, empire, command_type: str,
+                      command_data: dict) -> None:
+        """
+        Record an applied command in the empire's per-year orders log.
+
+        Web analog of the client command stack the C# OrderWriter
+        serializes into the .orders file (OrderWriter.cs:77-80).
+        Recorded at submission - web orders apply immediately, so an
+        orders file cannot be reconstructed later.
+        """
+        empire.orders_log.append({
+            "command_type": command_type,
+            "command_data": command_data,
+        })
+
+    def _record_fleet_op(self, empire, op: str, args: dict) -> None:
+        """
+        Record a direct fleet operation in the orders log.
+
+        Split/merge/rename/battle-plan/cargo/gift are immediate server
+        operations, not Command objects (see each method's C# note);
+        they are logged as {"op", "args"} entries so an orders file
+        replays the complete turn.
+        """
+        empire.orders_log.append({"op": op, "args": args})
 
     def _apply_battle_plan_command(self, empire, data: dict) -> dict:
         """
@@ -1237,6 +1376,9 @@ class GameManager:
             return {"error": "Fleet not found or not owned"}
         if getattr(fleet, 'is_starbase', False):
             return {"error": "Starbases cannot be split"}
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
 
         # Validate composition and compute what moves
         moves: Dict[int, int] = {}
@@ -1280,6 +1422,11 @@ class GameManager:
         self._spill_overflow(fleet, new_fleet)
 
         empire.owned_fleets[new_fleet.key] = new_fleet
+        self._record_fleet_op(empire, "split_fleet", {
+            "fleet_key": fleet_key,
+            "keep_composition": {str(k): v
+                                 for k, v in keep_composition.items()},
+        })
         self._save_game_state(game_id, server_data)
         return {
             "status": "applied",
@@ -1306,6 +1453,9 @@ class GameManager:
         other = empire.owned_fleets.get(other_fleet_key)
         if target is None or other is None:
             return {"error": "Fleet not found or not owned"}
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
         if target is other:
             return {"error": "Cannot merge a fleet with itself"}
         if getattr(target, 'is_starbase', False) or \
@@ -1338,6 +1488,10 @@ class GameManager:
         del empire.owned_fleets[other_fleet_key]
         empire.fleet_reports.pop(other_fleet_key, None)
 
+        self._record_fleet_op(empire, "merge_fleets", {
+            "fleet_key": fleet_key,
+            "other_fleet_key": other_fleet_key,
+        })
         self._save_game_state(game_id, server_data)
         return {"status": "applied", "fleet_key": fleet_key}
 
@@ -1388,11 +1542,18 @@ class GameManager:
         if fleet is None:
             return {"error": "Fleet not found or not owned"}
 
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
+
         name = (name or "").strip()
         if not name:
             return {"error": "Name cannot be empty"}
 
         fleet.name = name
+        self._record_fleet_op(empire, "rename_fleet", {
+            "fleet_key": fleet_key, "name": name,
+        })
         self._save_game_state(game_id, server_data)
         return {"status": "ok", "name": name}
 
@@ -1417,11 +1578,18 @@ class GameManager:
         if fleet is None:
             return {"error": "Fleet not found or not owned"}
 
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
+
         plan_name = (plan_name or "").strip()
         if plan_name not in empire.battle_plans:
             return {"error": f"Unknown battle plan '{plan_name}'"}
 
         fleet.battle_plan = plan_name
+        self._record_fleet_op(empire, "set_fleet_battle_plan", {
+            "fleet_key": fleet_key, "plan_name": plan_name,
+        })
         self._save_game_state(game_id, server_data)
         return {"status": "ok", "battle_plan": plan_name}
 
@@ -1460,6 +1628,10 @@ class GameManager:
         fleet = empire.owned_fleets.get(fleet_key)
         if fleet is None:
             return {"error": "Fleet not found or not owned"}
+
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
 
         star = server_data.all_stars.get(fleet.in_orbit_name or "")
         if star is None:
@@ -1505,6 +1677,9 @@ class GameManager:
         star.colonists -= d_col_kt * 100
         fleet.cargo.colonists_in_kilotons += d_col_kt
 
+        self._record_fleet_op(empire, "transfer_cargo", {
+            "fleet_key": fleet_key, "cargo_delta": cargo_delta,
+        })
         self._save_game_state(game_id, server_data)
 
         return {
@@ -1559,6 +1734,9 @@ class GameManager:
         fleet = empire.owned_fleets.get(fleet_key)
         if fleet is None:
             return {"error": "Fleet not found or not owned"}
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
         other = empire.owned_fleets.get(other_fleet_key)
         if other is None:
             # Canonical packet interception (Stars! rules, C# absent):
@@ -1641,6 +1819,10 @@ class GameManager:
                 other_empire.owned_fleets.pop(other.key, None)
                 other_empire.fleet_reports.pop(other.key, None)
 
+        self._record_fleet_op(empire, "transfer_cargo_between_fleets", {
+            "fleet_key": fleet_key, "other_fleet_key": other_fleet_key,
+            "delta": delta,
+        })
         self._save_game_state(game_id, server_data)
 
         return {
@@ -1695,6 +1877,9 @@ class GameManager:
             return {"error": "Fleet not found or not owned"}
         if getattr(fleet, 'is_starbase', False):
             return {"error": "Starbases cannot gift to the trader"}
+        locked = self._empire_locked(empire)
+        if locked:
+            return locked
 
         trader = getattr(server_data, 'all_traders', {}).get(trader_key)
         if trader is None:
@@ -1741,6 +1926,10 @@ class GameManager:
         entry["total"] += total_kt
         entry["fleet_key"] = fleet_key
 
+        self._record_fleet_op(empire, "gift_to_trader", {
+            "fleet_key": fleet_key, "trader_key": trader_key,
+            "delta": delta,
+        })
         self._save_game_state(game_id, server_data)
 
         return {
@@ -1748,6 +1937,339 @@ class GameManager:
             "fleet": self._fleet_to_dict(fleet),
             "gift_total": entry["total"],
             "threshold": MT_GIFT_THRESHOLD,
+        }
+
+    # =========================================================================
+    # Correspondence Play
+    #
+    # Web adaptation of the C# file-based turn-submission model: the
+    # per-empire fog file (IntelWriter.cs WriteIntel), the per-empire
+    # orders file (Orders.cs / OrderWriter.cs / OrderReader.cs) and the
+    # race password (Race.cs:50, PasswordUtility.cs, CheckPassword.cs -
+    # scaffolding without live call sites in the reference; the web
+    # wires the canonical intent). Files are versioned JSON envelopes
+    # instead of XML files in a shared game folder.
+    # =========================================================================
+
+    def verify_empire_password(self, game_id: str, empire_id: int,
+                               supplied: Optional[str]) -> Optional[bool]:
+        """
+        Check a supplied plaintext password against the empire's race.
+
+        Returns None if the game or empire does not exist, True when
+        access is allowed (no password set, or hash match - the
+        CheckPassword.cs:41-70 comparison), False on mismatch.
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return None
+        empire = server_data.all_empires.get(empire_id)
+        if empire is None:
+            return None
+        stored = getattr(empire.race, 'password', '') if empire.race else ''
+        if not stored:
+            return True
+        return calculate_password_hash(supplied or "") == stored
+
+    def get_turn_package(self, game_id: str,
+                         empire_id: int) -> Optional[dict]:
+        """
+        Per-empire turn package: the empire's fog-of-war player state
+        for the current year in a portable versioned envelope.
+
+        Web analog of the per-player .intel file (IntelWriter.cs
+        WriteIntel, lines 60-110). Fog integrity holds by construction:
+        the body is exactly get_player_state - nothing global is added.
+        """
+        state = self.get_player_state(game_id, empire_id)
+        if state is None:
+            return None
+        return {
+            "format": TURN_PACKAGE_FORMAT,
+            "version": CORRESPONDENCE_FILE_VERSION,
+            "game_id": game_id,
+            "empire_id": empire_id,
+            "turn_year": state["turn_year"],
+            "state": state,
+        }
+
+    def get_orders_file(self, game_id: str,
+                        empire_id: int) -> Optional[dict]:
+        """
+        Export the empire's orders for the current year as a file.
+
+        Mirrors Orders.cs ToXml (lines 137-175: the Turn year is
+        written first "so it can be determined quickly") and
+        OrderWriter.cs WriteOrders (lines 70-71: ROOT/Turn + ROOT/Id).
+        "auth" carries the race password hash so the host can verify
+        the file came from the password holder (export is
+        password-gated at the route).
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return None
+        empire = server_data.all_empires.get(empire_id)
+        if empire is None:
+            return None
+        return {
+            "format": ORDERS_FILE_FORMAT,
+            "version": CORRESPONDENCE_FILE_VERSION,
+            "turn_year": server_data.turn_year,
+            "game_id": game_id,
+            "empire_id": empire_id,
+            "auth": getattr(empire.race, 'password', '')
+            if empire.race else '',
+            "orders": list(empire.orders_log),
+        }
+
+    def import_orders(self, game_id: str, orders_file: dict) -> dict:
+        """
+        Import an orders file and apply it to the empire.
+
+        Port of OrderReader.cs ReadPlayerTurn (lines 68-174): the year
+        check (96-102 - where C# silently skips stale orders, the web
+        rejects with a clear message, "code" 409), the empire id check
+        (105-110), oldest-first application (111-114) and the final
+        TurnSubmitted/LastTurnSubmitted flags (171-173). Validation
+        happens BEFORE any state mutates; each entry then replays
+        through the identical live-entry code path, so orders apply
+        exactly as if entered live.
+        """
+        if orders_file.get("format") != ORDERS_FILE_FORMAT:
+            return {"error": "Not a Stars UltraNova orders file",
+                    "code": 422}
+        if orders_file.get("version") != CORRESPONDENCE_FILE_VERSION:
+            return {"error": "Unsupported orders file version "
+                             f"'{orders_file.get('version')}'",
+                    "code": 422}
+
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return {"error": "Game not found", "code": 404}
+
+        empire_id = orders_file.get("empire_id")
+        empire = server_data.all_empires.get(empire_id)
+        if empire is None:
+            return {"error": "Empire not found", "code": 404}
+
+        # Stale-year gate (OrderReader.cs:96-102)
+        file_year = orders_file.get("turn_year")
+        if file_year != server_data.turn_year:
+            return {"error": f"Orders file is for year {file_year} but "
+                             f"the game is at year "
+                             f"{server_data.turn_year} - orders "
+                             f"rejected, nothing applied",
+                    "code": 409}
+
+        # Password gate: the file's auth must match the empire's
+        # stored hash (the exporter proved knowledge at export time)
+        stored = getattr(empire.race, 'password', '') if empire.race else ''
+        if stored and orders_file.get("auth") != stored:
+            return {"error": "Incorrect password - Access denied",
+                    "code": 401}
+
+        if empire.turn_submitted:
+            return {"error": f"Orders already submitted for year "
+                             f"{empire.turn_year}", "code": 409}
+
+        # Replay in file order (oldest first, OrderReader.cs:111-114);
+        # abort and report on the first failing entry
+        applied = 0
+        for entry in orders_file.get("orders") or []:
+            result = self._replay_order(game_id, empire_id, entry)
+            if result is not None and "error" in result:
+                return {"error": f"Order {applied + 1} failed: "
+                                 f"{result['error']}", "code": 422,
+                        "applied": applied}
+            applied += 1
+
+        # OrderReader.cs:171-173
+        empire.turn_submitted = True
+        empire.last_turn_submitted = server_data.turn_year
+        self._save_game_state(game_id, server_data)
+
+        return {
+            "status": "applied",
+            "empire_id": empire_id,
+            "turn_year": server_data.turn_year,
+            "orders_applied": applied,
+        }
+
+    def _replay_order(self, game_id: str, empire_id: int,
+                      entry: dict) -> Optional[dict]:
+        """
+        Replay one orders-log entry through the live code path.
+
+        Command entries go through submit_command; fleet-op entries
+        call the matching immediate server operation.
+        """
+        if "command_type" in entry:
+            return self.submit_command(
+                game_id, empire_id, entry["command_type"],
+                entry.get("command_data") or {})
+        op = entry.get("op")
+        args = dict(entry.get("args") or {})
+        try:
+            if op == "split_fleet":
+                return self.split_fleet(
+                    game_id, empire_id, int(args["fleet_key"]),
+                    {int(k): int(v) for k, v in
+                     (args.get("keep_composition") or {}).items()})
+            if op == "merge_fleets":
+                return self.merge_fleets(
+                    game_id, empire_id, int(args["fleet_key"]),
+                    int(args["other_fleet_key"]))
+            if op == "rename_fleet":
+                return self.rename_fleet(
+                    game_id, empire_id, int(args["fleet_key"]),
+                    args.get("name", ""))
+            if op == "set_fleet_battle_plan":
+                return self.set_fleet_battle_plan(
+                    game_id, empire_id, int(args["fleet_key"]),
+                    args.get("plan_name", ""))
+            if op == "transfer_cargo":
+                return self.transfer_cargo(
+                    game_id, empire_id, int(args["fleet_key"]),
+                    args.get("cargo_delta") or {})
+            if op == "transfer_cargo_between_fleets":
+                return self.transfer_cargo_between_fleets(
+                    game_id, empire_id, int(args["fleet_key"]),
+                    int(args["other_fleet_key"]),
+                    args.get("delta") or {})
+            if op == "gift_to_trader":
+                return self.gift_to_trader(
+                    game_id, empire_id, int(args["fleet_key"]),
+                    int(args["trader_key"]), args.get("delta") or {})
+        except (KeyError, TypeError, ValueError):
+            return {"error": f"Malformed '{op}' order entry"}
+        return {"error": f"Unknown order entry type '{op}'"}
+
+    def submit_orders(self, game_id: str, empire_id: int) -> dict:
+        """
+        Lock the empire's turn: orders are final until the year
+        advances.
+
+        Port of OrderWriter.cs WriteOrders lines 63-64: TurnSubmitted =
+        true, LastTurnSubmitted = TurnYear.
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return {"error": "Game not found"}
+        empire = server_data.all_empires.get(empire_id)
+        if empire is None:
+            return {"error": "Empire not found"}
+        empire.turn_submitted = True
+        empire.last_turn_submitted = server_data.turn_year
+        self._save_game_state(game_id, server_data)
+        return {
+            "status": "submitted",
+            "empire_id": empire_id,
+            "turn_year": server_data.turn_year,
+        }
+
+    def get_submissions(self, game_id: str) -> Optional[List[dict]]:
+        """
+        Per-empire submission status for the current year.
+
+        Web analog of the console player list (NovaConsole.cs
+        SetPlayerList, lines 411-467): ai_program, turn flags and
+        last_turn_submitted (0 = "No Orders" ever submitted).
+        """
+        server_data = self._load_game_state(game_id)
+        if not server_data:
+            return None
+        rows = []
+        for player in server_data.all_players:
+            empire = server_data.all_empires.get(player.player_number)
+            rows.append({
+                "empire_id": player.player_number,
+                "race_name": player.race_name,
+                "ai_program": player.ai_program,
+                "turn_year": getattr(empire, 'turn_year', 0),
+                "turn_submitted": getattr(empire, 'turn_submitted',
+                                          False),
+                "last_turn_submitted": getattr(
+                    empire, 'last_turn_submitted', 0),
+            })
+        return rows
+
+    def export_game(self, game_id: str) -> Optional[dict]:
+        """
+        Export the entire game as a portable versioned file.
+
+        The body is exactly what save_game_state persists (the full
+        ServerData serialization plus last_messages), so import
+        round-trips through the existing loaders. The note marks the
+        file as host/carrier material - it contains every empire's
+        state, unlike the fog-limited turn package.
+        """
+        game_record = self.repository.get_game(game_id)
+        server_data = self._load_game_state(game_id)
+        if not game_record or not server_data:
+            return None
+        state_dict = self._serialize_state(server_data)
+        state_dict["last_messages"] = [
+            m.to_dict() for m in self._last_messages.get(game_id, [])
+        ]
+        return {
+            "format": GAME_FILE_FORMAT,
+            "version": CORRESPONDENCE_FILE_VERSION,
+            "game_id": game_id,
+            "turn_year": server_data.turn_year,
+            "note": "Full game state - host/carrier only. This file "
+                    "contains every empire's unfogged state; players "
+                    "should receive turn packages instead.",
+            "game": {
+                "name": game_record["name"],
+                "player_count": game_record["player_count"],
+                "universe_size": game_record["universe_size"],
+            },
+            "state": state_dict,
+        }
+
+    def import_game(self, game_file: dict) -> dict:
+        """
+        Import a full-game file as a new game.
+
+        Creates a fresh game record and persists the embedded state
+        through the normal save path; the imported game continues
+        under a new id with its seed and determinism intact.
+        """
+        if game_file.get("format") != GAME_FILE_FORMAT:
+            return {"error": "Not a Stars UltraNova game file",
+                    "code": 422}
+        if game_file.get("version") != CORRESPONDENCE_FILE_VERSION:
+            return {"error": "Unsupported game file version "
+                             f"'{game_file.get('version')}'",
+                    "code": 422}
+        state_dict = game_file.get("state")
+        game_meta = game_file.get("game") or {}
+        if not isinstance(state_dict, dict) or not state_dict:
+            return {"error": "Game file carries no state", "code": 422}
+
+        try:
+            server_data = self._deserialize_state(state_dict)
+        except Exception:
+            logger.exception("Game file state failed to deserialize")
+            return {"error": "Corrupt game file state", "code": 422}
+
+        game_record = self.repository.create_game(
+            game_meta.get("name", "Imported game"),
+            game_meta.get("player_count", len(server_data.all_empires)),
+            game_meta.get("universe_size", "medium"))
+        new_id = game_record["id"]
+
+        self._last_messages[new_id] = [
+            Message.from_dict(m)
+            for m in state_dict.get("last_messages", [])
+        ]
+        self._save_game_state(new_id, server_data)
+        self.repository.update_game(new_id, status="active")
+
+        return {
+            **game_record,
+            "status": "active",
+            "turn": server_data.turn_year,
         }
 
     # =========================================================================

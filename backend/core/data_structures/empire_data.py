@@ -78,6 +78,16 @@ class EmpireData:
     # "Mystery Trader Item" catalog entries on membership here.
     mt_components: List[str] = field(default_factory=list)
 
+    # Per-empire orders log for the current year: every order the
+    # player entered this turn, in submission order, as replayable
+    # entries ({"command_type", "command_data"} for commands,
+    # {"op", "args"} for the direct fleet operations). Web analog of
+    # the client command stack the C# OrderWriter serializes into the
+    # .orders file (OrderWriter.cs:77-80); recorded at submission
+    # because web orders apply to the empire state immediately.
+    # Cleared when the turn year advances (TurnGenerator.generate).
+    orders_log: List[dict] = field(default_factory=list)
+
     # Per-year score history: one ScoreRecord dict plus "year" per
     # generated turn. Web extension per user directive (wave 4): the
     # C# reference keeps no history - Intel.AllScores (Intel.cs:67)
@@ -146,6 +156,7 @@ class EmpireData:
             "temperature_mod_capability": self.temperature_mod_capability,
             "score_history": list(self.score_history),
             "mt_components": list(self.mt_components),
+            "orders_log": list(self.orders_log),
             "_fleet_counter": self._fleet_counter,
             "_design_counter": self._design_counter
         }
@@ -167,6 +178,7 @@ class EmpireData:
         empire._design_counter = data.get("_design_counter", 0)
         empire.score_history = list(data.get("score_history", []))
         empire.mt_components = list(data.get("mt_components", []))
+        empire.orders_log = list(data.get("orders_log", []))
 
         if "research_levels" in data:
             empire.research_levels = TechLevel.from_dict(data["research_levels"])

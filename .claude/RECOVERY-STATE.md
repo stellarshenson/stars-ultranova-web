@@ -1,6 +1,27 @@
 # Recovery State
 
-## BRACE 2026-07-27 ~20:20 CEST - user-ordered brace mid-wave-5
+## CURRENT 2026-07-28 ~00:15 CEST - Correspondence + functional harness CLOSED (960 green), LLM playtest harness IN FLIGHT
+
+- Correspondence play DONE (#25): suite 939 -> 960, all 9 criteria checked, determinism digest proven, journal 39. Functional harness DONE (#31): tests/functional/ 8 Playwright tests green twice, golden gamethrough seed 4242, RUN_FUNCTIONAL=1 gate, journal 40; docs/defects.md created with DEF-1..4 (functional-harness observations)
+- **LLM playtest harness builder RUNNING**: `wf_8f609647-f5c` (task w8tu81543; builds scripts/llm_playtest.py - claude -p both sides, port 9830 isolated server, per-turn checkpoints + forensics, 3-turn live smoke). If killed, RESUME:
+  `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/llm-playtest-harness-wf_8f609647-f5c.js", resumeFromRunId: "wf_8f609647-f5c"})`
+- On harness completion: review smoke, launch #29 100-turn run DETACHED (setsid nohup scripts/run_llm_playtest.sh, tee logs/), then #30 forensics -> defects.md -> fixes, then #26 wave-6 gate (final verification incl. RUN_FUNCTIONAL=1 harness + browser evidence)
+- Commit #27 still awaits explicit user approval
+
+## PREVIOUS 2026-07-27 ~23:30 CEST - Wave 5 CLOSED (939 green), Correspondence Play IN FLIGHT
+
+- Wave 5 verified and closed: suite 808 -> 939 passed, integration e2e tests/e2e/test_wave5_integration.py, live regression PASS (logs/wave5-regression.log), evidence walkthrough/final/wave5/ (7 frames: MT toggle, race wizard emblems, in-game race icon + Goto, star panel polish, waypoint leg editor, encyclopedia trader + packets art), journal entry 38, stale wave-5 log dates corrected to 2026-07-27, task #24 done
+- New acc-crit section "LLM Playtest Forensics" (6 criteria) - 100-turn claude -p vs claude -p game with forensics-to-fixes, runs AFTER all implementation, BEFORE wave-6 gate (tasks #28-30); wave-6 gate (#26) is now LAST
+- **Correspondence Play RUNNING**: `wf_b1556989-d7a` (task wt7dgp3bj; scout -> full-stack implementer -> verifier; all 9 acc-crit criteria). If killed, RESUME:
+  `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/correspondence-play-wf_b1556989-d7a.js", resumeFromRunId: "wf_b1556989-d7a"})`
+- **Functional harness RUNNING in parallel**: `wf_cb1bb133-fc0` (task wafa87u12; single builder - tests/functional/ Playwright harness, own server port 9820 + isolated DB, RUN_FUNCTIONAL=1 gate, 8 UI test modules incl. 30-turn fixed-seed gamethrough vs golden snapshot; touches ONLY new files, no backend/frontend edits). Task #31, blocks wave-6 gate. If killed, RESUME:
+  `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/functional-harness-wf_cb1bb133-fc0.js", resumeFromRunId: "wf_cb1bb133-fc0"})`
+- New acc-crit section "Functional Browser Harness" (4 criteria) recorded 2026-07-27, TOC green
+- On correspondence completion: review verify, journal entry, close #25, then #28 playtest harness build -> #29 100-turn detached run -> #30 forensics/fixes -> #26 wave-6 gate (also gated on #31)
+- Commit #27 still awaits explicit user approval (working tree carries wave 5 + everything since 6dd2aa7)
+- Dev server 9800 detached (health /health); suite baseline 939
+
+## BRACE 2026-07-27 ~20:20 CEST - user-ordered brace mid-wave-5 (RESOLVED - resumed ~20:40 as task w62r8m5ax, 8 cached agents replayed)
 
 **HORIZON: SESSION-ONLY (assumed - user gave none; matches prior usage-limit braces).** Cold-restart commands below cover a full server restart too.
 
