@@ -1,0 +1,120 @@
+{
+ "game_id": "1fb348f2-d164-4cff-887e-0395f398384b",
+ "name": "resumeproof",
+ "seed": 888,
+ "size": "small",
+ "model": "haiku",
+ "turns_target": 3,
+ "next_turn": 4,
+ "year": 2103,
+ "server_log_offset": 15048,
+ "fleet_history": {
+  "1": {
+   "4294967297": {
+    "pos": [
+     20.0,
+     117.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967298": {
+    "pos": [
+     81.5,
+     63.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967299": {
+    "pos": [
+     20,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967300": {
+    "pos": [
+     20,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967301": {
+    "pos": [
+     20,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967302": {
+    "pos": [
+     20,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967303": {
+    "pos": [
+     20,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   }
+  },
+  "2": {
+   "8589934593": {
+    "pos": [
+     372.3,
+     376.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934594": {
+    "pos": [
+     374.5,
+     373.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934595": {
+    "pos": [
+     374.4,
+     373.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934596": {
+    "pos": [
+     373.7,
+     375.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934597": {
+    "pos": [
+     380,
+     380
+    ],
+    "streak": 0,
+    "with_orders": false
+   }
+  }
+ },
+ "memo_paths": {
+  "1": "/home/lab/workspace/private/games/stars-ultranova-web/results/playtest/resumeproof/memo-1.md",
+  "2": "/home/lab/workspace/private/games/stars-ultranova-web/results/playtest/resumeproof/memo-2.md"
+ },
+ "done": false,
+ "victor": null,
+ "created": "2026-07-27T22:14:46+00:00"
+}

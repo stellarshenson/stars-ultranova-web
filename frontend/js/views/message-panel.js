@@ -53,8 +53,6 @@ const MessagePanel = {
 
         // Initial render
         this.render();
-
-        console.log('Message panel initialized');
     },
 
     /**

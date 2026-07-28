@@ -9,7 +9,12 @@ off-optimum environment) and runs a Terraform production order until
 the first clicks land, improving habitability.
 """
 
-SEED = 20260713
+# Seed picked so the nearest star to the empire-1 homeworld is
+# positive-hab yet off-optimum (env 53/35/16, hab 0.93 for the default
+# JOAT race): a dying negative-hab colony banks no terraform progress.
+# Re-picked honestly after DEF-16 homeworld fairness moved the seeded
+# homeworlds (the old 20260713 nearest star was hostile at 92/52/76).
+SEED = 20260716
 MAX_COLONIZE_TURNS = 15
 MAX_TERRAFORM_TURNS = 30
 

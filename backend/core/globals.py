@@ -2,31 +2,6 @@
 Global constants for Stars Nova.
 Port of: Common/GlobalDefinitions.cs
 """
-from enum import IntEnum
-
-
-class Victims(IntEnum):
-    """Target priority for combat."""
-    STARBASE = 0
-    CAPITAL_SHIP = 1
-    BOMBER = 2
-    ESCORT = 3
-    SUPPORT_SHIP = 4
-    ARMED_SHIP = 5
-    ANY_SHIP = 6
-
-
-class Strategy(IntEnum):
-    """Combat strategy options."""
-    MAX_DAMAGE_RATIO = 0
-    MAXIMISE_DAMAGE = 1
-    RUN_AWAY = 2
-    SCATTER_AND_RUN = 3
-    MIN_DAMAGE_TO_SELF = 4
-    KAMAKAZI = 5
-    HUMAN_SHIELD = 6
-    AR = 7
-
 
 # Colonists
 COLONISTS_PER_KILOTON = 100
@@ -96,8 +71,7 @@ NONE = NOBODY
 UNSET = -10000
 
 # Minefield
-MINE_FIELD_SNAP_TO_GRID_SIZE = 5
-MINEFIELD_SNAP_TO_GRID_SIZE = 5  # Alias for consistency
+MINEFIELD_SNAP_TO_GRID_SIZE = 5
 
 # Stargate rework (user directive 2026-07-13 - deliberate deviations
 # from canonical Stars! gate rules, acc-crit "Minefields, Gates,
@@ -281,18 +255,6 @@ AI_MINE_SWEEPER = " Pool Guy"
 AI_STARBASE = " Death Star"
 AI_BEAM_HULL = " Athena"
 AI_TORPEDO_HULL = " Spear Fish"
-
-VICTIM_NAMES = [
-    "Starbase", "Capital Ship", "Bomber", "Escort",
-    "Support ship", "Any Armed ship", "Any ship"
-]
-
-STRATEGY_NAMES = [
-    "Maximise Damage Ratio", "Maximise Damage", "Run away",
-    "Scatter and run in different directions", "Minimise damage to self",
-    "Move to enemy centre of mass and self destruct",
-    "Shield the bombers", "Shield the Starbase"
-]
 
 # Correspondence play file envelopes (web analog of the C# game-folder
 # file extensions .orders/.race/.intel, Common/GlobalDefinitions.cs:66-68;

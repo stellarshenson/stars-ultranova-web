@@ -1007,6 +1007,50 @@ class TestRonTargetPriority:
         assert wolf.target_list == []
 
 
+class TestUnarmedBattleTrigger:
+    """DEF-14: unarmed stacks never trigger battles - C# SelectTargets
+    skips unarmed wolves before any target assignment
+    (BattleEngine.cs:412-415), so unarmed-vs-unarmed co-location
+    yields zero targets and run() aborts before any report."""
+
+    def _make_engine(self):
+        server = MockServerData()
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+            server.all_empires[i] = empire
+        return RonBattleEngine(server, [])
+
+    def test_unarmed_vs_unarmed_yields_zero_targets(self):
+        engine = self._make_engine()
+        a = _make_battle_stack(0, 1, 200, 200, has_weapons=False)
+        b = _make_battle_stack(1, 2, 800, 200, has_weapons=False)
+
+        assert engine._select_targets([a, b]) == 0
+        # Flee targets are still assigned so movement would work if
+        # an armed enemy joined mid-battle
+        assert a.target is b
+        assert b.target is a
+
+    def test_unarmed_plus_armed_still_battles(self):
+        engine = self._make_engine()
+        wolf = _make_battle_stack(0, 1, 200, 200)
+        freighter = _make_battle_stack(1, 2, 800, 200,
+                                       has_weapons=False)
+
+        assert engine._select_targets([wolf, freighter]) == 1
+        assert wolf.target is freighter
+        # The unarmed stack keeps its flee target for movement
+        assert freighter.target is wolf
+        assert freighter.target_list == [wolf]
+
+    def test_armed_vs_armed_counts_both(self):
+        engine = self._make_engine()
+        a = _make_battle_stack(0, 1, 200, 200)
+        b = _make_battle_stack(1, 2, 800, 200)
+        assert engine._select_targets([a, b]) == 2
+
+
 class TestTactics:
     """Plan tactics drive battle movement (canonical Stars! rules;
     the C# engine never consumed Tactic - BattleEngine.cs:603 TODO)."""

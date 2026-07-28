@@ -206,6 +206,63 @@ class TestStar:
 
         assert star.calculate_growth(race) == expected
 
+    def create_negative_hab_star(self, colonists: int) -> Star:
+        """Star with gravity outside the default race range.
+
+        Default race tolerates gravity 15-85; gravity 100 gives a
+        component of -0.15 and hab_value -0.15/3 = -0.05, so raw
+        growth is 0.1 * colonists * -0.05 = -0.005 * colonists.
+        """
+        star = self.create_default_star()
+        star.gravity = 100
+        star.colonists = colonists
+        return star
+
+    def test_calculate_growth_negative_hab_small_deaths_truncate_to_zero(self):
+        """Deaths of 1-99 colonists round to 0, not -100 (DEF-9)."""
+        # Port of: Star.cs lines 341-345 and 380-383. C# (int) cast and
+        # integer division truncate toward zero: -50 -> 0
+        star = self.create_negative_hab_star(colonists=10000)
+        race = self.create_default_race()
+
+        assert race.hab_value(star) == pytest.approx(-0.05)
+        # raw growth -50 -> truncate toward zero -> 0 deaths
+        assert star.calculate_growth(race) == 0
+
+    def test_calculate_growth_negative_hab_truncates_toward_zero(self):
+        """-199.5 raw growth rounds to -100, not -200 (DEF-9)."""
+        star = self.create_negative_hab_star(colonists=39900)
+        race = self.create_default_race()
+
+        # raw growth 0.1 * 39900 * -0.05 = -199.5 -> (int) -199 ->
+        # /100*100 truncating toward zero -> -100
+        assert star.calculate_growth(race) == -100
+
+    def test_calculate_growth_negative_hab_scales_with_population(self):
+        """Deaths are proportional to population, not a flat -100 (DEF-9)."""
+        race = self.create_default_race()
+
+        small = self.create_negative_hab_star(colonists=100000)
+        large = self.create_negative_hab_star(colonists=1000000)
+
+        # Double math gives raw growth -499.99999999999994 / -5000.0;
+        # the C#-faithful (int) cast truncates toward zero to -499 /
+        # -5000, then /100*100 truncating -> -400 / -5000. The old
+        # floor rounding gave -500 / -5000 (and a flat -100 for any
+        # population under 20000)
+        assert small.calculate_growth(race) == -400
+        assert large.calculate_growth(race) == -5000
+
+    def test_calculate_growth_positive_rounds_down_to_100(self):
+        """Positive growth path regression: 150 rounds down to 100."""
+        star = self.create_default_star()
+        star.colonists = 1000
+        race = self.create_default_race()
+
+        # hab_value 1.0 (all variables at range center): growth
+        # 1000 * 15 / 100 * 1.0 = 150 -> 100
+        assert star.calculate_growth(race) == 100
+
     def test_update_population(self):
         """Test population update."""
         # Port of: Star.cs lines 413-416

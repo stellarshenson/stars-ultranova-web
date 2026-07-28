@@ -58,7 +58,6 @@ const BattleViewer = {
         }
 
         this.render();
-        console.log('Battle viewer initialized');
     },
 
     /**

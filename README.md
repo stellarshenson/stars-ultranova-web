@@ -50,7 +50,6 @@ The server will start on `http://localhost:9800` by default. You can customize s
 
 Edit `project.env` to customize:
 - Server port (default: 9800)
-- CORS origins
 - Database URL
 - Game settings (max players, universe sizes)
 - Debug mode

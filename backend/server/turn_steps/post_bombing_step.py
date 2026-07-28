@@ -92,20 +92,16 @@ class PostBombingStep(ITurnStep):
                 if target.owner != NOBODY:
                     receiver = server_state.all_empires.get(target.owner)
 
-                # Handle colonization
+                # Handle colonization. An occupied target aborts
+                # inside _perform_colonization (ColoniseTask.cs
+                # IsValid) - colonize NEVER converts to an invasion;
+                # taking an inhabited planet requires an explicit
+                # INVADE order
                 if task_type == WaypointTask.COLONIZE:
-                    if receiver is not None and receiver.id != fleet.owner:
-                        # Planet is occupied - convert to invasion
-                        invade_messages = self._perform_invasion(
-                            fleet, target, sender, receiver, server_state
-                        )
-                        messages.extend(invade_messages)
-                    else:
-                        # Perform colonization
-                        colonize_messages = self._perform_colonization(
-                            fleet, target, sender, server_state
-                        )
-                        messages.extend(colonize_messages)
+                    colonize_messages = self._perform_colonization(
+                        fleet, target, sender, server_state
+                    )
+                    messages.extend(colonize_messages)
 
                     # Remove the waypoint
                     if index < len(fleet.waypoints):
@@ -146,23 +142,45 @@ class PostBombingStep(ITurnStep):
         """
         messages: List[Message] = []
 
-        # Check if fleet can colonize
-        if not getattr(fleet, 'can_colonize', False):
+        # Validity guards in the C# order (ColoniseTask.cs IsValid,
+        # lines 71-108: occupied, colonists aboard, colonization
+        # module) - an invalid task aborts with no state change, so
+        # colonists stay aboard (TurnGenerator.cs:457-465 skips
+        # Perform on IsValid failure)
+
+        # Occupied planet - ANY occupant, foreign or own
+        # (ColoniseTask.cs:88-92; run100 DEF-12: this guard was
+        # missing and a foreign-owned target auto-invaded instead)
+        if star.colonists != 0:
             messages.append(Message(
                 audience=fleet.owner,
-                text=f"{fleet.name} cannot colonize - no colonization module.",
+                text=f"{fleet.name} attempted to colonise {star.name} "
+                     f"but it is already occupied.",
                 message_type="Colonization Failed",
                 fleet_key=fleet.key
             ))
             return messages
 
-        # Check if there are colonists to drop
+        # Check if there are colonists to drop (ColoniseTask.cs:94-98)
         colonists_to_drop = fleet.cargo.colonist_numbers
 
         if colonists_to_drop <= 0:
             messages.append(Message(
                 audience=fleet.owner,
-                text=f"{fleet.name} cannot colonize - no colonists aboard.",
+                text=f"{fleet.name} attempted to colonise {star.name} "
+                     f"but no colonists were on board.",
+                message_type="Colonization Failed",
+                fleet_key=fleet.key
+            ))
+            return messages
+
+        # Check if fleet can colonize (ColoniseTask.cs:100-104)
+        if not getattr(fleet, 'can_colonize', False):
+            messages.append(Message(
+                audience=fleet.owner,
+                text=f"{fleet.name} attempted to colonise {star.name} "
+                     f"but no ships with colonization module were "
+                     f"present.",
                 message_type="Colonization Failed",
                 fleet_key=fleet.key
             ))
@@ -210,8 +228,12 @@ class PostBombingStep(ITurnStep):
             fleet_key=fleet.key
         ))
 
-        # The colony ship is consumed by colonization, as in the original.
-        # Its hull minerals are recovered on the planet surface.
+        # Deliberate web deviation from C# (adjudicated better than
+        # canon in the run100 forensics): only the colonizer tokens
+        # are consumed and their hull mass is half-salvaged as
+        # ironium, where ColoniseTask.cs:119-127 clears the ENTIRE
+        # fleet (Composition.Clear()) and salvages 0.75 * fleet
+        # TotalCost as surface resources - escorts survive here.
         consumed = []
         for token_key, token in fleet.tokens.items():
             if token.can_colonize:

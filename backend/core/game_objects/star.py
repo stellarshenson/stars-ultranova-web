@@ -415,9 +415,15 @@ class Star(Mappable):
             population_growth = self.colonists * -0.12
 
         # Minimal colonist growth unit is 100 colonists
-        # Port of: Star.cs lines 380-383
+        # Port of: Star.cs lines 380-383. The C# (int) cast AND C# integer
+        # division both truncate toward zero; Python // floors toward negative
+        # infinity, which turned deaths of 1-99 colonists into -100 and
+        # over-rounded larger deaths by up to 99 (DEF-9)
         final_growth = int(population_growth)
-        final_growth = (final_growth // 100) * 100
+        if final_growth >= 0:
+            final_growth = (final_growth // 100) * 100
+        else:
+            final_growth = -((-final_growth) // 100) * 100
 
         return final_growth
 

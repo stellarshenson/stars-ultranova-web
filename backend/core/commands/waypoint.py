@@ -108,6 +108,17 @@ class WaypointCommand(Command):
             return None
 
         elif self.mode == CommandMode.EDIT:
+            # Web deviation (run100 DEF-11): an Edit at index 0 while
+            # the fleet is in transit lands on the same-position
+            # NoTask placeholder the turn generator inserts and pops
+            # (TurnGenerator.cs:430-436) - a warp edit written only
+            # there would be silently lost next turn, so it is also
+            # copied onto the real destination waypoint behind it.
+            # The C# WinForms client edits leg waypoints directly.
+            if (self.index == 0 and self.waypoint is not None
+                    and len(fleet.waypoints) > 1
+                    and fleet._waypoint_zero_is_placeholder()):
+                fleet.waypoints[1].warp_factor = self.waypoint.warp_factor
             # Edit removes then inserts at same index
             if self.index < len(fleet.waypoints):
                 fleet.waypoints.pop(self.index)

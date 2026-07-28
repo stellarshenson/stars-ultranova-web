@@ -99,8 +99,15 @@ def _add_driver_colony(harness, empire_id, rating):
     server_data = _load(harness)
     empire = server_data.all_empires[empire_id]
     home = _home_star(server_data, empire_id)
+    # Nearest unowned star at least 26 ly out: the exchange must stay
+    # in flight past the first year (warp 5 = 25 ly/year) so the
+    # first-year flight-math and the catch-message assertions have a
+    # leg to measure. DEF-16 homeworld fairness selects dense
+    # neighborhoods, so the plain nearest star can sit under 25 ly
+    # (18 ly on this seed).
     star = min((s for s in server_data.all_stars.values()
-                if s.owner == 0 and s.name != home.name),
+                if s.owner == 0 and s.name != home.name
+                and _dist(s, home) >= 26),
                key=lambda s: _dist(s, home))
     star.owner = empire_id
     star.colonists = 50000

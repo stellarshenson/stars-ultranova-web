@@ -5,11 +5,9 @@ Shows range of planet types from frozen to scorching, low to high radiation/grav
 """
 
 import asyncio
-import sys
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
 from playwright.async_api import async_playwright
 

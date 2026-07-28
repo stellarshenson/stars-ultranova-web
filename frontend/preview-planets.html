@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stars Nova Web - World Rendering Preview</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body {
+            margin: 0;
+            padding: 24px 32px 48px;
+            background: #0a0c18;
+            color: #c8d4ea;
+            font-family: "Segoe UI", Tahoma, sans-serif;
+        }
+        h1 {
+            font-size: 15px;
+            font-weight: normal;
+            color: #6fa8dc;
+            margin: 0 0 4px;
+        }
+        h2 {
+            font-size: 13px;
+            font-weight: normal;
+            color: #6fa8dc;
+            margin: 32px 0 8px;
+        }
+        p.note {
+            font-size: 11px;
+            color: #7d8aa5;
+            margin: 0 0 16px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 240px);
+            gap: 20px 24px;
+        }
+        .cell {
+            text-align: center;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+        }
+        .name {
+            font-size: 12px;
+            font-weight: bold;
+            margin-top: 6px;
+        }
+        .env {
+            font-size: 11px;
+            color: #8fa0bd;
+        }
+        .cls {
+            font-size: 11px;
+            color: #6fa8dc;
+        }
+    </style>
+</head>
+<body>
+    <h1>World rendering preview - PlanetArt</h1>
+    <p class="note">
+        Static page: no game state, no API calls. Every world is drawn by
+        PlanetArt.render from its environment and a seeded per-star id.
+    </p>
+
+    <h2>Twelve environments</h2>
+    <div class="grid" id="grid-environments"></div>
+
+    <h2>Same environment, different star - four pairs</h2>
+    <p class="note">
+        Each pair shares temperature, radiation and gravity and differs only
+        by star id, so the seeded per-world parameters carry the difference.
+    </p>
+    <div class="grid" id="grid-pairs"></div>
+
+    <script src="js/views/encyclopedia.js"></script>
+    <script src="js/views/planet-art.js"></script>
+    <script>
+        const SIZE = 200;
+
+        const ENVIRONMENTS = [
+            ['Frozen', 10, 15, 50],
+            ['Frozen, irradiated', 10, 85, 50],
+            ['Cold earthlike', 35, 40, 50],
+            ['Temperate ideal', 50, 50, 50],
+            ['Low gravity', 50, 50, 20],
+            ['High gravity', 50, 50, 80],
+            ['Irradiated temperate', 50, 90, 50],
+            ['Hot desert', 70, 30, 50],
+            ['Volcanic', 75, 70, 60],
+            ['Scorching hell', 95, 95, 70],
+            ['Cold gas giant', 25, 40, 95],
+            ['Hot gas giant', 80, 60, 95]
+        ];
+
+        const PAIRS = [
+            ['Temperate ideal', 50, 50, 50],
+            ['Hot desert', 70, 30, 50],
+            ['Frozen', 10, 15, 50],
+            ['Hot gas giant', 80, 60, 95]
+        ];
+
+        function makeStar(id, name, temperature, radiation, gravity) {
+            return {
+                id, name, temperature, radiation, gravity,
+                colonists: 0, spectral_class: 'G'
+            };
+        }
+
+        function addCell(parent, star, label) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            const canvas = document.createElement('canvas');
+            canvas.width = SIZE;
+            canvas.height = SIZE;
+            canvas.className = 'world';
+            canvas.dataset.world = star.id;
+            cell.appendChild(canvas);
+            const name = document.createElement('div');
+            name.className = 'name';
+            name.textContent = label;
+            cell.appendChild(name);
+            const env = document.createElement('div');
+            env.className = 'env';
+            env.textContent = `temp ${star.temperature} - rad ${star.radiation}`
+                + ` - grav ${star.gravity}`;
+            cell.appendChild(env);
+            const cls = document.createElement('div');
+            cls.className = 'cls';
+            cell.appendChild(cls);
+            parent.appendChild(cell);
+
+            const t0 = performance.now();
+            PlanetArt.render(canvas, star);
+            const ms = performance.now() - t0;
+            canvas.dataset.ms = ms.toFixed(2);
+            cls.textContent = `${PlanetArt.classify(star)} - ${ms.toFixed(1)} ms`;
+        }
+
+        // warm the renderer once so the printed timings are steady-state
+        // rather than a measurement of the JIT warming up
+        const warm = document.createElement('canvas');
+        warm.width = SIZE;
+        warm.height = SIZE;
+        ['warmup-rock', 'warmup-gas'].forEach((id, i) => {
+            PlanetArt.render(warm, makeStar(id, id, 50, 50, i ? 95 : 50));
+        });
+
+        const grid = document.getElementById('grid-environments');
+        ENVIRONMENTS.forEach(([name, t, r, g]) => {
+            addCell(grid, makeStar(name, name, t, r, g), name);
+        });
+
+        const pairs = document.getElementById('grid-pairs');
+        PAIRS.forEach(([name, t, r, g]) => {
+            ['A', 'B'].forEach(tag => {
+                const id = `${name} pair ${tag}`;
+                addCell(pairs, makeStar(id, id, t, r, g), `${name} - ${tag}`);
+            });
+        });
+
+        window.PREVIEW_READY = true;
+    </script>
+</body>
+</html>

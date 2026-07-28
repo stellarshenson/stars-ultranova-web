@@ -29,8 +29,6 @@ const DesignPanel = {
         // Listen to events
         GameState.on('gameLoaded', () => this.loadComponents());
         GameState.on('gameCreated', () => this.loadComponents());
-
-        console.log('Design panel initialized');
     },
 
     // Item types that can be mounted in hull slots (see ItemType enum

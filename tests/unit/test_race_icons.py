@@ -37,15 +37,12 @@ def oversized_data_uri() -> str:
 def reset_global_state():
     """Reset global state before each test."""
     import backend.services.game_manager as gm_module
-    import backend.persistence.database as db_module
 
     gm_module._game_manager = None
-    db_module._database = None
 
     yield
 
     gm_module._game_manager = None
-    db_module._database = None
 
 
 @pytest.fixture

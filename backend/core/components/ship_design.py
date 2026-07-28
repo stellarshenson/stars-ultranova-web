@@ -223,6 +223,20 @@ class ShipDesign(Item):
         return 0
 
     @property
+    def fuel_generation(self) -> int:
+        """
+        Fuel generated per year by Fuel-property components.
+
+        Web mod - fuel_consumption subtracts this (no C# equivalent
+        in ShipDesign.cs FuelConsumption); cached on fleet tokens.
+        """
+        self._ensure_updated()
+        fuel = self._summary_properties.get("Fuel")
+        if fuel and isinstance(fuel, dict):
+            return fuel.get("Generation", 0)
+        return 0
+
+    @property
     def cargo_capacity(self) -> int:
         """Total cargo capacity."""
         self._ensure_updated()

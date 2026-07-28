@@ -89,8 +89,6 @@ const NebulaSVG = {
 
         // Combined reference
         this.nebulaeGroup = this.gasGroup;
-
-        console.log('NebulaSVG initialized with dual dust/gas model');
     },
 
     /**

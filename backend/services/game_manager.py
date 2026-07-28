@@ -12,7 +12,7 @@ import logging
 import random
 from typing import Dict, List, Optional, Any
 
-from ..persistence.database import Database, get_database
+from ..persistence.database import Database
 from ..persistence.game_repository import GameRepository
 from ..server.server_data import ServerData, VictorySettings
 from ..server.scores import Scores
@@ -42,7 +42,8 @@ from ..core.waypoints.waypoint import Waypoint, NoTaskObj
 from .galaxy_generator import GalaxyGenerator
 from .race_points import calculate_advantage_points
 from .ship_specs import (
-    design_from_dict, find_design, make_token, SimpleDesign
+    _free_warp_from_table, design_from_dict, find_design, make_token,
+    SimpleDesign
 )
 
 logger = logging.getLogger(__name__)
@@ -213,7 +214,7 @@ class GameManager:
         Args:
             db_path: Path to SQLite database.
         """
-        self.db = get_database(db_path)
+        self.db = Database(db_path)
         self.repository = GameRepository(self.db)
 
         # In-memory cache of loaded games
@@ -229,6 +230,7 @@ class GameManager:
             ensure_components_loaded()
         except Exception:
             logger.exception("Component catalog failed to load")
+            raise
 
     # =========================================================================
     # Game Lifecycle
@@ -2448,6 +2450,34 @@ class GameManager:
                 design = design_from_dict(design_dict)
                 empire.designs[design.key] = design
 
+            # Migrate pre-canonical-fuel-table saves (run100 DEF-11):
+            # tokens serialized before the DEF-7 fix carry
+            # free_warp_speed 0 (ShipToken.from_dict default) and an
+            # all-zero fuel_table, leaving the fleet stuck at warp 0
+            # forever once out of fuel. Refresh both from the owning
+            # empire's design (mirroring make_token); when the design
+            # is gone, derive free warp from a stored non-zero fuel
+            # table (all zeros = absent data or starbase - keep 0)
+            for fleet in empire.owned_fleets.values():
+                for token in fleet.tokens.values():
+                    if token.free_warp_speed:
+                        continue
+                    design = empire.designs.get(token.design_key)
+                    if design is not None:
+                        engine = getattr(design, 'engine', None)
+                        if engine is not None:
+                            design_table = list(engine.fuel_consumption)
+                        else:
+                            design_table = list(
+                                getattr(design, 'fuel_table', [0] * 10))
+                        if not any(token.fuel_table) and any(design_table):
+                            token.fuel_table = design_table
+                        token.free_warp_speed = getattr(
+                            design, 'free_warp_speed', 0)
+                    if not token.free_warp_speed and any(token.fuel_table):
+                        token.free_warp_speed = _free_warp_from_table(
+                            token.fuel_table)
+
             empire.star_reports = dict(empire_dict.get("star_reports", {}))
             empire.fleet_reports = {
                 int(k): v
@@ -2609,17 +2639,14 @@ class GameManager:
 _game_manager: Optional[GameManager] = None
 
 
-def get_game_manager(db_path: str = "stars_nova.db") -> GameManager:
+def get_game_manager() -> GameManager:
     """
     Get or create global game manager instance.
-
-    Args:
-        db_path: Path to SQLite database.
 
     Returns:
         GameManager instance.
     """
     global _game_manager
     if _game_manager is None:
-        _game_manager = GameManager(db_path)
+        _game_manager = GameManager()
     return _game_manager

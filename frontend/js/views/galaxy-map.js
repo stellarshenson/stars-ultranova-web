@@ -115,8 +115,6 @@ const GalaxyMap = {
 
         // Initial render
         this.render();
-
-        console.log('Galaxy map initialized');
     },
 
     /**

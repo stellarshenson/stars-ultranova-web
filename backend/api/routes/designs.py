@@ -10,6 +10,7 @@ from ...core.components import (
     Component, ShipDesign, Hull
 )
 from ...core.game_objects.item import ItemType
+from ...services.design_builder import COMPONENTS_XML
 
 router = APIRouter(prefix="/api/designs", tags=["designs"])
 
@@ -86,7 +87,7 @@ def _ensure_components_loaded() -> ComponentLoader:
     """Ensure components are loaded."""
     loader = get_component_loader()
     if not loader.is_loaded:
-        load_components("backend/data/components.xml")
+        load_components(COMPONENTS_XML)
     return loader
 
 
@@ -130,10 +131,12 @@ def _engine_to_response(comp: Component) -> EngineResponse:
     engine_data = engine_prop.values if engine_prop else {}
     fuel = engine_data.get("fuel_consumption", [0] * 10)
 
-    # Calculate free warp speed
+    # Calculate free warp speed. C# Engine.cs lines 43-56 tests
+    # == 0; the web mod stores NEGATIVE entries at ramscoop free
+    # warps (fuel generation), so <= 0 counts as free here
     free_warp = 0
     for i in range(9, -1, -1):
-        if fuel[i] == 0:
+        if fuel[i] <= 0:
             free_warp = i + 1
             break
 

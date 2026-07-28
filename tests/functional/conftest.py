@@ -99,6 +99,14 @@ def _wait_for_health(proc, timeout=30.0):
         try:
             with urllib.request.urlopen(f"{BASE_URL}/health", timeout=2) as r:
                 if r.status == 200:
+                    # guard against a stale listener answering while our
+                    # spawn lost the port bind race
+                    time.sleep(0.5)
+                    if proc.poll() is not None:
+                        raise RuntimeError(
+                            f"functional server exited (code "
+                            f"{proc.returncode}) but {BASE_URL} answers - "
+                            f"a stale server holds the port")
                     return
         except (urllib.error.URLError, OSError):
             pass

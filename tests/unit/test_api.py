@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 from backend.main import app
 from backend.services.game_manager import GameManager, _game_manager
-from backend.persistence.database import _database
 
 
 @pytest.fixture(autouse=True)
@@ -16,16 +15,13 @@ def reset_global_state():
     """Reset global state before each test."""
     # Reset global instances
     import backend.services.game_manager as gm_module
-    import backend.persistence.database as db_module
 
     gm_module._game_manager = None
-    db_module._database = None
 
     yield
 
     # Cleanup after test
     gm_module._game_manager = None
-    db_module._database = None
 
 
 @pytest.fixture

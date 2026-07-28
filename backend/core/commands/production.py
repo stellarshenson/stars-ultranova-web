@@ -92,8 +92,10 @@ class ProductionCommand(Command):
 
             # Don't add cheated pre-built units (ProductionCommand.cs:140-143:
             # Unit.Cost must equal Unit.RemainingCost; the web's progress
-            # model is the single banked int, which must arrive at zero)
-            if self.production_order.partial_resources_spent != 0:
+            # model is the per-resource remaining_cost plus its derived
+            # energy mirror, both of which must arrive clean)
+            if (self.production_order.partial_resources_spent != 0
+                    or self.production_order.remaining_cost is not None):
                 msg = Message(
                     audience=empire.id,
                     text="Cannot add a pre-built production order",

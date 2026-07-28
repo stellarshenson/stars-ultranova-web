@@ -10,8 +10,6 @@ document.addEventListener('DOMContentLoaded', () => {
             this.initComponents();
             this.setupGameState();
             this.loadSettings();
-
-            console.log('Stars Nova Web initialized');
         },
 
         /**
@@ -26,11 +24,6 @@ document.addEventListener('DOMContentLoaded', () => {
             // Initialize menu bar
             if (window.MenuBar) {
                 MenuBar.init('menu-bar');
-            }
-
-            // Initialize panel manager
-            if (window.PanelManager) {
-                PanelManager.init();
             }
 
             // Initialize galaxy map

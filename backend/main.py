@@ -4,17 +4,14 @@ Stars Nova Web - FastAPI Application Entry Point
 A web port of the Stars! Nova 4X strategy game.
 """
 import logging
-from fastapi import FastAPI, WebSocket, Request
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
-from typing import Optional
 
 from .config import settings
 from .api.routes import (games_router, stars_router, fleets_router,
                          designs_router, races_router)
-from .api.websocket import handle_websocket
 
 # Configure logging
 logging.basicConfig(
@@ -30,15 +27,6 @@ app = FastAPI(
     version=settings.version,
     description="Web port of Stars! Nova 4X strategy game",
     root_path=settings.root_path
-)
-
-# CORS middleware for frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=settings.cors_allow_methods,
-    allow_headers=settings.cors_allow_headers,
 )
 
 
@@ -108,19 +96,6 @@ async def root(request: Request):
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
-
-
-@app.websocket("/ws/games/{game_id}")
-async def websocket_game(websocket: WebSocket, game_id: str, empire_id: Optional[int] = None):
-    """
-    WebSocket endpoint for real-time game updates.
-
-    Args:
-        websocket: WebSocket connection.
-        game_id: Game to connect to.
-        empire_id: Optional empire filter for private messages.
-    """
-    await handle_websocket(websocket, game_id, empire_id)
 
 
 if __name__ == "__main__":

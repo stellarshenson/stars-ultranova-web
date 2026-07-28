@@ -140,7 +140,6 @@ class Scores:
                     continue
                 if not design.has_weapons:
                     unarmed_ships += token.quantity
-                    total_score += 0.5 * token.quantity
                 elif design.power_rating < 2000:
                     # C# ShipDesign.PowerRating is a stub returning 0
                     # (Common/Components/ShipDesign.cs:141-150), so the
@@ -150,13 +149,27 @@ class Scores:
                     # ship_specs.py), the same 2000 threshold the Ron
                     # battle engine applies.
                     escort_ships += token.quantity
-                    total_score += 2 * token.quantity
                 else:
                     capital_ships += token.quantity
 
         score.unarmed_ships = unarmed_ships
         score.escort_ships = escort_ships
         score.capital_ships = capital_ships
+
+        # WEB MOD (DEF-8): canonical original-Stars! rule (Stars! 2.6
+        # help, "The Score" report) - ship points in the unarmed and
+        # escort categories are awarded for at most one scoring ship
+        # per owned planet; the capital-ship harmonic below
+        # (Scores.cs:135-139) already saturates at 8*planets. Nova C#
+        # (both ServerState/Scores.cs:104-139 and legacy
+        # Common/Scores.cs:87-120) omitted the cap, which made escort
+        # spam strictly dominant (run100 forensics,
+        # docs/playtest-forensics-run100.md: 1268 cheap armed probes
+        # scored 2536 of 2657 points). The raw counts in the
+        # ScoreRecord columns above stay uncapped for the report UI;
+        # only the awarded points are capped.
+        total_score += 0.5 * min(unarmed_ships, score.planets)
+        total_score += 2 * min(escort_ships, score.planets)
 
         if capital_ships != 0:
             # All-int expression with int division (Scores.cs:135-139)

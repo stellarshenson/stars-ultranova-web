@@ -470,6 +470,44 @@ const Encyclopedia = {
      */
     ENTRIES: [
         {
+            id: 'engines-fuel',
+            title: 'Engines and Fuel',
+            html: `
+                <p>Every engine model carries the original Stars!
+                per-warp fuel table. A fleet covers warp&sup2; light
+                years a year and burns (mass + cargo) x
+                table[warp] / 100 x warp&sup2; / 200 mg of fuel per
+                year, summed over every ship - so the cost of speed
+                follows the table, not a straight line: a 25 kT scout
+                on a Quick Jump 5 sips 3.1 mg a year at warp 5 (table
+                100) but gulps 64 mg at warp 8 (table 800).</p>
+                <ul>
+                    <li><b>Burn tables</b> - each engine lists a fuel
+                        factor per warp, 1 through 10; 100 means 1.0
+                        efficiency. All fifteen engines use the
+                        canonical Stars! tables.</li>
+                    <li><b>Free warps</b> - a table entry of zero or
+                        less burns nothing. Ramscoop engines here
+                        carry negative entries at their free warps (a
+                        web deviation - the original marks them 0):
+                        the Fuel Mizer flies free through warp 4, the
+                        Galaxy Scoop through warp 9.</li>
+                    <li><b>Improved Fuel Efficiency</b> - races with
+                        the IFE trait burn 15% less at every
+                        warp.</li>
+                    <li><b>Fuel generation</b> - fuel-generating
+                        components offset a design's burn, and warp 1
+                        travel tops the tanks up - both web additions
+                        to the original rules.</li>
+                    <li><b>Out of fuel</b> - a dry fleet drops to its
+                        engines' free warp speed and limps on.</li>
+                    <li><b>No burn at all</b> - stargate jumps and
+                        mineral packets spend no fuel; storms and dust
+                        nebulae slow the fleet but never touch the
+                        burn formula.</li>
+                </ul>`
+        },
+        {
             id: 'dust-nebulae',
             title: 'Dust Nebulae',
             html: `

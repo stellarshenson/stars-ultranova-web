@@ -984,12 +984,10 @@ class TestEmpireReportsPersistence:
 
     def test_empire_reports_roundtrip(self, tmp_path):
         import backend.services.game_manager as gm_module
-        import backend.persistence.database as db_module
         from backend.services.game_manager import GameManager
         from backend.services.ship_specs import SimpleDesign
 
         gm_module._game_manager = None
-        db_module._database = None
         try:
             manager = GameManager(str(tmp_path / "reports.db"))
             game = manager.create_game("Reports Test", 2, "small",
@@ -1018,7 +1016,6 @@ class TestEmpireReportsPersistence:
             assert record["design"]["name"] == "Raider"
         finally:
             gm_module._game_manager = None
-            db_module._database = None
 
 
 # --------------------------------------------------------------------------
@@ -1199,6 +1196,349 @@ class TestPostBombingStep:
         assert star.resources_on_hand.ironium == 500
         assert fleet.cargo.colonists_in_kilotons == 0
         assert any("colonized" in m.text.lower() for m in messages)
+
+    def _colonize_fleet(self, owner=0, target="Contested"):
+        return MockFleet(
+            key=1, owner=owner,
+            position=NovaPoint(100, 100),
+            waypoints=[Waypoint(
+                position_x=100, position_y=100,
+                destination=target,
+                task=WaypointTask.COLONIZE
+            )],
+            cargo=MockCargo(colonists_in_kilotons=100, ironium=500),
+            can_colonize=True,
+            tokens={1: MockFleetToken(quantity=1, can_colonize=True)}
+        )
+
+    def test_colonize_occupied_foreign_planet_aborts(self):
+        """COLONIZE on a foreign-owned planet aborts with the C#
+        'already occupied' message (ColoniseTask.cs:88-92) - it must
+        NOT convert into an invasion (run100 DEF-12: Kapteyn's Star
+        was auto-invaded on stale intel)."""
+        data = ServerData()
+
+        star = MockStar(name="Contested", owner=2, colonists=50000)
+        data.all_stars = {"Contested": star}
+
+        defender = EmpireData(id=2)
+        defender.owned_stars = {"Contested": star}
+        attacker = EmpireData(id=0)
+        fleet = self._colonize_fleet(owner=0)
+        attacker.owned_fleets = {1: fleet}
+        data.all_empires = {0: attacker, 2: defender}
+
+        messages = PostBombingStep().process(data)
+
+        # No invasion, no ownership change, defenders untouched
+        assert star.owner == 2
+        assert star.colonists == 50000
+        # Colonists stay aboard, colonizer token intact
+        assert fleet.cargo.colonists_in_kilotons == 100
+        assert len(fleet.tokens) == 1
+        assert any("already occupied" in m.text for m in messages)
+        assert not any(m.message_type == "Invasion" for m in messages)
+        # The waypoint task was consumed (C# clears it to NoTask)
+        assert len(fleet.waypoints) == 0
+
+    def test_colonize_own_planet_aborts(self):
+        """COLONIZE on an already-colonized OWN planet aborts too -
+        star.Colonists != 0 covers ANY occupant (ColoniseTask.cs:88-92)
+        - instead of overwriting the population."""
+        data = ServerData()
+
+        star = MockStar(name="Home", owner=0, colonists=250000)
+        data.all_stars = {"Home": star}
+
+        empire = EmpireData(id=0)
+        empire.owned_stars = {"Home": star}
+        fleet = self._colonize_fleet(owner=0, target="Home")
+        empire.owned_fleets = {1: fleet}
+        data.all_empires = {0: empire}
+
+        messages = PostBombingStep().process(data)
+
+        assert star.colonists == 250000  # not overwritten
+        assert fleet.cargo.colonists_in_kilotons == 100
+        assert any("already occupied" in m.text for m in messages)
+
+
+# --------------------------------------------------------------------------
+# Fleet movement fuel-time cap (DEF-13) and in-transit warp (DEF-11)
+# --------------------------------------------------------------------------
+
+# Quick Jump 5 per-warp fuel factors (components.xml, warp 1..10)
+QJ5_TABLE = [0, 25, 100, 100, 100, 180, 500, 800, 900, 1080]
+
+
+def _real_fleet(fuel=100.0, warp=8, distance=100.0, free_warp=1,
+                table=None, mass=25):
+    """Real Fleet with one token, one leg east of length `distance`."""
+    fleet = Fleet(name="Scout #1")
+    fleet.key = (1 << 32) | 1  # owner 1, id 1 (owner lives in the key)
+    fleet.position = NovaPoint(0, 0)
+    token = ShipToken(design_key=1, mass=mass, quantity=1)
+    token.fuel_table = list(table if table is not None else QJ5_TABLE)
+    token.free_warp_speed = free_warp
+    fleet.tokens = {1: token}
+    fleet.fuel_available = fuel
+    fleet.waypoints = [Waypoint(
+        position_x=distance, position_y=0.0, warp_factor=warp,
+        destination="Deep Space", task=NoTaskObj())]
+    return fleet
+
+
+class TestMoveFleetFuelCap:
+    """_move_fleet ports the Fleet.cs Move three-way travel-time min
+    (target time / available time / fuel time, lines 520-546): an
+    empty tank moves a fleet zero light years and fuel can never go
+    negative (DEF-13 regression - run100 Santa Maria #64 moved 4.0 ly
+    on an empty tank then deadlocked silently)."""
+
+    def _gen(self):
+        return TurnGenerator(ServerData())
+
+    def test_arrival_within_fuel(self):
+        """Target time smallest: fleet arrives, burns the leg's fuel
+        (warp 5, 25 ly = one year, rate 3.125 -> int 3)."""
+        fleet = _real_fleet(fuel=100.0, warp=5, distance=25.0)
+        messages = []
+        status = self._gen()._move_fleet(fleet, 1.0, None, messages)
+        assert status == "arrived"
+        assert fleet.position.x == 25.0
+        assert fleet.fuel_available == 97.0
+        assert messages == []
+
+    def test_year_cap_partial_move(self):
+        """Available time smallest: one year of travel at warp 5
+        covers 25 of 100 ly."""
+        fleet = _real_fleet(fuel=100.0, warp=5, distance=100.0)
+        status = self._gen()._move_fleet(fleet, 1.0, None, [])
+        assert status == "in_transit"
+        assert fleet.position.x == 25.0
+        assert fleet.fuel_available == 97.0
+
+    def test_fuel_cap_limits_distance(self):
+        """Fuel time smallest: 10 mg at warp 8 (rate 64/yr) buys
+        exactly 10 ly of the 100 ly leg, then the fleet drops to its
+        free warp - silently (Fleet.cs:570-576)."""
+        fleet = _real_fleet(fuel=10.0, warp=8, distance=100.0)
+        messages = []
+        status = self._gen()._move_fleet(fleet, 1.0, None, messages)
+        assert status == "in_transit"
+        assert abs(fleet.position.x - 10.0) < 1e-9
+        assert fleet.fuel_available == 0
+        # Dropped to Quick Jump 5's free warp 1, no message here (the
+        # canonical per-turn message is _process_fleet's)
+        assert fleet.waypoints[0].warp_factor == 1
+        assert messages == []
+
+    def test_exactly_sufficient_fuel_reports_in_transit(self):
+        """C# compares travelTime >= fuelTime (Fleet.cs:542), so fuel
+        exactly covering the leg still reports InTransit."""
+        fleet = _real_fleet(fuel=32.0, warp=8, distance=32.0)
+        status = self._gen()._move_fleet(fleet, 1.0, None, [])
+        assert status == "in_transit"
+        assert abs(fleet.position.x - 32.0) < 1e-9
+        assert fleet.fuel_available == 0
+
+    def test_zero_fuel_moves_zero_distance(self):
+        """An empty tank moves the fleet 0 ly (fuelTime 0) - the
+        DEF-13 core regression."""
+        fleet = _real_fleet(fuel=0.0, warp=8, distance=100.0)
+        status = self._gen()._move_fleet(fleet, 1.0, None, [])
+        assert status == "in_transit"
+        assert fleet.position.x == 0.0
+        assert fleet.fuel_available == 0
+        assert fleet.waypoints[0].warp_factor == 1  # free warp
+
+    def test_zero_fuel_zero_free_warp_stranded_message(self):
+        """No free warp: the fleet clamps to warp 0 and the player is
+        told it is stranded (web addition; C# strands silently)."""
+        fleet = _real_fleet(fuel=0.0, warp=8, distance=100.0,
+                            free_warp=0, table=[100] * 10)
+        messages = []
+        status = self._gen()._move_fleet(fleet, 1.0, None, messages)
+        assert status == "in_transit"
+        assert fleet.position.x == 0.0
+        assert fleet.waypoints[0].warp_factor == 0
+        assert any("stranded" in m.text for m in messages)
+
+        # Next turn, warp already 0: still in transit, still told
+        messages2 = []
+        status = self._gen()._move_fleet(fleet, 1.0, None, messages2)
+        assert status == "in_transit"
+        assert fleet.position.x == 0.0
+        assert any("stranded" in m.text for m in messages2)
+
+
+class TestInTransitWarp:
+    """DEF-11: the in-transit placeholder carries the real leg's warp
+    (TurnGenerator.cs:430-436) and warp edits made in transit reach
+    the destination waypoint instead of dying with the placeholder."""
+
+    def test_placeholder_inherits_leg_warp(self):
+        """_update_fleet's placeholder copies waypointZero.WarpFactor
+        - not the dataclass default 6."""
+        data = ServerData()
+        empire = EmpireData(id=1)
+        fleet = _real_fleet(fuel=100.0, warp=5, distance=100.0)
+        empire.owned_fleets = {fleet.key: fleet}
+        data.all_empires = {1: empire}
+
+        gen = TurnGenerator(data)
+        destroyed = gen._update_fleet(fleet)
+
+        assert destroyed is False
+        assert len(fleet.waypoints) == 2
+        placeholder = fleet.waypoints[0]
+        assert get_task_type(placeholder.task) == WaypointTask.NO_TASK
+        assert placeholder.position_x == fleet.position.x
+        assert placeholder.warp_factor == 5
+        # fleet.speed (waypoints[0]) now reports the true warp
+        assert fleet.speed == 5
+
+    def test_speed_setter_writes_through_placeholder(self):
+        """fleet.speed = N on an in-transit fleet also updates the
+        destination waypoint (web deviation - the placeholder is
+        popped next turn)."""
+        fleet = _real_fleet(fuel=100.0, warp=5, distance=100.0)
+        fleet.position = NovaPoint(25.0, 0.0)
+        fleet.waypoints.insert(0, Waypoint(
+            position_x=25.0, position_y=0.0, warp_factor=5,
+            destination="Space at 25,0", task=NoTaskObj()))
+
+        fleet.speed = 8
+        assert fleet.waypoints[0].warp_factor == 8
+        assert fleet.waypoints[1].warp_factor == 8
+
+    def test_speed_setter_leaves_real_waypoint_zero_alone(self):
+        """Without a placeholder (fleet parked before a real leg) the
+        setter touches only waypoints[0]."""
+        fleet = _real_fleet(fuel=100.0, warp=5, distance=100.0)
+        fleet.waypoints.append(Waypoint(
+            position_x=200.0, position_y=0.0, warp_factor=6,
+            destination="Farther", task=NoTaskObj()))
+
+        fleet.speed = 8
+        assert fleet.waypoints[0].warp_factor == 8
+        assert fleet.waypoints[1].warp_factor == 6
+
+    def test_waypoint_edit_at_placeholder_reaches_destination(self):
+        """A WaypointCommand Edit at index 0 while in transit copies
+        the new warp onto the destination waypoint."""
+        from backend.core.commands.base import CommandMode
+        from backend.core.commands.waypoint import WaypointCommand
+
+        empire = EmpireData(id=1)
+        fleet = _real_fleet(fuel=100.0, warp=5, distance=100.0)
+        fleet.position = NovaPoint(25.0, 0.0)
+        fleet.waypoints.insert(0, Waypoint(
+            position_x=25.0, position_y=0.0, warp_factor=5,
+            destination="Space at 25,0", task=NoTaskObj()))
+        empire.owned_fleets = {fleet.key: fleet}
+
+        command = WaypointCommand(
+            mode=CommandMode.EDIT,
+            waypoint=Waypoint(
+                position_x=25.0, position_y=0.0, warp_factor=9,
+                destination="Space at 25,0", task=NoTaskObj()),
+            fleet_key=fleet.key, index=0)
+        ok, _ = command.is_valid(empire)
+        assert ok
+        assert command.apply_to_state(empire) is None
+
+        # Edited placeholder AND the surviving destination waypoint
+        assert fleet.waypoints[0].warp_factor == 9
+        assert fleet.waypoints[1].warp_factor == 9
+
+
+class TestFreeWarpSaveMigration:
+    """Pre-DEF-7 saves store token free_warp_speed 0 and an all-zero
+    fuel_table; loading refreshes both from the empire's design
+    (DEF-11 migration)."""
+
+    def _roundtrip(self, tmp_path, mutate):
+        import backend.services.game_manager as gm_module
+        from backend.services.game_manager import GameManager
+
+        gm_module._game_manager = None
+        try:
+            manager = GameManager(str(tmp_path / "migrate.db"))
+            game = manager.create_game("Migrate Test", 2, "small",
+                                       seed=424242)
+            server_data = manager._load_game_state(game["id"])
+            state_dict = manager._serialize_state(server_data)
+            mutate(state_dict)
+            return manager._deserialize_state(state_dict)
+        finally:
+            gm_module._game_manager = None
+
+    @staticmethod
+    def _scout_token_dicts(state_dict):
+        """All non-starbase token dicts of empire 1's fleets."""
+        empire = state_dict["all_empires"]["1"]
+        tokens = []
+        for fleet in empire["owned_fleets"].values():
+            for token in fleet["tokens"].values():
+                if not token["is_starbase"]:
+                    tokens.append(token)
+        return tokens
+
+    def test_stale_token_refreshed_from_design(self, tmp_path):
+        """free_warp 0 + all-zero table -> both refreshed from the
+        owning empire's design."""
+        def mutate(state_dict):
+            for token in self._scout_token_dicts(state_dict):
+                token["free_warp_speed"] = 0
+                token["fuel_table"] = [0] * 10
+
+        restored = self._roundtrip(tmp_path, mutate)
+        for fleet in restored.all_empires[1].owned_fleets.values():
+            for token in fleet.tokens.values():
+                if token.is_starbase:
+                    continue
+                design = restored.all_empires[1].designs[token.design_key]
+                assert token.fuel_table == list(design.fuel_table)
+                assert any(token.fuel_table)
+                assert token.free_warp_speed == design.free_warp_speed
+                assert token.free_warp_speed > 0
+
+    def test_missing_design_derives_from_stored_table(self, tmp_path):
+        """Design gone but the token kept a real table: free warp is
+        derived from the table (Engine.cs free-warp semantics)."""
+        def mutate(state_dict):
+            empire = state_dict["all_empires"]["1"]
+            empire["designs"] = {}
+            for token in self._scout_token_dicts(state_dict):
+                token["free_warp_speed"] = 0
+                token["fuel_table"] = [0, 25, 100, 100, 100, 180,
+                                       500, 800, 900, 1080]
+
+        restored = self._roundtrip(tmp_path, mutate)
+        for fleet in restored.all_empires[1].owned_fleets.values():
+            for token in fleet.tokens.values():
+                if token.is_starbase:
+                    continue
+                assert token.free_warp_speed == 1  # QJ5: warp 1 free
+
+    def test_missing_design_all_zero_table_keeps_zero(self, tmp_path):
+        """No design AND no table data: nothing to derive from - the
+        token keeps free warp 0 (all zeros also = starbase)."""
+        def mutate(state_dict):
+            empire = state_dict["all_empires"]["1"]
+            empire["designs"] = {}
+            for token in self._scout_token_dicts(state_dict):
+                token["free_warp_speed"] = 0
+                token["fuel_table"] = [0] * 10
+
+        restored = self._roundtrip(tmp_path, mutate)
+        for fleet in restored.all_empires[1].owned_fleets.values():
+            for token in fleet.tokens.values():
+                if token.is_starbase:
+                    continue
+                assert token.free_warp_speed == 0
+                assert token.fuel_table == [0] * 10
 
 
 # --------------------------------------------------------------------------
@@ -1603,3 +1943,59 @@ class TestRegenerateFleet:
         gen._process_fleet(sb)
         assert not any("has run out of fuel" in m.text
                        for m in data.all_messages)
+
+
+# --------------------------------------------------------------------------
+# Battle loss summary in messages (DEF-15)
+# --------------------------------------------------------------------------
+
+class TestBattleLossSummary:
+    """_execute_battles appends the C# per-empire loss summary to the
+    battle message (ReportBattle, BattleEngine.cs:945-953)."""
+
+    def _run(self, losses):
+        from backend.server.battle.battle_report import BattleReport
+        from backend.server.battle.stack import Stack
+
+        data = ServerData()
+        for empire_id in (1, 2):
+            empire = EmpireData()
+            empire.id = empire_id
+            data.all_empires[empire_id] = empire
+
+        report = BattleReport()
+        report.location = "Sabik"
+        report.losses = dict(losses)
+        for empire_id in (1, 2):
+            stack = Stack()
+            stack.key = (empire_id << 32) | 1
+            stack.owner = empire_id
+            report.stacks[stack.key] = stack
+
+        class FakeEngine:
+            def __init__(self, server_state, battle_reports):
+                self.battle_reports = battle_reports
+
+            def run(self):
+                self.battle_reports.append(report)
+
+        TurnGenerator(data)._execute_battles(FakeEngine)
+        return data
+
+    def test_loss_summary_per_empire(self):
+        data = self._run({1: 0, 2: 3})
+
+        msgs1 = [m for m in data.all_messages if m.audience == 1]
+        msgs2 = [m for m in data.all_messages if m.audience == 2]
+        assert len(msgs1) == 1 and len(msgs2) == 1
+        assert "A battle took place at Sabik" in msgs1[0].text
+        assert "None of your ships were destroyed." in msgs1[0].text
+        assert "3 of your ships were destroyed." in msgs2[0].text
+        # star_name carries the location for the client Goto
+        assert msgs1[0].star_name == "Sabik"
+
+        # The full report still reaches both empires' battle_reports
+        assert len(data.all_empires[1].battle_reports) == 1
+        assert len(data.all_empires[2].battle_reports) == 1
+        assert data.all_empires[1].battle_reports[0]["losses"] == {
+            "1": 0, "2": 3}

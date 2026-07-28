@@ -10,6 +10,9 @@ const ApiClient = {
     // Loading state management
     _loadingCount: 0,
 
+    // Pending hide timer for the status message
+    _statusTimer: null,
+
     /**
      * Show loading overlay.
      */
@@ -61,8 +64,15 @@ const ApiClient = {
         statusEl.textContent = message;
         statusEl.className = `status-message ${type}`;
 
+        // An earlier timer would hide this message ahead of its time
+        if (this._statusTimer !== null) {
+            clearTimeout(this._statusTimer);
+            this._statusTimer = null;
+        }
+
         if (duration > 0) {
-            setTimeout(() => {
+            this._statusTimer = setTimeout(() => {
+                this._statusTimer = null;
                 statusEl.classList.add('hidden');
             }, duration);
         }

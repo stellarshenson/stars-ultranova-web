@@ -8,6 +8,7 @@ grid enforces slot type/capacity structurally, and a non-starbase
 design must have an engine (ShipDesignDialog.cs OK_Click).
 """
 
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..core.components import ShipDesign
@@ -16,7 +17,7 @@ from ..core.components.component_loader import (
 )
 from ..core.game_objects.item import ItemType
 
-COMPONENTS_XML = "backend/data/components.xml"
+COMPONENTS_XML = str(Path(__file__).resolve().parents[1] / "data" / "components.xml")
 
 # Slot ComponentType token -> acceptable component ItemTypes.
 # Slot types in components.xml are phrases like "Shield or Armor" or

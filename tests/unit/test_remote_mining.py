@@ -255,11 +255,9 @@ class TestCargoAtUninhabitedStar:
     @pytest.fixture
     def game(self):
         import backend.services.game_manager as gm_module
-        import backend.persistence.database as db_module
         from backend.services.game_manager import GameManager
 
         gm_module._game_manager = None
-        db_module._database = None
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
         try:
@@ -269,7 +267,6 @@ class TestCargoAtUninhabitedStar:
             yield manager, game["id"]
         finally:
             gm_module._game_manager = None
-            db_module._database = None
             if os.path.exists(db_path):
                 os.unlink(db_path)
 

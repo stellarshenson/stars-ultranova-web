@@ -51,6 +51,17 @@ class ShipToken:
     has_weapons: bool = False
     free_warp_speed: int = 0
     optimal_speed: int = 6
+    # Per-warp engine fuel table cached from the design's engine
+    # (C# Engine.cs:34 FuelConsumption[10]; index 0 = warp 1, index
+    # 9 = warp 10, consumed as table[warp - 1] per ShipDesign.cs:732).
+    # All zeros = no engine (starbase) or legacy token - burns 0.
+    # Web mod: ramscoop tables carry NEGATIVE entries at their free
+    # warps (backend/data/components.xml); negatives burn 0
+    fuel_table: List[int] = field(default_factory=lambda: [0] * 10)
+    # Fuel generated per year by Fuel-property components (web mod
+    # mirroring ShipDesign.fuel_consumption's Generation subtraction,
+    # no C# equivalent in ShipDesign.cs FuelConsumption)
+    fuel_generation: int = 0
     scan_range_normal: int = 0
     scan_range_penetrating: int = 0
     mine_count: int = 0
@@ -138,6 +149,8 @@ class ShipToken:
             "has_weapons": self.has_weapons,
             "free_warp_speed": self.free_warp_speed,
             "optimal_speed": self.optimal_speed,
+            "fuel_table": list(self.fuel_table),
+            "fuel_generation": self.fuel_generation,
             "scan_range_normal": self.scan_range_normal,
             "scan_range_penetrating": self.scan_range_penetrating,
             "mine_count": self.mine_count,
@@ -180,6 +193,8 @@ class ShipToken:
         token.has_weapons = data.get("has_weapons", False)
         token.free_warp_speed = data.get("free_warp_speed", 0)
         token.optimal_speed = data.get("optimal_speed", 6)
+        token.fuel_table = list(data.get("fuel_table", [0] * 10))
+        token.fuel_generation = data.get("fuel_generation", 0)
         token.scan_range_normal = data.get("scan_range_normal", 0)
         token.scan_range_penetrating = data.get("scan_range_penetrating", 0)
         token.mine_count = data.get("mine_count", 0)
@@ -381,9 +396,34 @@ class Fleet(Mappable):
 
     @speed.setter
     def speed(self, value: int) -> None:
-        """Set speed on first waypoint."""
-        if self.waypoints:
-            self.waypoints[0].warp_factor = value
+        """Set speed on first waypoint.
+
+        Web deviation (run100 DEF-11): while in transit, waypoints[0]
+        is the same-position NoTask placeholder the turn generator
+        inserts (TurnGenerator.cs:430-436), which is popped next turn
+        - a warp edit written only there would be silently lost, so
+        the edit is also copied onto the real destination waypoint
+        behind it. The C# WinForms client edits the leg waypoints
+        directly, so this case cannot arise in the reference.
+        """
+        if not self.waypoints:
+            return
+        self.waypoints[0].warp_factor = value
+        if len(self.waypoints) > 1 and self._waypoint_zero_is_placeholder():
+            self.waypoints[1].warp_factor = value
+
+    def _waypoint_zero_is_placeholder(self) -> bool:
+        """True when waypoints[0] is the in-transit placeholder: a
+        NoTask waypoint at the fleet's current position (the shape
+        the turn generator inserts and pops, TurnGenerator.cs:430-436
+        / turn_generator._update_fleet)."""
+        if not self.waypoints:
+            return False
+        wp = self.waypoints[0]
+        from ..waypoints.waypoint import WaypointTask, get_task_type
+        return (get_task_type(wp.task) == WaypointTask.NO_TASK
+                and abs(self.position.x - wp.position_x) < 0.01
+                and abs(self.position.y - wp.position_y) < 0.01)
 
     def storm_protection(self, race: Optional['Race'] = None) -> float:
         """
@@ -611,27 +651,50 @@ class Fleet(Mappable):
 
     def fuel_consumption(self, warp_factor: int, race: Race) -> float:
         """
-        Calculate fuel consumption rate at given warp factor.
+        Calculate fuel consumption rate at given warp factor (mg per
+        year of travel).
 
-        Port of: Fleet.cs lines 817-839
+        Port of: Fleet.cs lines 586-608 - cargo mass is distributed
+        across tokens by cargo capacity share, and each token applies
+        the per-design formula from ShipDesign.cs lines 721-744:
+
+            (mass + cargo) * table[warp - 1] / 100 * warp^2 / 200
+
+        with IFE x0.85 (ShipDesign.cs:739-742). The per-warp engine
+        fuel table is cached on the token (C# Engine.cs:34, indexed
+        [warp - 1] per ShipDesign.cs:732).
+
+        Deliberate web mods (no C# equivalent):
+        - ramscoop tables carry NEGATIVE entries at their free warps
+          (backend/data/components.xml; C# uses 0) - any entry <= 0
+          burns nothing, matching the ship_design.py clamp
+        - token.fuel_generation (Fuel property "Generation") is
+          subtracted per ship, clamped at 0, mirroring
+          ShipDesign.fuel_consumption
         """
-        if not self.tokens:
+        if not self.tokens or warp_factor < 1 or warp_factor > 10:
             return 0.0
 
-        # Calculate cargo fullness
+        # Cargo fullness distributes cargo mass over tokens by cargo
+        # capacity share (Fleet.cs:590-600)
         if self.total_cargo_capacity == 0:
             cargo_fullness = 0.0
         else:
             cargo_fullness = self.cargo.mass / self.total_cargo_capacity
 
-        # Sum fuel consumption from all ships (per year of travel).
-        # Matches the movement model: mass * warp / 200 fuel per ly,
-        # at warp^2 ly per year -> mass * warp^3 / 200 per year.
         total = 0.0
         for token in self.tokens.values():
-            base_consumption = token.mass * token.quantity * (warp_factor ** 3) / 200.0
-            cargo_factor = 1 + cargo_fullness * (token.cargo_capacity * token.quantity / max(1, token.mass * token.quantity))
-            total += base_consumption * cargo_factor
+            fuel_factor = token.fuel_table[warp_factor - 1]
+            if fuel_factor <= 0:
+                continue  # free warp (zero or web ramscoop negative)
+            per_ship_cargo = token.cargo_capacity * cargo_fullness
+            consumption = ((token.mass + per_ship_cargo)
+                           * fuel_factor / 100.0
+                           * warp_factor * warp_factor / 200.0)
+            if race is not None and race.has_trait("IFE"):
+                consumption *= 0.85
+            consumption = max(0.0, consumption - token.fuel_generation)
+            total += consumption * token.quantity
 
         return total
 

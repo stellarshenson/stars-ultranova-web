@@ -8,8 +8,8 @@ and generating the new game state.
 
 import random
 import math
+import logging
 from typing import List, Dict, Optional, TYPE_CHECKING
-from collections import OrderedDict
 
 from .turn_steps import (
     ITurnStep,
@@ -50,6 +50,9 @@ if TYPE_CHECKING:
     from .server_data import ServerData
     from ..core.game_objects.fleet import Fleet
     from ..core.race.race import Race
+
+
+logger = logging.getLogger(__name__)
 
 
 # Mystery Trader hidden-technology items (canonical Stars! MT items;
@@ -118,8 +121,9 @@ class TurnGenerator:
         # warp-risk check
         self._fleet_travel_warp: Dict[int, int] = {}
 
-        # Turn steps ordered by priority
-        self.turn_steps: Dict[int, ITurnStep] = OrderedDict()
+        # Turn steps keyed by priority; run order is the sorted key
+        # order (C# TurnGenerator.cs holds them in a SortedList)
+        self.turn_steps: Dict[int, ITurnStep] = {}
         self.turn_steps[REMOTE_MINE_STEP] = RemoteMineStep()
         self.turn_steps[STAR_STEP] = StarUpdateStep()
         self.turn_steps[BOMBING_STEP] = BombingStep()
@@ -228,7 +232,7 @@ class TurnGenerator:
                 empire.orders_log.clear()
 
         # Run turn steps in priority order
-        for step in self.turn_steps.values():
+        for _priority, step in sorted(self.turn_steps.items()):
             messages = step.process(self.server_state)
             if messages:
                 self.server_state.all_messages.extend(messages)
@@ -406,10 +410,15 @@ class TurnGenerator:
         self.server_state.all_messages.extend(messages)
 
         if travel_status == "in_transit":
-            # Still moving
+            # Still moving. The placeholder inherits the real leg's
+            # warp factor (TurnGenerator.cs:430-436 copies
+            # waypointZero.WarpFactor) - _move_fleet may already have
+            # clamped waypoint_zero to the free warp, and the clamped
+            # value is what C# copies too
             new_position = Waypoint(
                 position_x=fleet.position.x,
                 position_y=fleet.position.y,
+                warp_factor=waypoint_zero.warp_factor,
                 destination=f"Space at {fleet.position.x:.0f},{fleet.position.y:.0f}",
                 task=NoTaskObj()
             )
@@ -456,7 +465,28 @@ class TurnGenerator:
     def _move_fleet(self, fleet: 'Fleet', available_time: float,
                     race: Optional['Race'], messages: List[Message]) -> str:
         """
-        Move fleet towards next waypoint.
+        Move fleet towards next waypoint, capped by available fuel.
+
+        Port of Fleet.cs Move (lines 509-577): travel time is the
+        smallest of target time (arrival), available time (year end)
+        and fuel time (tank empty, Fleet.cs:526 and 542-546 with the
+        C# >= comparison), so an empty tank moves a fleet zero light
+        years. The burn rate is Fleet.fuel_consumption - the canonical
+        per-engine per-warp table formula (ShipDesign.cs:721-744 with
+        Fleet.cs:586-608 cargo distribution) - so live burn and client
+        estimate stay one formula. Fuel used is int-truncated
+        (Fleet.cs:567) and the out-of-fuel drop to free warp is silent
+        (Fleet.cs:570-576); the canonical per-turn "has run out of
+        fuel." message is emitted by _process_fleet
+        (TurnGenerator.cs:270-279).
+
+        Deliberate web deviations:
+        - dust nebulae slow effective speed (web extension); the fuel
+          rate is scaled by the same factor so burn per light year at
+          the ordered warp is unchanged by dust
+        - a fleet left in transit at effective warp 0 gets a per-turn
+          "stranded" message - C# leaves warp-0 strandings silent
+          forever (run100 DEF-13)
 
         Args:
             fleet: Fleet to move.
@@ -487,10 +517,15 @@ class TurnGenerator:
         speed = warp * warp  # ly per turn
 
         if speed <= 0:
+            # Zero-warp with a leg still to travel: the fleet is
+            # stranded (out of fuel with free warp 0, or ordered to
+            # stop) - say so instead of deadlocking silently
+            self._stranded_message(fleet, messages)
             return "in_transit"
 
         # Dust nebulae impede travel: sample dust density along this
         # turn's path segment and slow the fleet proportionally
+        nebula_factor = 1.0
         nebula = getattr(self.server_state, 'nebula_field', None)
         if nebula is not None:
             segment = min(speed * available_time, distance)
@@ -500,96 +535,81 @@ class TurnGenerator:
                 fleet.position.x, fleet.position.y, seg_x, seg_y
             )
             if dust > 0.01:
-                factor = max(NEBULA_MIN_SPEED_FACTOR,
-                             1.0 - NEBULA_SPEED_PENALTY * dust)
-                speed *= factor
+                nebula_factor = max(NEBULA_MIN_SPEED_FACTOR,
+                                    1.0 - NEBULA_SPEED_PENALTY * dust)
+                speed *= nebula_factor
 
-        # Calculate how far we can travel this turn
-        travel_distance = speed * available_time
+        # Fuel consumption rate (mg per year). Mineral packets coast
+        # without fuel (canonical Stars! rule). The nebula factor
+        # scales the rate so a dust-slowed year burns fuel for the
+        # distance actually covered, not a full year at the ordered
+        # warp (web extension, keeps burn per ly constant)
+        fuel_rate = 0.0
+        if not is_mineral_packet(fleet):
+            fuel_rate = fleet.fuel_consumption(warp, race) * nebula_factor
 
-        if travel_distance >= distance:
-            # Arrive at destination
+        # Travel time: min of target time, available time and fuel
+        # time (Fleet.cs:520-546)
+        target_time = distance / speed
+        fuel_time = float('inf')
+        if fuel_rate > 0:
+            fuel_time = fleet.fuel_available / fuel_rate
+
+        travel_time = target_time
+        status = "arrived"
+
+        if travel_time > available_time:
+            travel_time = available_time
+            status = "in_transit"
+
+        # C# compares >= (Fleet.cs:542), so exactly-sufficient fuel
+        # still reports InTransit
+        if travel_time >= fuel_time:
+            travel_time = fuel_time
+            status = "in_transit"
+
+        # Update position (Fleet.cs:552-565)
+        if status == "arrived":
             fleet.position.x = target_x
             fleet.position.y = target_y
-
-            # Consume fuel
-            self._consume_fuel(fleet, distance, warp)
-
-            return "arrived"
         else:
-            # Partial movement
-            ratio = travel_distance / distance
+            travelled = speed * travel_time
+            ratio = travelled / distance
             fleet.position.x += dx * ratio
             fleet.position.y += dy * ratio
 
-            # Consume fuel
-            self._consume_fuel(fleet, travel_distance, warp)
+        # Consume fuel, int-truncated (Fleet.cs:567). travel_time is
+        # capped at fuel_time so the tank never goes negative
+        if fuel_rate > 0:
+            fuel_used = int(fuel_rate * travel_time)
+            fleet.fuel_available = max(0, fleet.fuel_available - fuel_used)
 
-            return "in_transit"
-
-    def _consume_fuel(self, fleet: 'Fleet', distance: float, warp: int):
-        """
-        Calculate and consume fuel for movement.
-
-        Uses each design's engine fuel table when available
-        (ShipDesign.fuel_consumption - port of ShipDesign.cs lines
-        721-744: (mass + cargo) * table[warp]/100 * warp^2 / 200,
-        IFE x0.85). Designs without engine data (starting
-        SimpleDesigns) fall back to mass * warp/200 per light year.
-        Out of fuel drops the fleet to its free warp speed, as in
-        Fleet.cs Move (lines 456-463).
-        """
-        if warp <= 0 or distance <= 0:
-            return
-
-        # Mineral packets need no fuel (canonical Stars! rule); without
-        # this a fuel-less packet would be dropped to warp 0 below
-        if is_mineral_packet(fleet):
-            return
-
-        empire = self.server_state.all_empires.get(fleet.owner)
-        designs = empire.designs if empire else {}
-        race = empire.race if empire else None
-
-        speed = warp * warp  # ly per year
-        years = distance / speed
-
-        # Cargo mass distributed over tokens by cargo capacity,
-        # as in Fleet.cs FuelConsumption
-        cargo_mass = fleet.cargo.mass
-        total_capacity = fleet.total_cargo_capacity
-
-        fuel_per_year = 0.0
-        for token in fleet.tokens.values():
-            token_cargo = 0.0
-            if cargo_mass > 0 and token.cargo_capacity > 0 and total_capacity:
-                token_cargo = (cargo_mass * token.cargo_capacity
-                               * token.quantity / total_capacity)
-
-            design = designs.get(token.design_key)
-            if design is not None and getattr(design, 'engine', None) \
-                    is not None:
-                per_ship_cargo = token_cargo / max(1, token.quantity)
-                fuel_per_year += design.fuel_consumption(
-                    warp, race, per_ship_cargo) * token.quantity
-            else:
-                # Simplified model: mass * warp / 200 per ly at
-                # warp^2 ly/year -> mass * warp^3 / 200 per year
-                fuel_per_year += ((token.mass * token.quantity + token_cargo)
-                                  * (warp ** 3) / 200.0)
-
-        fuel_consumed = int(fuel_per_year * years)
-        fleet.fuel_available = max(0, fleet.fuel_available - fuel_consumed)
-
-        if fleet.fuel_available <= 0 and fleet.waypoints:
+        # Out of fuel: drop to the free warp speed, silently - C#
+        # Fleet.cs:570-576 emits nothing here; the canonical per-turn
+        # message comes from _process_fleet (TurnGenerator.cs:270-279)
+        if status == "in_transit" and fuel_rate > fleet.fuel_available:
             free_warp = fleet.free_warp_speed
-            if fleet.waypoints[0].warp_factor > free_warp:
-                fleet.waypoints[0].warp_factor = free_warp
-                self.server_state.all_messages.append(Message(
-                    audience=fleet.owner,
-                    text=f"{fleet.name} has run out of fuel and dropped "
-                         f"to warp {free_warp}.",
-                    message_type="Fuel", fleet_key=fleet.key))
+            if waypoint.warp_factor > free_warp:
+                waypoint.warp_factor = free_warp
+            if free_warp <= 0:
+                # No free warp - the fleet is going nowhere (web
+                # addition, see docstring)
+                self._stranded_message(fleet, messages)
+
+        return status
+
+    def _stranded_message(self, fleet: 'Fleet', messages: List[Message]):
+        """
+        Per-turn stranded notice for a fleet stuck in transit at warp 0.
+
+        Web addition (run100 DEF-13): C# leaves a warp-0 in-transit
+        fleet silent forever; the web tells the player each turn so a
+        stranded fleet is never a silent deadlock.
+        """
+        messages.append(Message(
+            audience=fleet.owner,
+            text=f"{fleet.name} is stranded in deep space - out of fuel.",
+            message_type="Fuel", fleet_key=fleet.key))
 
     def _regenerate_fleet(self, fleet: 'Fleet'):
         """
@@ -1738,8 +1758,7 @@ class TurnGenerator:
             engine = engine_cls(self.server_state, battle_reports)
             engine.run()
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Battle engine failed")
+            logger.exception("Battle engine failed")
             return
 
         announced = set()
@@ -1761,10 +1780,20 @@ class TurnGenerator:
                 announced.add((empire_id, battle.location))
                 # star_name carries the battle location for the client
                 # Goto (C# attaches the BattleReport itself as
-                # Message.Event, BattleEngine.cs:936-943)
+                # Message.Event, BattleEngine.cs:936-943). The loss
+                # summary ports ReportBattle (BattleEngine.cs:945-953);
+                # losses is initialized 0 for every participant at
+                # _position_stacks, so .get only covers malformed
+                # reports.
+                losses = battle.losses.get(empire_id, 0)
+                if losses == 0:
+                    loss_text = "None of your ships were destroyed."
+                else:
+                    loss_text = f"{losses} of your ships were destroyed."
                 self.server_state.all_messages.append(Message(
                     audience=empire_id,
-                    text=f"A battle took place at {battle.location}",
+                    text=f"A battle took place at {battle.location}. "
+                         f"{loss_text}",
                     message_type="Battle",
                     star_name=battle.location
                 ))

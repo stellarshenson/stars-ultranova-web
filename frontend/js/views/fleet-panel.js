@@ -51,8 +51,6 @@ const FleetPanel = {
         GameState.on('selectionCleared', () => this.hide());
         GameState.on('turnGenerated', () => this.refresh());
         GameState.on('stateRefreshed', () => this.refresh());
-
-        console.log('Fleet panel initialized');
     },
 
     /**

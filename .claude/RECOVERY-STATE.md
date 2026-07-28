@@ -1,12 +1,46 @@
 # Recovery State
 
-## CURRENT 2026-07-28 ~00:15 CEST - Correspondence + functional harness CLOSED (960 green), LLM playtest harness IN FLIGHT
+## CURRENT 2026-07-28 ~13:20 CEST - Forensics DONE (DEF-8..16), fix wave + architect audit RUNNING
+
+- Forensics tribunal DONE: 78 candidates -> 10 verdicts -> DEF-8..16 registered (score escort-spam, neg-hab rounding, production starvation, phantom warp, colonize auto-invade, fuel deadlock, phantom battles, lost loss summary, homeworld fairness); report docs/playtest-forensics-run100.md; acc-crit Hundred-turn box checked (victory turn 56)
+- Bug-hunter panel: 13/13 findings CONFIRMED and FIXED (wf_4a4a48dc; start/stop.sh PID+health, conftest race, CWD paths, resume guard, WORKERS guard, campaign mkdir/preflight, symlink, Makefile chrome, base-href regex, dead DATABASE_URL) - suite steady 989; round-2 re-confirm PENDING (pinned re-run after defect wave)
+- **DEF-8..16 fix wave DONE** (task #30 closed, journal 43): all nine closed with tests, suite 989 -> **1082 passed, 8 skipped**; functional harness 8/8 twice against regenerated golden (score 38 -> 34 from the DEF-8 cap); tests/e2e alone 85 passed. Key fixes: escort/unarmed ship points capped at one per owned planet (documented web mod restoring canonical Stars! semantics both Nova C# variants omitted), homeworld fairness constraint (seed 4242 now 10-vs-4 stars within 50 ly, was 9-vs-1), unarmed flee-targets no longer trigger battles, colonize aborts on occupied per ColoniseTask.cs, fuel-capped movement + stranded message, per-resource production banking
+- **ARCHITECT FIX WAVE RUNNING**: `wf_c24f26b7-335` (task wecdo61n5; delete 4 authorized dead subsystems, then 5 traps + residue). If killed, RESUME:
+  `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/architect-fixes.js", resumeFromRunId: "wf_c24f26b7-335"})`
+- Planet-rendering RESEARCH DONE -> docs/research-planet-rendering.md (benchmarked: one-level domain-warped fBm at 5-6 octaves = 4.6-5.0 ms at 300x230, affordable; sample 3D noise at the sphere normal to kill the seam; gas giants need a SEPARATE evaluator; 9-class table; 15 per-world params; rotationPhase is free diversity)
+- **VISUAL WAVE SCRIPT READY** (task #34): `/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/visual-generation-wave.js` - PlanetArt renderer + preview harness, star size scaling, larger universes, Perlin+Poisson clustering with statistical tests, engine-table single source. LAUNCH ONLY AFTER the architect wave finishes: `Workflow({scriptPath: ".../workflows/scripts/visual-generation-wave.js"})`
+- USER APPROVAL GATE: imagery/sizing/clustering criteria may NOT be checked without the user approving screenshots; preview pages are built for that purpose, orchestrator screenshots them to walkthrough/review/
+- **Architect audit DONE**: DO-NOT-SHIP, 18 findings. CRITICAL triaged + FIXED BY ME already: empire-password gate missing on all 7 fleets.py mutations + games.py get_battles -> X-Empire-Password header added, DEF-17 logged and closed, unit+e2e 946 green. Report kept at scratchpad/advrev/architect-result.txt
+- **USER AUTHORIZED** (2026-07-28) the remaining architect work: delete all four dead subsystems (websocket.py, panel-manager.js, stars-theme.css, CORS) AND fix all five live traps (duplicate conflicting Victims/Strategy enums, get_database ignoring db_path, get_game_manager param, decorative turn-step priorities, hardcoded route status codes, plus residue). Script READY at `/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/architect-fixes.js` - LAUNCH IT ONLY AFTER the defect wave finishes (never two agents in one tree): `Workflow({scriptPath: ".../workflows/scripts/architect-fixes.js"})`
+- After both waves: pinned round-2 re-confirms for BOTH adversaries (task #33), journal, close #30
+- **NEW GOAL 2026-07-28 14:05** (task #34, acc-crit criteria added + TOC green): star size scaling (small default, modest zoom-in growth, floor on zoom-out), diverse realistic world imagery driven by real planet stats and seeded per star, LARGER player maps, star CLUSTERING (visible but restrained, DEF-16 fairness preserved), smart engine-table representation. All unit AND functional tested; functional golden must be regenerated (map changes shift seeded layouts). Runs after the fix waves; then #26 wave-6 gate closes the campaign ("ready for next game")
+- After fix wave: journal, close #30, bug-hunter+architect round-2 re-confirms, then #26 wave-6 gate. Commit pending fresh approval (everything since 6d5865d)
+
+## PREVIOUS 2026-07-28 ~12:50 CEST - Playtest ENDED (victor Iron Fist turn 56), forensics tribunal RUNNING
+
+- run100 FINISHED 09:39: victor empire 1 (Iron Fist) at year 2156, turn 56/100, by 60%-planets target (54 planets); Silicon Loom 4 planets but score 2657 vs 264 (suspected score-formula exploit, 0% research + mass ship building). 620 bug observations, 190 forensic events. Task #29 done
+- **Forensics workflow RUNNING**: `wf_1d6c213b-2d8` (task w81ck0mkf; 3 analysts -> dedup -> up to 10 code-level verifies -> registrar writes docs/playtest-forensics-run100.md + new DEF entries + acc-crit). If killed, RESUME:
+  `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/playtest-forensics-wf_1d6c213b-2d8.js", resumeFromRunId: "wf_1d6c213b-2d8"})`
+- On completion: review verdicts, journal entry, close #30 after FIX WAVE for confirmed defects (fixes need own workflow), then #26 wave-6 gate
+- Suite 989 baseline (fuel fix landed); uncommitted: fuel fix + playtest harness + results (next commit needs fresh approval)
+
+## PREVIOUS 2026-07-28 ~02:35 CEST - 100-turn LLM playtest RUNNING DETACHED (opus commanders)
+
+- Playtest harness DONE (#28, journal 41, smoke + resumeproof evidence in results/playtest/); DEF-5/6 logged; journal archived (1-21 -> JOURNAL_ARCHIVE.md, 20 remain)
+- Commit `6d5865d` pushed (user-authorized); playtest harness files (scripts/llm_playtest*, results/) NOT yet committed - next commit needs fresh approval
+- **100-TURN PLAYTEST RUNNING DETACHED** (user chose OPUS commanders): game 263cf41a seed 4242, launched 02:35 via `bash scripts/run_llm_playtest.sh run100 4242 100 --model opus`; log `logs/llm-playtest-run100.log`; state results/playtest/run100/; est 8-14h. DETACHED - survives session death. If interrupted: `bash scripts/run_llm_playtest.sh run100 4242 100 --model opus --resume`
+- Monitor via the LOG FILE only (never own the process). On completion: #30 forensics analysis (turn dumps, forensics.jsonl, bug_reports.jsonl -> docs/defects.md -> fix wave), then #26 wave-6 gate
+- **DEF-7 fuel-tables fix DONE** (task #32 closed, journal 42): root cause engineless STARTING_DESIGN_SPECS hitting the _consume_fuel linear fallback + hardcoded client estimator; canonical Engine.cs tables ported, hand-checked, suite 960 -> 989, DEF-7 closed. Rich logging landed in scripts/llm_playtest.py + rich==15.0.0 added via uv. Fix is UNCOMMITTED (next commit needs fresh approval)
+- NOTE: playtest server 9830 holds OLD fuel physics in memory; if its harness restarts it mid-run the physics change - forensics analysis must note that boundary
+- Tasks: #29 in progress (the run), #30 forensics/fixes, #26 gate (last). Suite baseline 960; dev server 9800 detached; functional harness RUN_FUNCTIONAL=1
+
+## PREVIOUS 2026-07-28 ~00:15 CEST - Correspondence + functional harness CLOSED (960 green), LLM playtest harness IN FLIGHT
 
 - Correspondence play DONE (#25): suite 939 -> 960, all 9 criteria checked, determinism digest proven, journal 39. Functional harness DONE (#31): tests/functional/ 8 Playwright tests green twice, golden gamethrough seed 4242, RUN_FUNCTIONAL=1 gate, journal 40; docs/defects.md created with DEF-1..4 (functional-harness observations)
 - **LLM playtest harness builder RUNNING**: `wf_8f609647-f5c` (task w8tu81543; builds scripts/llm_playtest.py - claude -p both sides, port 9830 isolated server, per-turn checkpoints + forensics, 3-turn live smoke). If killed, RESUME:
   `Workflow({scriptPath: "/home/lab/.claude/projects/-home-lab-workspace-private-games-stars-ultranova-web/518b5b18-c8ff-44e1-9680-3dac877c6d5a/workflows/scripts/llm-playtest-harness-wf_8f609647-f5c.js", resumeFromRunId: "wf_8f609647-f5c"})`
 - On harness completion: review smoke, launch #29 100-turn run DETACHED (setsid nohup scripts/run_llm_playtest.sh, tee logs/), then #30 forensics -> defects.md -> fixes, then #26 wave-6 gate (final verification incl. RUN_FUNCTIONAL=1 harness + browser evidence)
-- Commit #27 still awaits explicit user approval
+- Commit `6d5865d` pushed 2026-07-28 ~00:30 (user-authorized): correspondence + functional harness + wave-5 close-out; EXCLUDED in-flight playtest builder files (scripts/llm_playtest*, results/) - commit them after #28 completes WITH FRESH USER APPROVAL (#27 done, next commit needs new authorization)
 
 ## PREVIOUS 2026-07-27 ~23:30 CEST - Wave 5 CLOSED (939 green), Correspondence Play IN FLIGHT
 

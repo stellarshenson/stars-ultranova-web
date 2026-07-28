@@ -5,7 +5,7 @@ install:
 
 dev-install:
 	uv sync --all-extras
-	uv run playwright install chromium
+	uv run playwright install chromium chrome
 
 run:
 	uv run python -m backend.main

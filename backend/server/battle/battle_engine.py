@@ -769,24 +769,13 @@ class BattleEngine:
         empire.add_or_update_fleet(fleet)
 
     def _report_battle(self, battle: BattleReport) -> None:
-        """Report battle results to all participants."""
-        for empire_id in battle.losses:
-            if empire_id not in self.server_state.all_empires:
-                continue
+        """
+        Report the battle to the turn generator.
 
-            empire = self.server_state.all_empires[empire_id]
-            loss_count = battle.losses[empire_id]
-
-            # Create message
-            text = f"There was a battle at {battle.location}\n"
-            if loss_count == 0:
-                text += "None of your ships were destroyed"
-            else:
-                text += f"{loss_count} of your ships were destroyed"
-
-            # Distribution to empire.battle_reports (as dicts) happens
-            # in TurnGenerator._execute_battles; raw objects would
-            # break JSON persistence
-
-            # Add to main battle list
-            self.battles.append(battle)
+        The per-empire messages with the C# loss summary
+        (ReportBattle, BattleEngine.cs:945-953) and the distribution
+        to empire.battle_reports (as dicts) both happen in
+        TurnGenerator._execute_battles; raw objects here would break
+        JSON persistence. One entry per battle, as the Ron engine.
+        """
+        self.battles.append(battle)

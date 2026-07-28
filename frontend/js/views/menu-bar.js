@@ -127,8 +127,6 @@ const MenuBar = {
         this.render();
         this.bindEvents();
         this.bindKeyboardShortcuts();
-
-        console.log('MenuBar initialized');
     },
 
     /**
@@ -385,8 +383,6 @@ const MenuBar = {
      * @param {string} actionName - Action identifier
      */
     executeAction(actionName) {
-        console.log('Menu action:', actionName);
-
         switch (actionName) {
             // File menu
             case 'newGame':
@@ -590,7 +586,7 @@ const MenuBar = {
                 break;
 
             default:
-                console.log('Unhandled action:', actionName);
+                console.warn('Unhandled action:', actionName);
         }
     },
 

@@ -34,8 +34,6 @@ const Dialogs = {
                 this.close();
             }
         });
-
-        console.log('Dialogs initialized');
     },
 
     /**

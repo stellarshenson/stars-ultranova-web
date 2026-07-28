@@ -187,7 +187,9 @@ class GalaxyGenerator:
             ))
 
         # Create empires with home worlds
-        home_stars = self._select_home_worlds(list(server_data.all_stars.values()), player_count)
+        home_stars = self._select_home_worlds(
+            list(server_data.all_stars.values()), player_count,
+            width, height)
 
         for i, (race, home_star) in enumerate(zip(races, home_stars)):
             empire_id = i + 1
@@ -758,15 +760,37 @@ class GalaxyGenerator:
 
         return races
 
-    def _select_home_worlds(self, stars: List[Star], player_count: int) -> List[Star]:
-        """
-        Select home worlds for players.
+    # Neighborhood radius for the homeworld fairness constraint - the
+    # run100 forensic metric (stars within 50 ly), constant at
+    # 2 * STAR_DENSITY
+    HOMEWORLD_NEIGHBORHOOD_RADIUS = 2 * STAR_DENSITY
 
-        Ensures home worlds are spread apart.
+    def _select_home_worlds(self, stars: List[Star], player_count: int,
+                            width: int, height: int) -> List[Star]:
+        """
+        Select home worlds for players with a fairness constraint.
+
+        Documented web deviation from C#: StarMapGenerator.cs places
+        homeworlds FIRST by rejection sampling over a UNIFORM density
+        field with enforced minimum separation (Generate 93-106,
+        SetHomeworldReducer 156-172, PlaceHomeworlds 215-238), so
+        every homeworld gets a statistically equivalent neighborhood -
+        fairness is structural. The web keeps its GMM star field for
+        the galaxy aesthetic and delivers the same guarantee by
+        SELECTION instead of construction (DEF-16): every homeworld
+        must have a minimum number of neighbor stars within 50 ly
+        (comparable expansion prospects) and homeworlds must be
+        mutually separated by the C#-derived minimum
+        min(width, height) / (2 * (floor(sqrt(players)) + 1))
+        (StarMapGenerator.cs:160-163; 100 ly for 2 players on a 400
+        map). Constraints relax stepwise on dense-candidate shortage
+        so selection always terminates (tiny maps).
 
         Args:
             stars: All stars in galaxy.
             player_count: Number of players.
+            width: Universe width in light years.
+            height: Universe height in light years.
 
         Returns:
             List of home world stars.
@@ -774,52 +798,88 @@ class GalaxyGenerator:
         if len(stars) < player_count:
             raise ValueError("Not enough stars for all players")
 
-        # Sort stars by distance from center for even distribution
-        if stars:
-            avg_x = sum(s.position.x for s in stars) / len(stars)
-            avg_y = sum(s.position.y for s in stars) / len(stars)
-        else:
-            avg_x, avg_y = 0, 0
+        # Neighborhood counts: stars within the fairness radius
+        radius_sq = self.HOMEWORLD_NEIGHBORHOOD_RADIUS ** 2
+        counts: Dict[str, int] = {}
+        for star in stars:
+            counts[star.name] = sum(
+                1 for other in stars
+                if other is not star
+                and (star.position.x - other.position.x) ** 2
+                + (star.position.y - other.position.y) ** 2 <= radius_sq
+            )
 
-        # Divide into sectors and pick one from each
-        selected = []
-        remaining = list(stars)
+        # Minimum viable neighborhood: half the median count, floored
+        # at 3 - guarantees every start a comparable-by-floor
+        # expansion neighborhood
+        sorted_counts = sorted(counts.values())
+        median_count = sorted_counts[len(sorted_counts) // 2]
+        n_min = max(3, math.ceil(0.5 * median_count))
 
-        for i in range(player_count):
-            if not remaining:
-                break
+        # C#-derived mutual separation (StarMapGenerator.cs:160-163)
+        player_factor = int(math.floor(math.sqrt(player_count))) + 1
+        min_sep = min(width, height) / (2 * player_factor)
 
-            # Pick star furthest from already selected
-            if selected:
+        def candidates_for(threshold: int) -> List[Star]:
+            return [s for s in stars if counts[s.name] >= threshold]
+
+        def min_dist_to(star: Star, chosen: List[Star]) -> float:
+            return min(
+                math.sqrt((star.position.x - s.position.x) ** 2
+                          + (star.position.y - s.position.y) ** 2)
+                for s in chosen
+            )
+
+        def pick_next(chosen: List[Star],
+                      candidates: List[Star]) -> Optional[Star]:
+            """Farthest-point pick among candidates, honoring the
+            separation floor with a 0.9-stepwise relaxation ladder
+            (floor at half the C# separation)."""
+            sep = min_sep
+            while sep >= 0.5 * min_sep:
                 best_star = None
-                best_min_dist = -1
-
-                for star in remaining:
-                    min_dist = min(
-                        math.sqrt(
-                            (star.position.x - s.position.x) ** 2 +
-                            (star.position.y - s.position.y) ** 2
-                        )
-                        for s in selected
-                    )
-                    if min_dist > best_min_dist:
-                        best_min_dist = min_dist
+                best_dist = -1.0
+                for star in candidates:
+                    if star in chosen:
+                        continue
+                    dist = min_dist_to(star, chosen)
+                    if dist < sep:
+                        continue
+                    # Deterministic tie-break by name
+                    if (dist > best_dist
+                            or (dist == best_dist and best_star is not None
+                                and star.name < best_star.name)):
+                        best_dist = dist
                         best_star = star
+                if best_star is not None:
+                    return best_star
+                sep *= 0.9
+            return None
 
-                selected.append(best_star)
-                remaining.remove(best_star)
-            else:
-                # First player gets random corner area star
-                corner_stars = [
-                    s for s in remaining
-                    if s.position.x < avg_x and s.position.y < avg_y
-                ]
-                if corner_stars:
-                    star = self.rng.choice(corner_stars)
-                else:
-                    star = self.rng.choice(remaining)
-                selected.append(star)
-                remaining.remove(star)
+        candidates = candidates_for(n_min)
+        if not candidates:
+            candidates = list(stars)
+
+        # Player 1: seeded choice among dense candidates (one rng draw,
+        # as the previous quadrant pick, so downstream homeworld
+        # mineral draws stay aligned)
+        selected = [self.rng.choice(candidates)]
+
+        for _ in range(1, player_count):
+            best_star = None
+            # Relax the density floor stepwise before giving up on it
+            for threshold in range(n_min, 0, -1):
+                best_star = pick_next(selected, candidates_for(threshold))
+                if best_star is not None:
+                    break
+            if best_star is None:
+                # Tiny-map fallback: plain farthest-point over all
+                # stars (the pre-DEF-16 rule, always terminates)
+                best_star = max(
+                    (s for s in stars if s not in selected),
+                    key=lambda s: (min_dist_to(s, selected), s.name)
+                )
+            selected.append(best_star)
 
         # Make home worlds habitable (centered values)
         for star in selected:

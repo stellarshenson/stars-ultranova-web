@@ -110,8 +110,6 @@ const RaceWizard = {
             console.error('Race wizard container not found:', containerId);
             return;
         }
-
-        console.log('Race wizard initialized');
     },
 
     /**

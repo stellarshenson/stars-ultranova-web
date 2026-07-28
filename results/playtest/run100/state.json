@@ -1,0 +1,1864 @@
+{
+ "game_id": "d3f51d91-ef63-46b1-88cf-fef784c49ec8",
+ "name": "run100",
+ "seed": 4242,
+ "size": "small",
+ "model": "opus",
+ "turns_target": 100,
+ "next_turn": 57,
+ "year": 2156,
+ "server_log_offset": 579067,
+ "fleet_history": {
+  "1": {
+   "4294967297": {
+    "pos": [
+     368.2,
+     187.1
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967298": {
+    "pos": [
+     39.9,
+     209.2
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967301": {
+    "pos": [
+     209,
+     275
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967302": {
+    "pos": [
+     294,
+     176
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967303": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967304": {
+    "pos": [
+     79.1,
+     310.8
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967305": {
+    "pos": [
+     332.9,
+     110.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967313": {
+    "pos": [
+     380,
+     164
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967315": {
+    "pos": [
+     323.1,
+     282.9
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967316": {
+    "pos": [
+     100,
+     72
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967318": {
+    "pos": [
+     345.9,
+     325.6
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967320": {
+    "pos": [
+     20.0,
+     376.0
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967322": {
+    "pos": [
+     360.3,
+     120.3
+    ],
+    "streak": 1,
+    "with_orders": true
+   },
+   "4294967330": {
+    "pos": [
+     173,
+     221
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967333": {
+    "pos": [
+     278.1,
+     146.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967339": {
+    "pos": [
+     55,
+     27
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967341": {
+    "pos": [
+     367,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967343": {
+    "pos": [
+     23.1,
+     256.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967345": {
+    "pos": [
+     375.1,
+     201.4
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967346": {
+    "pos": [
+     194.8,
+     354.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967347": {
+    "pos": [
+     364.1,
+     202.0
+    ],
+    "streak": 4,
+    "with_orders": true
+   },
+   "4294967357": {
+    "pos": [
+     227.0,
+     321.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967367": {
+    "pos": [
+     295.5,
+     235.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967370": {
+    "pos": [
+     226.6,
+     317.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967371": {
+    "pos": [
+     125.7,
+     269.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967372": {
+    "pos": [
+     50.3,
+     250.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967374": {
+    "pos": [
+     91.7,
+     271.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967375": {
+    "pos": [
+     360.7,
+     167.3
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967376": {
+    "pos": [
+     118.4,
+     195.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967377": {
+    "pos": [
+     78.9,
+     228.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967378": {
+    "pos": [
+     95.8,
+     258.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967379": {
+    "pos": [
+     127.4,
+     288.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967380": {
+    "pos": [
+     105.4,
+     276.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967381": {
+    "pos": [
+     334.1,
+     110.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967382": {
+    "pos": [
+     143.4,
+     115.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967383": {
+    "pos": [
+     276.1,
+     142.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967384": {
+    "pos": [
+     167.4,
+     308.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967385": {
+    "pos": [
+     189.9,
+     199.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967386": {
+    "pos": [
+     188.8,
+     200.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967387": {
+    "pos": [
+     195.9,
+     193.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967388": {
+    "pos": [
+     301.6,
+     173.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967389": {
+    "pos": [
+     244.0,
+     176.3
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967390": {
+    "pos": [
+     195.2,
+     188.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967391": {
+    "pos": [
+     193.8,
+     186.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967392": {
+    "pos": [
+     195.0,
+     188.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967393": {
+    "pos": [
+     183.3,
+     185.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967394": {
+    "pos": [
+     286.2,
+     177.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967395": {
+    "pos": [
+     228.1,
+     178.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967396": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967397": {
+    "pos": [
+     216,
+     227
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967398": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967399": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967400": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967401": {
+    "pos": [
+     230.7,
+     213.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967402": {
+    "pos": [
+     268.2,
+     216.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967403": {
+    "pos": [
+     236.7,
+     225.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967404": {
+    "pos": [
+     226.5,
+     220.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967406": {
+    "pos": [
+     251.4,
+     200.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967407": {
+    "pos": [
+     156.0,
+     215.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967408": {
+    "pos": [
+     151.0,
+     240.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967409": {
+    "pos": [
+     181.2,
+     208.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967410": {
+    "pos": [
+     177.9,
+     182.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967411": {
+    "pos": [
+     175.1,
+     195.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967412": {
+    "pos": [
+     81.3,
+     232.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967413": {
+    "pos": [
+     125.3,
+     201.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967414": {
+    "pos": [
+     127.7,
+     202.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967415": {
+    "pos": [
+     214.7,
+     171.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967416": {
+    "pos": [
+     136.9,
+     229.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967417": {
+    "pos": [
+     220.0,
+     188.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967418": {
+    "pos": [
+     332.0,
+     170.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967419": {
+    "pos": [
+     198.1,
+     228.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967420": {
+    "pos": [
+     231,
+     214
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967421": {
+    "pos": [
+     233.0,
+     210.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967422": {
+    "pos": [
+     211.8,
+     228.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967423": {
+    "pos": [
+     233.2,
+     215.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967424": {
+    "pos": [
+     204.2,
+     249.3
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967425": {
+    "pos": [
+     190.4,
+     215.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967426": {
+    "pos": [
+     196.6,
+     214.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967427": {
+    "pos": [
+     208.5,
+     204.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967428": {
+    "pos": [
+     298.8,
+     199.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967429": {
+    "pos": [
+     234.9,
+     201.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967430": {
+    "pos": [
+     227.2,
+     199.3
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967431": {
+    "pos": [
+     259.1,
+     183.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967432": {
+    "pos": [
+     317.7,
+     179.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967433": {
+    "pos": [
+     255.9,
+     163.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967434": {
+    "pos": [
+     213.6,
+     185.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967435": {
+    "pos": [
+     101.9,
+     242.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967436": {
+    "pos": [
+     192.1,
+     224.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967437": {
+    "pos": [
+     261.2,
+     238.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967438": {
+    "pos": [
+     199,
+     182
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967439": {
+    "pos": [
+     231,
+     214
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967440": {
+    "pos": [
+     236.9,
+     241.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967441": {
+    "pos": [
+     221.0,
+     239.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967442": {
+    "pos": [
+     314.8,
+     236.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967443": {
+    "pos": [
+     273.7,
+     228.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967444": {
+    "pos": [
+     233.2,
+     240.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967445": {
+    "pos": [
+     212.4,
+     236.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967446": {
+    "pos": [
+     278.2,
+     190.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967447": {
+    "pos": [
+     237.4,
+     195.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967448": {
+    "pos": [
+     239.4,
+     186.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967449": {
+    "pos": [
+     229.1,
+     172.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967450": {
+    "pos": [
+     140.0,
+     211.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967451": {
+    "pos": [
+     158.4,
+     224.7
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967452": {
+    "pos": [
+     238.8,
+     183.9
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967453": {
+    "pos": [
+     193.0,
+     209.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967454": {
+    "pos": [
+     234.2,
+     230.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967457": {
+    "pos": [
+     207.6,
+     237.3
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967458": {
+    "pos": [
+     196.8,
+     238.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967459": {
+    "pos": [
+     234.9,
+     222.3
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967460": {
+    "pos": [
+     233.3,
+     219.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967461": {
+    "pos": [
+     278.2,
+     224.5
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967462": {
+    "pos": [
+     217.3,
+     223.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967463": {
+    "pos": [
+     334.2,
+     193.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967464": {
+    "pos": [
+     220.2,
+     189.1
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967465": {
+    "pos": [
+     216.4,
+     180.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967466": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967467": {
+    "pos": [
+     274.7,
+     181.3
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967468": {
+    "pos": [
+     216.7,
+     182.4
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967469": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967470": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967471": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967472": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967473": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967474": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967475": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967476": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967477": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967478": {
+    "pos": [
+     294,
+     176
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967479": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967480": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967481": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967482": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967483": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967484": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967485": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967486": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967487": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967488": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967489": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967490": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967491": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967492": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967493": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967494": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967495": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967496": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967497": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967498": {
+    "pos": [
+     188,
+     192
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967499": {
+    "pos": [
+     294,
+     176
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967500": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967501": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967502": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967503": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967504": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967505": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967506": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967507": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967508": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967509": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967510": {
+    "pos": [
+     118,
+     260
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967511": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967512": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967513": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967514": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967515": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967516": {
+    "pos": [
+     294,
+     176
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967517": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967518": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967519": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967520": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967521": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967522": {
+    "pos": [
+     294,
+     176
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967523": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967524": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967525": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967526": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967527": {
+    "pos": [
+     236,
+     177
+    ],
+    "streak": 0,
+    "with_orders": false
+   }
+  },
+  "2": {
+   "8589934593": {
+    "pos": [
+     255,
+     224
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934597": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934598": {
+    "pos": [
+     197,
+     294
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934599": {
+    "pos": [
+     60.0,
+     220.0
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934600": {
+    "pos": [
+     150,
+     318
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934601": {
+    "pos": [
+     173,
+     221
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934602": {
+    "pos": [
+     330.0,
+     380.0
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934603": {
+    "pos": [
+     40.0,
+     20.0
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934604": {
+    "pos": [
+     302,
+     253
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934605": {
+    "pos": [
+     380,
+     135
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934607": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934609": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934611": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934613": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934614": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934615": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934616": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934617": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934619": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934620": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934621": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934622": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934623": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934624": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934625": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934626": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934627": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934628": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934629": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934630": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934631": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934632": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934633": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934634": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934635": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934636": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934637": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934638": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934639": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934640": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934641": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934642": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934643": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934644": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934645": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934646": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934647": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934648": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934649": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934650": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934651": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934652": {
+    "pos": [
+     380,
+     20
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934653": {
+    "pos": [
+     328,
+     154
+    ],
+    "streak": 0,
+    "with_orders": false
+   }
+  }
+ },
+ "memo_paths": {
+  "1": "/home/lab/workspace/private/games/stars-ultranova-web/results/playtest/run100/memo-1.md",
+  "2": "/home/lab/workspace/private/games/stars-ultranova-web/results/playtest/run100/memo-2.md"
+ },
+ "done": true,
+ "victor": 1,
+ "created": "2026-07-28T00:40:52+00:00"
+}

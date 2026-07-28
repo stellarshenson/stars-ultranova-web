@@ -33,10 +33,13 @@ class Engine:
         Get max speed at which engine uses 0 fuel.
 
         Iterates backwards through fuel table to find highest
-        warp with 0 consumption.
+        warp with no consumption. C# Engine.cs lines 43-56 tests
+        == 0; the web mod stores NEGATIVE entries at ramscoop
+        free warps (fuel generation, backend/data/components.xml),
+        so any entry <= 0 counts as free here.
         """
         for i in range(9, -1, -1):
-            if self.fuel_consumption[i] == 0:
+            if self.fuel_consumption[i] <= 0:
                 return i + 1  # Index is one less than warp speed
         return 0
 

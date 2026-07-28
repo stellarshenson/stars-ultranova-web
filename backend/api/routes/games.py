@@ -260,7 +260,9 @@ async def submit_command(
 
 
 @router.get("/{game_id}/empires/{empire_id}/battles")
-async def get_battles(game_id: str, empire_id: int) -> List[dict]:
+async def get_battles(game_id: str, empire_id: int,
+                      x_empire_password: Optional[str] = Header(None)
+                      ) -> List[dict]:
     """
     Get the empire's battle reports from the last generated turn.
 
@@ -269,6 +271,7 @@ async def get_battles(game_id: str, empire_id: int) -> List[dict]:
     per-empire losses, for replay in the battle viewer.
     """
     manager = get_game_manager()
+    _require_password(manager, game_id, empire_id, x_empire_password)
     battles = manager.get_battle_reports(game_id, empire_id)
     if battles is None:
         raise HTTPException(status_code=404, detail="Game or empire not found")

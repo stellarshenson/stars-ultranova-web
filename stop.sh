@@ -13,11 +13,11 @@ if [ ! -f ".server.pid" ]; then
     echo "Error: No PID file found. Server may not be running."
 
     # Try to find and kill any running instances
-    PIDS=$(pgrep -f "python -m backend.main" || true)
+    PIDS=$(pgrep -f "gunicorn.*backend.main" || true)
     if [ -n "$PIDS" ]; then
         echo "Found running server processes: $PIDS"
         echo "Killing them..."
-        pkill -f "python -m backend.main"
+        pkill -f "gunicorn.*backend.main"
         echo "Server stopped."
     else
         echo "No running server found."

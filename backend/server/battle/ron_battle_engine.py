@@ -350,7 +350,14 @@ class RonBattleEngine:
                     selected_targets.append(TargetRow(lamb, priority, attractiveness))
 
             if selected_targets:
-                number_of_targets += 1
+                # Only ARMED wolves count as battle triggers - C#
+                # SelectTargets skips unarmed wolves before any target
+                # assignment (BattleEngine.cs:412-415), so unarmed-vs-
+                # unarmed co-location yields 0 targets and no battle.
+                # The unarmed wolf still gets its flee target/list so
+                # movement works when armed enemies are present.
+                if wolf.is_armed:
+                    number_of_targets += 1
                 # Sort by priority then attractiveness
                 selected_targets.sort(
                     key=lambda t: (t.priority, t.attractiveness)

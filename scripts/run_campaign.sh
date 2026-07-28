@@ -1,6 +1,8 @@
 #!/bin/bash
 # Final functional test: 5 full games vs AI, 20-50 turns each
 cd "$(dirname "$0")/.."
+mkdir -p logs
+curl -sf http://localhost:9800/health >/dev/null || { echo "start the server first: ./start.sh"; exit 1; }
 set -o pipefail
 PASS=0; FAIL=0
 run() {

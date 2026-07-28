@@ -127,7 +127,10 @@ class TestScoreFormula:
     def test_ship_classes_counted_per_ship(self):
         # The C# ServerState/Scores.cs:108-127 counts tokens; the web
         # counts per ship (token quantity) like the legacy
-        # Common/Scores.cs:92-111 and canonical Stars!
+        # Common/Scores.cs:92-111 and canonical Stars!. Ship points in
+        # the unarmed/escort categories are capped at one scoring ship
+        # per owned planet (DEF-8 web mod): here 2 planets cap the 3
+        # unarmed scouts to 2 scoring ships; the 2 escorts are at cap
         empire = make_empire(1)
         server = make_server(empire)
         add_star(server, "A", 1)
@@ -145,19 +148,85 @@ class TestScoreFormula:
         assert record.unarmed_ships == 3
         assert record.escort_ships == 2
         assert record.capital_ships == 2
-        # 3*0.5 + 2*2 + capital bonus (8*2*2)//(2+2)=8 + tech +1
-        # = 1.5 + 4 + 8 + 1 = 14.5 -> truncated 14
+        # min(3,2)*0.5 + min(2,2)*2 + capital bonus (8*2*2)//(2+2)=8
+        # + tech +1 = 1.0 + 4 + 8 + 1 = 14
         assert record.score == 14
 
     def test_total_score_truncates(self):
-        # Single unarmed ship: 0.5 + tech bucket 1 = 1.5 -> 1
-        # ((int)totalScore, Scores.cs:168)
+        # One planet, one unarmed ship: 0.5 + colonist 0 + tech
+        # bucket 1 = 1.5 -> 1 ((int)totalScore, Scores.cs:168)
         empire = make_empire(1)
         server = make_server(empire)
+        add_star(server, "A", 1)
         design = make_design(empire, "Scout")
         add_fleet(empire, design, 1)
 
         assert score_for(server, 1).score == 1
+
+    def test_escort_points_capped_at_planet_count(self):
+        # DEF-8 web mod: escort points awarded for at most one ship
+        # per owned planet - 5 escorts on 2 planets score 2*2, not 2*5
+        empire = make_empire(1)
+        server = make_server(empire)
+        add_star(server, "A", 1)
+        add_star(server, "B", 1)
+        escort = make_design(empire, "Frigate", has_weapons=True, armor=100)
+        add_fleet(empire, escort, 5)
+
+        record = score_for(server, 1)
+        # Raw report count stays uncapped
+        assert record.escort_ships == 5
+        # 2 planets * 2 points + tech bucket 1
+        assert record.score == 5
+
+    def test_unarmed_points_capped_at_planet_count(self):
+        # DEF-8 web mod, unarmed category: 5 scouts on 2 planets
+        # score min(5,2)*0.5 = 1.0
+        empire = make_empire(1)
+        server = make_server(empire)
+        add_star(server, "A", 1)
+        add_star(server, "B", 1)
+        unarmed = make_design(empire, "Scout", has_weapons=False)
+        add_fleet(empire, unarmed, 5)
+
+        record = score_for(server, 1)
+        assert record.unarmed_ships == 5
+        # min(5,2)*0.5 = 1.0 + tech 1 = 2
+        assert record.score == 2
+
+    def test_zero_planet_empire_scores_no_ship_points(self):
+        # DEF-8 web mod boundary: with no planets, unarmed/escort
+        # points are min(N, 0) = 0
+        empire = make_empire(1)
+        server = make_server(empire)
+        unarmed = make_design(empire, "Scout", has_weapons=False)
+        escort = make_design(empire, "Frigate", has_weapons=True, armor=100)
+        add_fleet(empire, unarmed, 3)
+        add_fleet(empire, escort, 4)
+
+        record = score_for(server, 1)
+        assert record.unarmed_ships == 3
+        assert record.escort_ships == 4
+        assert record.score == 1  # tech bucket only
+
+    def test_capital_harmonic_unchanged_by_cap(self):
+        # The capital term (Scores.cs:135-139) already saturates at
+        # 8*planets and is NOT touched by the DEF-8 cap: 6 capitals on
+        # 2 planets -> (8*6*2)//(6+2) = 12, alongside capped escorts
+        empire = make_empire(1)
+        server = make_server(empire)
+        add_star(server, "A", 1)
+        add_star(server, "B", 1)
+        capital = make_design(empire, "Battleship", has_weapons=True,
+                              armor=5000)
+        escort = make_design(empire, "Frigate", has_weapons=True, armor=100)
+        add_fleet(empire, capital, 6)
+        add_fleet(empire, escort, 5)
+
+        record = score_for(server, 1)
+        assert record.capital_ships == 6
+        # capitals 12 + escorts min(5,2)*2=4 + tech 1 = 17
+        assert record.score == 17
 
     @pytest.mark.parametrize("levels,expected", [
         ((1, 1, 1, 0, 0, 0), 1),   # sum 3 < 4 -> +1

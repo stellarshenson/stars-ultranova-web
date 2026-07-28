@@ -134,13 +134,10 @@ class GameHarness:
 def harness(request, tmp_path):
     """GameHarness on the real app with an isolated temp database."""
     import backend.services.game_manager as gm_module
-    import backend.persistence.database as db_module
     from backend.main import app
     from backend.services.game_manager import GameManager
 
-    # Point the module singletons at a per-test database
-    gm_module._game_manager = None
-    db_module._database = None
+    # Point the module singleton at a per-test database
     gm_module._game_manager = GameManager(str(tmp_path / "e2e.db"))
 
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -151,4 +148,3 @@ def harness(request, tmp_path):
         yield GameHarness(client, transcript)
 
     gm_module._game_manager = None
-    db_module._database = None

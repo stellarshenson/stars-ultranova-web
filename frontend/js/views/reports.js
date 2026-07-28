@@ -38,7 +38,6 @@ const Reports = {
             this.container.className = 'floating-panel reports-panel hidden';
             document.querySelector('main')?.appendChild(this.container);
         }
-        console.log('Reports initialized');
     },
 
     /**

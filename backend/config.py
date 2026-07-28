@@ -28,15 +28,6 @@ class Settings(BaseSettings):
     # Set to e.g. "/proxy/9800" when running behind JupyterHub proxy
     root_path: str = ""
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:9800", "http://127.0.0.1:9800"]
-    cors_allow_credentials: bool = True
-    cors_allow_methods: list[str] = ["*"]
-    cors_allow_headers: list[str] = ["*"]
-
-    # Database (SQLite for now)
-    database_url: str = "sqlite:///stars_nova.db"
-
     # Game Settings
     max_players: int = 16
     universe_sizes: list[str] = ["tiny", "small", "medium", "large", "huge"]

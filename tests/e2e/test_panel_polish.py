@@ -49,7 +49,7 @@ def test_left_column_panel_polish_served(harness):
     # Cache-buster bumped so clients pick up the polished stylesheet
     index = harness.client.get("/")
     assert index.status_code == 200
-    assert "static/css/main.css?v=10" in index.text
+    assert "static/css/main.css?v=11" in index.text
 
 
 def test_left_column_spacing_scale(harness):

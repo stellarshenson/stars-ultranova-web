@@ -133,3 +133,74 @@ class TestVictoryDeclaration:
         for _ in range(2):
             harness.generate_turn()
             assert harness.state(1)["victor"] is None
+
+
+class TestEscortSpamNotDominant:
+
+    def test_escort_spam_does_not_outscore_planet_empire(self, harness):
+        # DEF-8 acceptance bar (run100 shape): an empire with a few
+        # planets and a horde of cheap armed probes must NOT outscore
+        # an empire with 10x the planets. Escort/unarmed ship points
+        # are capped at one scoring ship per owned planet (web mod,
+        # backend/server/scores.py); the ScoreRecord still reports the
+        # raw escort count for the report UI
+        from backend.core.game_objects import Fleet
+        from backend.core.globals import NOBODY
+        from backend.services.game_manager import get_game_manager
+        from backend.services.ship_specs import SimpleDesign, make_token
+        from backend.core.data_structures import Resources
+
+        harness.create_game(seed=SEED, size="small", players=2)
+
+        manager = get_game_manager()
+        server_data = manager._load_game_state(harness.game_id)
+        spammer = server_data.all_empires[1]
+        expander = server_data.all_empires[2]
+
+        # Hand out planets: empire 1 gets 3 extras (4 with the
+        # homeworld), empire 2 gets 10x that
+        neutral = [s for s in server_data.all_stars.values()
+                   if s.owner == NOBODY]
+        assert len(neutral) >= 43, "small galaxy too sparse for test"
+        for star in neutral[:3]:
+            star.owner = 1
+            star.colonists = 100000
+            spammer.owned_stars[star.name] = star
+        for star in neutral[3:42]:
+            star.owner = 2
+            star.colonists = 100000
+            expander.owned_stars[star.name] = star
+
+        # Empire 1 fields 300 escort-class probes (armed, power
+        # rating < 2000) in one fleet
+        probe = SimpleDesign(key=spammer.get_next_design_key(),
+                             name="Armed Probe", has_weapons=True,
+                             armor=100,
+                             cost=Resources(ironium=2, energy=6))
+        spammer.designs[probe.key] = probe
+        fleet = Fleet()
+        fleet.key = spammer.get_next_fleet_key()
+        fleet.name = "Probe Swarm"
+        fleet.turn_year = spammer.turn_year
+        home = next(iter(spammer.owned_stars.values()))
+        fleet.position = home.position.copy()
+        fleet.in_orbit_name = home.name
+        token = make_token(probe, 300)
+        fleet.tokens[token.design_key] = token
+        spammer.owned_fleets[fleet.key] = fleet
+        manager._save_game_state(harness.game_id, server_data)
+
+        harness.generate_turn()
+
+        scores = {r["empire_id"]: r
+                  for r in harness.state(1)["scores"]}
+        # Raw count intact (300 injected + any escort-class ships in
+        # the starting fleet)
+        assert scores[1]["escort_ships"] >= 300
+        assert scores[1]["planets"] == 4
+        # 39 granted + homeworld (+ any star the starting fleets
+        # colonized during the generated turn)
+        assert scores[2]["planets"] >= 40
+        # The acceptance bar: expansion strictly outscores the spam
+        assert scores[2]["score"] > scores[1]["score"]
+        assert scores[2]["rank"] == 1

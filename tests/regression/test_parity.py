@@ -130,11 +130,13 @@ class TestPopulationGrowthParity:
         # At over capacity, population dies
         assert growth < 0
 
-        # Calculate expected death
+        # Calculate expected death. Rounding to 100s truncates TOWARD
+        # ZERO for negative growth (C# (int) cast + integer division,
+        # Star.cs:380-383; DEF-9) - Python // would floor to -4900
         import math
         capacity_pct = math.ceil((1100000 / 1000000.0) * 100) / 100.0
         expected = int(1100000 * (capacity_pct - 1) * -4.0 / 100.0)
-        expected = (expected // 100) * 100  # Round to 100s
+        expected = -((-expected) // 100) * 100  # Round to 100s toward zero
         assert growth == expected
 
     def test_negative_habitability_death(self):

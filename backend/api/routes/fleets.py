@@ -1,11 +1,12 @@
 """
 Fleet API routes.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 
 from ...services.game_manager import get_game_manager
+from .games import _require_password
 
 router = APIRouter(prefix="/api/games/{game_id}/fleets", tags=["fleets"])
 
@@ -91,12 +92,15 @@ class FleetRename(BaseModel):
 
 
 @router.post("/{fleet_key}/rename")
-async def rename_fleet(game_id: str, fleet_key: int, rename: FleetRename) -> dict:
+async def rename_fleet(game_id: str, fleet_key: int, rename: FleetRename,
+                       x_empire_password: Optional[str] = Header(None)) -> dict:
     """Rename an owned fleet."""
     manager = get_game_manager()
+    _require_password(manager, game_id, rename.empire_id, x_empire_password)
     result = manager.rename_fleet(game_id, rename.empire_id, fleet_key, rename.name)
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=result.get("code", 400),
+                            detail=result["error"])
     return result
 
 
@@ -107,14 +111,18 @@ class FleetBattlePlan(BaseModel):
 
 
 @router.post("/{fleet_key}/battle-plan")
-async def set_fleet_battle_plan(game_id: str, fleet_key: int,
-                                assignment: FleetBattlePlan) -> dict:
+async def set_fleet_battle_plan(
+        game_id: str, fleet_key: int, assignment: FleetBattlePlan,
+        x_empire_password: Optional[str] = Header(None)) -> dict:
     """Assign a named battle plan to an owned fleet (Fleet.cs:60)."""
     manager = get_game_manager()
+    _require_password(manager, game_id, assignment.empire_id,
+                      x_empire_password)
     result = manager.set_fleet_battle_plan(
         game_id, assignment.empire_id, fleet_key, assignment.plan)
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=result.get("code", 400),
+                            detail=result["error"])
     return result
 
 
@@ -126,9 +134,11 @@ class FleetSplit(BaseModel):
 
 
 @router.post("/{fleet_key}/split")
-async def split_fleet(game_id: str, fleet_key: int, split: FleetSplit) -> dict:
+async def split_fleet(game_id: str, fleet_key: int, split: FleetSplit,
+                      x_empire_password: Optional[str] = Header(None)) -> dict:
     """Split ships out of a fleet into a new fleet at the same location."""
     manager = get_game_manager()
+    _require_password(manager, game_id, split.empire_id, x_empire_password)
     keep = {}
     for key, qty in split.keep.items():
         design_key = int(key, 16) if isinstance(key, str) and \
@@ -136,7 +146,8 @@ async def split_fleet(game_id: str, fleet_key: int, split: FleetSplit) -> dict:
         keep[design_key] = qty
     result = manager.split_fleet(game_id, split.empire_id, fleet_key, keep)
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=result.get("code", 400),
+                            detail=result["error"])
     return result
 
 
@@ -147,13 +158,16 @@ class FleetMerge(BaseModel):
 
 
 @router.post("/{fleet_key}/merge")
-async def merge_fleets(game_id: str, fleet_key: int, merge: FleetMerge) -> dict:
+async def merge_fleets(game_id: str, fleet_key: int, merge: FleetMerge,
+                       x_empire_password: Optional[str] = Header(None)) -> dict:
     """Merge another fleet's ships into this fleet."""
     manager = get_game_manager()
+    _require_password(manager, game_id, merge.empire_id, x_empire_password)
     result = manager.merge_fleets(
         game_id, merge.empire_id, fleet_key, merge.other_fleet_key)
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=result.get("code", 400),
+                            detail=result["error"])
     return result
 
 
@@ -167,13 +181,16 @@ class CargoTransfer(BaseModel):
 
 
 @router.post("/{fleet_key}/cargo")
-async def transfer_cargo(game_id: str, fleet_key: int, transfer: CargoTransfer) -> dict:
+async def transfer_cargo(
+        game_id: str, fleet_key: int, transfer: CargoTransfer,
+        x_empire_password: Optional[str] = Header(None)) -> dict:
     """
     Transfer cargo between a fleet and the star it orbits.
 
     Positive values load star -> fleet; negative values unload.
     """
     manager = get_game_manager()
+    _require_password(manager, game_id, transfer.empire_id, x_empire_password)
     result = manager.transfer_cargo(
         game_id,
         transfer.empire_id,
@@ -186,7 +203,8 @@ async def transfer_cargo(game_id: str, fleet_key: int, transfer: CargoTransfer) 
         }
     )
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=result.get("code", 400),
+                            detail=result["error"])
     return result
 
 
@@ -204,13 +222,15 @@ class FleetToFleetTransfer(BaseModel):
 @router.post("/{fleet_key}/transfer")
 async def transfer_cargo_between_fleets(
         game_id: str, fleet_key: int,
-        transfer: FleetToFleetTransfer) -> dict:
+        transfer: FleetToFleetTransfer,
+        x_empire_password: Optional[str] = Header(None)) -> dict:
     """
     Transfer cargo and fuel between two co-located owned fleets.
 
     Positive values load target fleet -> this fleet; negative reverse.
     """
     manager = get_game_manager()
+    _require_password(manager, game_id, transfer.empire_id, x_empire_password)
     result = manager.transfer_cargo_between_fleets(
         game_id,
         transfer.empire_id,
@@ -225,7 +245,8 @@ async def transfer_cargo_between_fleets(
         }
     )
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=result.get("code", 400),
+                            detail=result["error"])
     return result
 
 
@@ -245,7 +266,9 @@ class TraderGift(BaseModel):
 
 @router.post("/{fleet_key}/gift")
 async def gift_to_trader(game_id: str, fleet_key: int,
-                         gift: TraderGift) -> dict:
+                         gift: TraderGift,
+                         x_empire_password: Optional[str] = Header(None)
+                         ) -> dict:
     """
     Gift minerals or colonists to a co-located Mystery Trader.
 
@@ -253,6 +276,7 @@ async def gift_to_trader(game_id: str, fleet_key: int,
     generated turn (canonical Stars! rules, C# has only a TODO).
     """
     manager = get_game_manager()
+    _require_password(manager, game_id, gift.empire_id, x_empire_password)
     result = manager.gift_to_trader(
         game_id,
         gift.empire_id,
@@ -266,5 +290,6 @@ async def gift_to_trader(game_id: str, fleet_key: int,
         }
     )
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=result.get("code", 400),
+                            detail=result["error"])
     return result

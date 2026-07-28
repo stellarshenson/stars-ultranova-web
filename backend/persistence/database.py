@@ -15,7 +15,8 @@ class Database:
     """
     SQLite database connection manager.
 
-    Provides connection pooling and schema initialization.
+    Opens a new connection per call (no pooling) and initializes
+    the schema.
     """
 
     def __init__(self, db_path: str = "stars_nova.db"):
@@ -172,23 +173,3 @@ class Database:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
-
-
-# Global database instance
-_database: Optional[Database] = None
-
-
-def get_database(db_path: str = "stars_nova.db") -> Database:
-    """
-    Get or create global database instance.
-
-    Args:
-        db_path: Path to SQLite database file.
-
-    Returns:
-        Database instance.
-    """
-    global _database
-    if _database is None:
-        _database = Database(db_path)
-    return _database

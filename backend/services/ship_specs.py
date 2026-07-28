@@ -20,6 +20,37 @@ from ..core.game_objects.fleet import ShipToken
 from ..core.components.ship_design import Weapon
 
 
+# Per-warp engine fuel tables for the starting designs (index 0 =
+# warp 1, index 9 = warp 10; C# Engine.cs:34, consumed as
+# table[warp - 1] per ShipDesign.cs:732). Values match
+# backend/data/components.xml, whose fuel-burning entries are the
+# canonical references/original-game/components.xml tables; the
+# NEGATIVE ramscoop entries are a deliberate web mod marking free
+# warps with fuel generation (C# uses 0 there). Hardcoded so
+# SimpleDesign stays free of the component loader.
+ENGINE_FUEL_TABLES = {
+    # Every C# starting design mounts Quick Jump 5
+    # (StarMapInitialiser.cs:140-151)
+    "Quick Jump 5": [0, 25, 100, 100, 100, 180, 500, 800, 900, 1080],
+    # HE colony ship engine (StarMapInitialiser.cs:143-151)
+    "Settler's Delight": [-5000, -7830, -3915, -1300, -1300, -999,
+                          140, 275, 480, 576],
+}
+
+
+def _free_warp_from_table(fuel_table: List[int]) -> int:
+    """
+    Highest warp whose table entry is <= 0 (free travel).
+
+    C# Engine.cs lines 43-56 tests == 0; the web mod stores negative
+    entries at ramscoop free warps, so <= 0 counts as free.
+    """
+    for i in range(9, -1, -1):
+        if fuel_table[i] <= 0:
+            return i + 1
+    return 0
+
+
 @dataclass
 class SimpleDesign:
     """
@@ -70,6 +101,11 @@ class SimpleDesign:
     # Mass driver warp rating (full ShipDesign aggregates Mass Driver
     # components per MassDriver.cs semantics; 0 = no driver)
     mass_driver: int = 0
+    # Mounted engine and its per-warp fuel table (index 0 = warp 1;
+    # C# Engine.cs:34 / ShipDesign.cs:732). All zeros = no engine
+    # (starbase)
+    engine_name: str = ""
+    fuel_table: List[int] = field(default_factory=lambda: [0] * 10)
 
     @property
     def power_rating(self) -> int:
@@ -120,6 +156,8 @@ class SimpleDesign:
             "storm_shield": self.storm_shield,
             "has_armor_components": self.has_armor_components,
             "mass_driver": self.mass_driver,
+            "engine_name": self.engine_name,
+            "fuel_table": list(self.fuel_table),
             "weapons": [
                 {"power": w.power, "range": w.range, "initiative": w.initiative,
                  "accuracy": w.accuracy, "group": w.group}
@@ -163,6 +201,8 @@ class SimpleDesign:
         design.storm_shield = data.get("storm_shield", 0.0)
         design.has_armor_components = data.get("has_armor_components", False)
         design.mass_driver = data.get("mass_driver", 0)
+        design.engine_name = data.get("engine_name", "")
+        design.fuel_table = list(data.get("fuel_table", [0] * 10))
         design.weapons = [
             Weapon(power=w.get("power", 0), range=w.get("range", 0),
                    initiative=w.get("initiative", 0), accuracy=w.get("accuracy", 75),
@@ -172,11 +212,15 @@ class SimpleDesign:
         return design
 
 
-# Starting design specs - stats follow the original game's starting ships
+# Starting design specs - stats follow the original game's starting
+# ships. Every ship mounts Quick Jump 5 except the HE Spore Cloud
+# (Settler's Delight) per StarMapInitialiser.cs:140-151; the starbase
+# has no engine
 STARTING_DESIGN_SPECS = [
     {
         "name": "Long Range Scout",
         "hull_name": "Scout",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 8, "boranium": 2, "germanium": 7, "energy": 22},
         "mass": 25,
         "armor": 20,
@@ -188,6 +232,7 @@ STARTING_DESIGN_SPECS = [
     {
         "name": "Santa Maria",
         "hull_name": "Colony Ship",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 20, "boranium": 5, "germanium": 15, "energy": 30},
         "mass": 70,
         "armor": 20,
@@ -199,6 +244,7 @@ STARTING_DESIGN_SPECS = [
     {
         "name": "Teamster",
         "hull_name": "Small Freighter",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 15, "boranium": 2, "germanium": 10, "energy": 25},
         "mass": 60,
         "armor": 25,
@@ -209,6 +255,7 @@ STARTING_DESIGN_SPECS = [
     {
         "name": "Stalwart Defender",
         "hull_name": "Destroyer",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 30, "boranium": 15, "germanium": 15, "energy": 60},
         "mass": 110,
         "armor": 200,
@@ -230,23 +277,24 @@ STARTING_DESIGN_SPECS = [
     # (superset), as C# registers designs the race can build anyway.
     {
         # HE starting colonizer: Mini-Colony Ship hull with the
-        # Settler's Delight engine, free at warp 5
-        # (StarMapInitialiser.cs:143-151)
+        # Settler's Delight engine (StarMapInitialiser.cs:143-151).
+        # free_warp_speed derives from the engine table: warp 6
         "name": "Spore Cloud",
         "hull_name": "Mini-Colony Ship",
+        "engine": "Settler's Delight",
         "cost": {"ironium": 12, "boranium": 3, "germanium": 9, "energy": 22},
         "mass": 32,
         "armor": 20,
         "fuel_capacity": 150,
         "cargo_capacity": 10,
         "can_colonize": True,
-        "free_warp_speed": 5,
         "optimal_speed": 5,
     },
     {
         # Armed scout for HE and WM (X-Ray-class beam)
         "name": "Armed Probe",
         "hull_name": "Scout",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 9, "boranium": 4, "germanium": 8, "energy": 26},
         "mass": 27,
         "armor": 20,
@@ -265,6 +313,7 @@ STARTING_DESIGN_SPECS = [
         # PP shielded scout
         "name": "Shielded Scout",
         "hull_name": "Scout",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 10, "boranium": 2, "germanium": 9, "energy": 26},
         "mass": 28,
         "armor": 20,
@@ -278,6 +327,7 @@ STARTING_DESIGN_SPECS = [
         # SD standard mine layer (Mine Dispenser 40)
         "name": "Little Hen",
         "hull_name": "Mini Mine Layer",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 20, "boranium": 10, "germanium": 10, "energy": 40},
         "mass": 60,
         "armor": 60,
@@ -289,6 +339,7 @@ STARTING_DESIGN_SPECS = [
         # SD speed-trap mine layer (Speed Trap 20)
         "name": "Speed Turtle",
         "hull_name": "Mini Mine Layer",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 20, "boranium": 10, "germanium": 10, "energy": 40},
         "mass": 60,
         "armor": 60,
@@ -300,6 +351,7 @@ STARTING_DESIGN_SPECS = [
         # IT starting privateer
         "name": "Swashbuckler",
         "hull_name": "Privateer",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 38, "boranium": 2, "germanium": 22, "energy": 80},
         "mass": 150,
         "armor": 150,
@@ -312,6 +364,7 @@ STARTING_DESIGN_SPECS = [
         # carries no robots, so it mines 0 until refitted)
         "name": "Cotton Picker",
         "hull_name": "Mini Miner",
+        "engine": "Quick Jump 5",
         "cost": {"ironium": 25, "boranium": 0, "germanium": 6, "energy": 50},
         "mass": 80,
         "armor": 50,
@@ -359,6 +412,15 @@ def make_starting_designs(empire) -> None:
 def _design_from_spec(spec: dict) -> SimpleDesign:
     """Build a SimpleDesign from a spec dict."""
     cost = spec.get("cost", {})
+    # Resolve the mounted engine's fuel table; free warp derives from
+    # the table (Engine.cs:43-56 with the web <= 0 rule), overriding
+    # any hand-set spec value
+    engine_name = spec.get("engine", "")
+    fuel_table = list(ENGINE_FUEL_TABLES.get(engine_name, [0] * 10))
+    if engine_name:
+        free_warp = _free_warp_from_table(fuel_table)
+    else:
+        free_warp = spec.get("free_warp_speed", 0)
     return SimpleDesign(
         name=spec["name"],
         hull_name=spec.get("hull_name", ""),
@@ -378,7 +440,9 @@ def _design_from_spec(spec: dict) -> SimpleDesign:
         can_scan=spec.get("can_scan", False),
         is_starbase=spec.get("is_starbase", False),
         has_weapons=spec.get("has_weapons", False),
-        free_warp_speed=spec.get("free_warp_speed", 0),
+        free_warp_speed=free_warp,
+        engine_name=engine_name,
+        fuel_table=fuel_table,
         optimal_speed=spec.get("optimal_speed", 6),
         scan_range_normal=spec.get("scan_range_normal", 0),
         scan_range_penetrating=spec.get("scan_range_penetrating", 0),
@@ -443,6 +507,19 @@ def make_token(design, quantity: int = 1) -> ShipToken:
     token.has_weapons = getattr(design, 'has_weapons', False)
     token.free_warp_speed = getattr(design, 'free_warp_speed', 0)
     token.optimal_speed = getattr(design, 'optimal_speed', 6)
+
+    # Per-warp engine fuel table (C# Engine.cs:34, consumed as
+    # table[warp - 1] per ShipDesign.cs:732). Full ShipDesign exposes
+    # the fitted Engine; SimpleDesign caches fuel_table directly.
+    # All zeros = no engine (starbase) - burns nothing
+    engine = getattr(design, 'engine', None)
+    if engine is not None:
+        token.fuel_table = list(engine.fuel_consumption)
+    else:
+        token.fuel_table = list(getattr(design, 'fuel_table', [0] * 10))
+    # Fuel generated per year (web mod - ShipDesign.fuel_consumption
+    # subtracts Fuel property "Generation"; no C# equivalent)
+    token.fuel_generation = getattr(design, 'fuel_generation', 0)
     # SimpleDesign caches scan_range_normal; ShipDesign exposes normal_scan
     token.scan_range_normal = getattr(
         design, 'scan_range_normal', None) or getattr(design, 'normal_scan', 0)

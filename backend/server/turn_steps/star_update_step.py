@@ -479,42 +479,88 @@ class StarUpdateStep(ITurnStep):
                 # intact, order stays in the queue for next year
                 continue
 
+            # Per-resource remaining cost of the unit currently under
+            # construction (C# remainingCost, serialized per order).
+            # Legacy saves (pre-DEF-10) banked only an energy scalar:
+            # reconstruct remaining_cost from it on first pass
+            if order.remaining_cost is not None:
+                remaining = order.remaining_cost.copy()
+            else:
+                remaining = unit_cost.copy()
+                if order.partial_resources_spent > 0:
+                    remaining.energy = max(
+                        0, remaining.energy - order.partial_resources_spent)
+
             built = 0
             while order.quantity > 0:
                 # Re-check per unit (ProductionOrder.cs:107-126 checks
                 # IsSkipped at the top of every unit iteration) so
                 # operable/max caps and exhausted resources stop
-                # mid-stack
+                # mid-stack; a partial build below exhausts the scarce
+                # commodity, so this check also ends the loop after it
                 if self._is_skipped(order, star, unit_cost, built):
                     break
 
-                remaining = unit_cost.energy - order.partial_resources_spent
-                spend = min(remaining, star.resources_on_hand.energy)
+                on_hand = star.resources_on_hand
+                if on_hand >= remaining:
+                    # Complete the unit: spend the whole remaining cost
+                    # (FactoryProductionUnit.cs:117-125,
+                    # ShipProductionUnit.cs:146-153)
+                    star.resources_on_hand = on_hand - remaining
+                    order.quantity -= 1
+                    built += 1
+                    # C# defect fixed (DEF-10 port note): neither
+                    # Construct resets remainingCost to Cost after a
+                    # completed unit (FactoryProductionUnit.cs:136-141),
+                    # so the NEXT unit of a multi-quantity order would be
+                    # charged only the banked residue.
+                    # ProductionOrder.NeededResources
+                    # (ProductionOrder.cs:79-93) shows the intended
+                    # invariant - RemainingCost differs from Cost only
+                    # while one unit is mid-build - so reset per unit
+                    remaining = unit_cost.copy()
+                else:
+                    # Partial build (FactoryProductionUnit.cs:108-142,
+                    # ShipProductionUnit.cs:137-180): spend a
+                    # proportional slice of every commodity, driving the
+                    # scarcest one to exactly 0. lacking fields go
+                    # negative for surplus commodities, matching C#
+                    lacking = remaining - on_hand
+                    percent_buildable = 1.0
+                    for commodity in ("ironium", "boranium",
+                                      "germanium", "energy"):
+                        lack = getattr(lacking, commodity)
+                        rem = getattr(remaining, commodity)
+                        # The rem > 0 guard replaces C#'s benign double
+                        # division by zero when on-hand dipped below
+                        # zero on a commodity the unit does not need
+                        if lack > 0 and rem > 0:
+                            percent_buildable = min(
+                                percent_buildable, 1.0 - lack / rem)
+                    # Ceiling per commodity (Resources.cs:251-261);
+                    # "Rounding can cause one more resource to be
+                    # consumed than we have" - on-hand may dip slightly
+                    # below zero, C#-faithful
+                    spend = remaining * percent_buildable
+                    star.resources_on_hand = on_hand - spend
+                    remaining = remaining - spend
+                    # Quantity unchanged; the limiting commodity is now
+                    # exhausted so the next iteration's _is_skipped
+                    # breaks the while (ProductionOrder.cs:107-126) -
+                    # and trailing non-auto orders needing it now block
+                    # the queue instead of starving this order (DEF-10)
 
-                if spend < remaining:
-                    # Not enough resources to finish this unit - bank progress
-                    order.partial_resources_spent += spend
-                    star.resources_on_hand.energy -= spend
-                    break
-
-                # Check minerals for one unit. Web deviation: C# banks
-                # per-resource RemainingCost with proportional mineral
-                # spend (FactoryProductionUnit.cs:108-142); the web
-                # model banks energy only, minerals are all-or-nothing
-                if (star.resources_on_hand.ironium < unit_cost.ironium or
-                        star.resources_on_hand.boranium < unit_cost.boranium or
-                        star.resources_on_hand.germanium < unit_cost.germanium):
-                    # Blocked on minerals - stop processing this order
-                    break
-
-                # Pay for the unit
-                star.resources_on_hand.energy -= spend
-                star.resources_on_hand.ironium -= unit_cost.ironium
-                star.resources_on_hand.boranium -= unit_cost.boranium
-                star.resources_on_hand.germanium -= unit_cost.germanium
+            # Persist banked progress for next year (C# serializes
+            # RemainingCost per order). Keep the energy scalar as a
+            # derived mirror for the client percent display and AI
+            # queue heuristics
+            if order.quantity > 0 and remaining != unit_cost:
+                order.remaining_cost = remaining
+                order.partial_resources_spent = max(
+                    0, unit_cost.energy - remaining.energy)
+            else:
+                order.remaining_cost = None
                 order.partial_resources_spent = 0
-                order.quantity -= 1
-                built += 1
 
             if built > 0:
                 item_messages = self._create_manufactured_items(
