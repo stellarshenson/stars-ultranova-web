@@ -386,8 +386,8 @@ class Catalog:
         techsum = lambda c: sum(
             (c.get("tech_requirements") or {}).values())
         # Hull Affinity engines (e.g. Settler's Delight) fit only one
-        # hull and are often race-restricted; the components API does
-        # not expose race restrictions, so avoid them in curated picks
+        # hull, so avoid them in curated picks (race restrictions are
+        # now on the payload as required_traits/forbidden_traits)
         engine = self._best(
             {"ENGINE"}, levels, lambda c: (
                 "Hull Affinity" not in (c.get("properties") or {}),
@@ -462,8 +462,8 @@ def fmt_waypoints(wps):
     for wp in (wps or [])[:4]:
         dest = wp.get("destination") or (
             f"({wp.get('position_x', 0):.0f},{wp.get('position_y', 0):.0f})")
-        task = wp.get("task_type", "NoTask").replace("TaskObj", "")
-        suffix = "" if task in ("NoTask", "NoTaskObj") else f" {task}"
+        task = wp.get("task_type", "NoTask")
+        suffix = "" if task == "NoTask" else f" {task}"
         parts.append(f"{dest}@w{wp.get('warp_factor', 0)}{suffix}")
     return " then ".join(parts) if parts else "idle"
 

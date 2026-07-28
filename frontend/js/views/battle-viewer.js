@@ -7,8 +7,10 @@
  *   { location, space_size, grid_size, year, steps, stacks, losses }
  * Step types (backend/server/battle/battle_step.py):
  *   Movement { stack_key, position:{x,y} }
- *   Target   { stack_key, target_key, percent_to_fire }
+ *   Target   { stack_key, target_key, percent_to_fire, priority,
+ *              target_role }
  *   Weapons  { weapon_target:{stack_key, target_key}, damage, targeting }
+ *   Withdraw { stack_key }
  *   Destroy  { stack_key }
  */
 
@@ -30,6 +32,7 @@ const BattleViewer = {
 
     // Visual settings
     gridSize: 10,
+    gridScale: 1,
     cellSize: 40,
     canvasWidth: 400,
     canvasHeight: 400,
@@ -115,7 +118,12 @@ const BattleViewer = {
         this.currentStep = 0;
         this.isPlaying = false;
 
-        this.gridSize = battleReport?.grid_size || 10;
+        // The report's grid_size is the number of position units per
+        // board square (RonBattleEngine.GRID_SCALE = 100 over a 0-1000
+        // board), not a count of squares - the board is the canonical
+        // 10 x 10 regardless
+        this.gridScale = battleReport?.grid_size || 1;
+        this.gridSize = 10;
         this.cellSize = this.canvasWidth / this.gridSize;
 
         this.container.classList.remove('hidden');
@@ -370,12 +378,17 @@ const BattleViewer = {
     },
 
     /**
-     * Canvas pixel center of a grid cell.
+     * Canvas pixel position of a board position.
+     *
+     * Stack and Movement positions are in grid units - gridScale units
+     * per board square - so divide by the scale before scaling to
+     * pixels. They are points on the board rather than cell indices,
+     * so no half-cell offset applies.
      */
     cellCenter(pos) {
         return {
-            x: (pos.x + 0.5) * this.cellSize,
-            y: (pos.y + 0.5) * this.cellSize
+            x: (pos.x / this.gridScale) * this.cellSize,
+            y: (pos.y / this.gridScale) * this.cellSize
         };
     },
 
@@ -502,8 +515,9 @@ const BattleViewer = {
     },
 
     /**
-     * Update combatants panel: stacks grouped by owning empire,
-     * plus losses once playback reaches the end.
+     * Update combatants panel: stacks grouped by owning empire, each
+     * stack's battle role and the plan it fought under, plus losses
+     * once playback reaches the end.
      */
     updateCombatants() {
         const container = document.getElementById('battle-combatants');
@@ -513,19 +527,33 @@ const BattleViewer = {
         for (const stack of Object.values(this.battleReport.stacks || {})) {
             const owner = stack.owner;
             if (!byOwner[owner]) {
-                byOwner[owner] = { stacks: 0, ships: 0 };
+                byOwner[owner] = { stacks: 0, ships: 0, roster: [] };
             }
             byOwner[owner].stacks++;
             byOwner[owner].ships += stack.token?.quantity || 1;
+            byOwner[owner].roster.push({
+                name: stack.token?.design_name || stack.name,
+                quantity: stack.token?.quantity || 1,
+                role: stack.battle_role || '',
+                plan: stack.battle_plan || ''
+            });
         }
 
         let html = '';
         for (const [owner, info] of Object.entries(byOwner)) {
             const colorClass = Number(owner) === GameState.empireId ? 'friendly' : 'enemy';
+            const roster = info.roster.map(s => {
+                const detail = [s.role, s.plan ? `plan: ${s.plan}` : null]
+                    .filter(Boolean).join(' - ');
+                return `<div class="combatant-stack">${s.quantity} x ${s.name}`
+                    + (detail ? ` <span class="combatant-role">(${detail})</span>` : '')
+                    + '</div>';
+            }).join('');
             html += `
                 <div class="combatant ${colorClass}">
                     <span class="combatant-name">Empire ${owner}</span>
                     <span class="combatant-ships">${info.stacks} stacks, ${info.ships} ships</span>
+                    ${roster}
                 </div>
             `;
         }
@@ -543,6 +571,13 @@ const BattleViewer = {
         container.innerHTML = html || '<p>No combatants.</p>';
     },
 
+    // Plan tier that picked a target, as recorded on Target steps
+    // (backend/server/battle/battle_plan.py PRIORITY_TIER_LABELS)
+    PRIORITY_TIER_LABELS: {
+        7: 'Primary', 6: 'Secondary', 5: 'Tertiary',
+        4: 'Quaternary', 3: 'Quinary'
+    },
+
     /**
      * Describe a battle step for the log.
      */
@@ -554,9 +589,17 @@ const BattleViewer = {
                 const pos = step.position || {};
                 return `${this.stackName(step.stack_key)} moves to (${pos.x}, ${pos.y})`;
             }
-            case 'Target':
+            case 'Target': {
+                // Why this target: the plan tier that matched and the
+                // role it matched (backend battle_plan.PRIORITY_TIER_LABELS)
+                const tier = this.PRIORITY_TIER_LABELS[step.priority];
+                const why = [tier ? `${tier} target` : null, step.target_role]
+                    .filter(Boolean).join(', ');
                 return `${this.stackName(step.stack_key)} targets `
-                    + `${this.stackName(step.target_key)} (${step.percent_to_fire}% fire)`;
+                    + `${this.stackName(step.target_key)}`
+                    + (why ? ` [${why}]` : '')
+                    + ` (${step.percent_to_fire}% fire)`;
+            }
             case 'Weapons': {
                 const wt = step.weapon_target || {};
                 // targeting is TokenDefence: 0 = shields, 1 = armor
@@ -566,6 +609,8 @@ const BattleViewer = {
                     + `${this.stackName(wt.target_key)} for `
                     + `${Math.round(step.damage || 0)} damage (${targeting})`;
             }
+            case 'Withdraw':
+                return `${this.stackName(step.stack_key)} withdraws from the battle`;
             case 'Destroy':
                 return `${this.stackName(step.stack_key)} destroyed`;
             default:

@@ -17,38 +17,56 @@ from typing import List
 
 from ..core.data_structures.resources import Resources
 from ..core.game_objects.fleet import ShipToken
+from ..core.components.engine import Engine
 from ..core.components.ship_design import Weapon
+from ..core.components.ship_role import ShipRole, battle_role_of
 
 
-# Per-warp engine fuel tables for the starting designs (index 0 =
-# warp 1, index 9 = warp 10; C# Engine.cs:34, consumed as
-# table[warp - 1] per ShipDesign.cs:732). Values match
-# backend/data/components.xml, whose fuel-burning entries are the
-# canonical references/original-game/components.xml tables; the
-# NEGATIVE ramscoop entries are a deliberate web mod marking free
-# warps with fuel generation (C# uses 0 there). Hardcoded so
-# SimpleDesign stays free of the component loader.
-ENGINE_FUEL_TABLES = {
-    # Every C# starting design mounts Quick Jump 5
-    # (StarMapInitialiser.cs:140-151)
-    "Quick Jump 5": [0, 25, 100, 100, 100, 180, 500, 800, 900, 1080],
-    # HE colony ship engine (StarMapInitialiser.cs:143-151)
-    "Settler's Delight": [-5000, -7830, -3915, -1300, -1300, -999,
-                          140, 275, 480, 576],
-}
+# Per-warp engine fuel tables (index 0 = warp 1, index 9 = warp 10;
+# C# Engine.cs:34, consumed as table[warp - 1] per ShipDesign.cs:732).
+# backend/data/components.xml is the single source for every table -
+# nothing here duplicates the numbers. Its fuel-burning entries are the
+# canonical references/original-game/components.xml values; the NEGATIVE
+# entries on the ram-scoop engines listed in
+# Engine.WEB_MOD_RAMSCOOP_ENGINES are a deliberate web mod marking free
+# warps with fuel generation (C# stores 0 there). The old note about
+# hardcoding to keep SimpleDesign loader-free no longer applies: the
+# lookup below imports the loader lazily and memoizes, so a process
+# parses the catalog at most once.
+_FUEL_TABLE_CACHE: dict = {}
+
+
+def engine_fuel_table(engine_name: str) -> List[int]:
+    """
+    Resolve an engine's per-warp fuel table from the component catalog.
+
+    Args:
+        engine_name: Component name, "" for no engine (starbase).
+
+    Returns:
+        A fresh 10-entry table; all zeros for no/unknown engine.
+    """
+    if not engine_name:
+        return [0] * 10
+    cached = _FUEL_TABLE_CACHE.get(engine_name)
+    if cached is None:
+        from .design_builder import ensure_components_loaded
+        loader = ensure_components_loaded()
+        component = loader.get_component(engine_name)
+        prop = component.get_property("Engine") if component else None
+        cached = list(prop.values["fuel_consumption"]) if prop else [0] * 10
+        _FUEL_TABLE_CACHE[engine_name] = cached
+    return list(cached)
 
 
 def _free_warp_from_table(fuel_table: List[int]) -> int:
     """
     Highest warp whose table entry is <= 0 (free travel).
 
-    C# Engine.cs lines 43-56 tests == 0; the web mod stores negative
-    entries at ramscoop free warps, so <= 0 counts as free.
+    Delegates to Engine.free_warp_speed so the web <= 0 convention
+    (C# Engine.cs lines 43-56 tests == 0) has one implementation.
     """
-    for i in range(9, -1, -1):
-        if fuel_table[i] <= 0:
-            return i + 1
-    return 0
+    return Engine(fuel_consumption=list(fuel_table)).free_warp_speed
 
 
 @dataclass
@@ -78,6 +96,9 @@ class SimpleDesign:
     scan_range_normal: int = 0
     scan_range_penetrating: int = 0
     dock_capacity: int = 0
+    # Extra fleet repair percent granted by the hull (full ShipDesign
+    # reads Hull.heals_others_percent from the blueprint)
+    heals_others_percent: int = 0
     obsolete: bool = False
     hull_name: str = ""
     battle_speed: float = 0.5
@@ -118,6 +139,11 @@ class SimpleDesign:
         """Alias used by battle code (ShipDesign uses 'shield')."""
         return self.shields
 
+    @property
+    def battle_role(self) -> ShipRole:
+        """The single battle role this design falls into."""
+        return battle_role_of(self)
+
     def update(self) -> None:
         """Aggregates are static for SimpleDesign - nothing to recompute."""
         return
@@ -138,12 +164,16 @@ class SimpleDesign:
             "can_scan": self.can_scan,
             "is_starbase": self.is_starbase,
             "is_bomber": self.is_bomber,
+            # Derived, not stored: from_dict re-infers it from the
+            # capability fields, so old saves classify identically
+            "battle_role": self.battle_role.value,
             "has_weapons": self.has_weapons,
             "free_warp_speed": self.free_warp_speed,
             "optimal_speed": self.optimal_speed,
             "scan_range_normal": self.scan_range_normal,
             "scan_range_penetrating": self.scan_range_penetrating,
             "dock_capacity": self.dock_capacity,
+            "heals_others_percent": self.heals_others_percent,
             "obsolete": self.obsolete,
             "hull_name": self.hull_name,
             "battle_speed": self.battle_speed,
@@ -189,6 +219,7 @@ class SimpleDesign:
         design.scan_range_normal = data.get("scan_range_normal", 0)
         design.scan_range_penetrating = data.get("scan_range_penetrating", 0)
         design.dock_capacity = data.get("dock_capacity", 0)
+        design.heals_others_percent = data.get("heals_others_percent", 0)
         design.obsolete = data.get("obsolete", False)
         design.hull_name = data.get("hull_name", "")
         design.battle_speed = data.get("battle_speed", 0.5)
@@ -416,7 +447,7 @@ def _design_from_spec(spec: dict) -> SimpleDesign:
     # the table (Engine.cs:43-56 with the web <= 0 rule), overriding
     # any hand-set spec value
     engine_name = spec.get("engine", "")
-    fuel_table = list(ENGINE_FUEL_TABLES.get(engine_name, [0] * 10))
+    fuel_table = engine_fuel_table(engine_name)
     if engine_name:
         free_warp = _free_warp_from_table(fuel_table)
     else:
@@ -527,6 +558,10 @@ def make_token(design, quantity: int = 1) -> ShipToken:
         design, 'scan_range_penetrating', None) or getattr(
         design, 'penetrating_scan', 0)
     token.dock_capacity = getattr(design, 'dock_capacity', 0)
+    # Repair-tender bonus (Hull.HealsOthersPercent: Fuel Transport 5,
+    # Super-Fuel Xport 10) - Fleet.heals_others_percent takes the max
+    # over tokens and TurnGenerator adds it to the repair rate
+    token.heals_others_percent = getattr(design, 'heals_others_percent', 0)
 
     # Mine laying rates (ShipDesign aggregates MineLayer components)
     token.mine_count = getattr(design, 'mine_count', 0)

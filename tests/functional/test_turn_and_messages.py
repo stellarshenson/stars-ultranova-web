@@ -6,8 +6,9 @@ footer indicator, that the messages pane populates, and that Goto on a
 star-linked message selects and centers that star.
 """
 
-from .helpers import (add_factory_to_queue, create_game, generate_turn,
-                      select_owned_star)
+from .helpers import (add_factory_to_queue, close_dialog_if_open,
+                      create_game, current_year, generate_turn,
+                      menu_action, select_owned_star)
 
 MAX_TURNS_FOR_STAR_MESSAGE = 10
 
@@ -69,3 +70,49 @@ def test_turn_generation_and_message_goto(page, server):
     selected = page.evaluate(
         "() => GameState.selectedStar && GameState.selectedStar.name")
     assert selected == star_name
+
+
+def test_turn_report_only_opens_with_messages(page, server):
+    """DEF-3: no turn report dialog on a turn that carried no messages.
+
+    Early turns of an untouched game produce no messages at all, and an
+    empty "No messages this turn" report forced a dismiss every year.
+    The dialog must open exactly on the turns that have messages.
+    """
+    create_game(page, server, seed=7777, players=2, size="small",
+                name="Functional Report Gate")
+
+    saw_empty_turn = False
+    saw_message_turn = False
+    for turn in range(MAX_TURNS_FOR_STAR_MESSAGE):
+        # Queue a Factory partway through so a message turn is reached
+        if turn == 2:
+            select_owned_star(page)
+            add_factory_to_queue(page, quantity=1)
+
+        year_before = current_year(page)
+        menu_action(page, "turn", "generateTurn")
+        page.wait_for_function(
+            "() => GameState.game && GameState.game.turn === "
+            f"{year_before + 1}", timeout=120000)
+        page.wait_for_timeout(300)  # let the report dialog open if it will
+
+        count = page.evaluate("() => GameState.messages.length")
+        overlay_open = page.evaluate(
+            "() => !document.getElementById('dialog-overlay')"
+            ".classList.contains('hidden')")
+
+        if count == 0:
+            saw_empty_turn = True
+            assert not overlay_open, \
+                f"turn report opened on year {year_before + 1} with no messages"
+        else:
+            saw_message_turn = True
+            assert overlay_open, \
+                f"no turn report on year {year_before + 1} with {count} messages"
+            assert "Report" in page.locator("#dialog-overlay").inner_text()
+            close_dialog_if_open(page)
+            break
+
+    assert saw_empty_turn, "no zero-message turn observed"
+    assert saw_message_turn, "no turn with messages observed"

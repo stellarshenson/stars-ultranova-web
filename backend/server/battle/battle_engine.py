@@ -96,6 +96,7 @@ class BattleEngine:
         # Process each battle
         for battling_fleets in engagements:
             battle = BattleReport()
+            battle.year = self.server_state.turn_year
             battling_stacks = self._generate_stacks(battling_fleets)
 
             # No targets means no battle

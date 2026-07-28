@@ -1124,6 +1124,15 @@ footer a:hover {
     border-left: 3px solid #ff0000;
 }
 
+.combatant-stack {
+    font-size: 0.78rem;
+    padding-left: 0.5rem;
+}
+
+.combatant-role {
+    color: #9cc3ff;
+}
+
 #battle-log-content {
     max-height: 200px;
     overflow-y: auto;
@@ -1246,8 +1255,36 @@ footer a:hover {
     background-color: rgba(244, 67, 54, 0.1);
 }
 
+.status-message.warning {
+    border-color: #ff9800;
+    background-color: rgba(255, 152, 0, 0.12);
+}
+
 .status-message.hidden {
     display: none;
+}
+
+/* Imminent battle warning in the fleet panel: the pre-generation
+   window where an engagement override is still possible */
+.imminent-battle {
+    margin: 0.5rem 0;
+    padding: 0.5rem;
+    border: 1px solid #ff9800;
+    border-radius: 4px;
+    background-color: rgba(255, 152, 0, 0.1);
+}
+
+.imminent-battle-title {
+    color: #ff9800;
+    font-weight: bold;
+}
+
+/* Battle plan detail parameters, collapsed by default: picking a
+   named plan is the primary path */
+.plan-details > summary {
+    cursor: pointer;
+    margin: 0.5rem 0;
+    color: #9ecbff;
 }
 
 @keyframes slideIn {

@@ -809,6 +809,52 @@ const Encyclopedia = {
                         may load (steal) minerals straight out of it;
                         an emptied packet vanishes.</li>
                 </ul>`
+        },
+        {
+            id: 'battle-roles',
+            title: 'Battle Roles and Target Classes',
+            html: `
+                <p>Every design is filed into exactly one battle role,
+                worked out from what you actually fitted to it - not
+                from its hull. A battle plan's five target tiers name
+                those roles, so an order like "hunt their logistics"
+                finds the freighters and the tankers and leaves the
+                warships alone.</p>
+                <ul>
+                    <li><b>The cascade</b> - first match wins, in this
+                        order: Starbase (immobile base), Bomber (bomb
+                        racks fitted), Capital Ship (armed, power
+                        rating above 2,000), Escort (armed, power
+                        rating 2,000 or less), Logistics (a fuel
+                        transport), Support Ship (a colonisation
+                        module), Support Ship (a fleet repair hull),
+                        Logistics (a cargo hold), Support Ship
+                        (everything else unarmed).</li>
+                    <li><b>Power rating</b> - the 2,000 threshold that
+                        separates a capital ship from an escort is the
+                        design's weapon power rating, so a heavier gun
+                        line promotes a ship into the class your
+                        enemies aim at first.</li>
+                    <li><b>Colonisers and tenders are not freight</b> -
+                        both carry holds, but the colonisation module
+                        and the repair hull are checked before the
+                        hold, so they file as Support rather than
+                        Logistics.</li>
+                    <li><b>Armed Ship and Any Ship</b> - these two
+                        tiers are the broad catch-alls and cut across
+                        roles: Armed Ship matches anything carrying
+                        weapons whatever its class, Any Ship matches
+                        everything.</li>
+                    <li><b>A tier that matches nothing means no
+                        fight</b> - a stack whose plan matches none of
+                        an enemy's roles never engages it.</li>
+                </ul>
+                <p>The battle replay shows its working: each targeting
+                entry names the tier that picked the target (Primary
+                through Quinary) and the role it matched, a withdrawal
+                is logged as its own event, and every stack in the
+                roster is listed with its role and the plan it fought
+                under.</p>`
         }
     ],
 

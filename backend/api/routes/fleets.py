@@ -108,6 +108,9 @@ class FleetBattlePlan(BaseModel):
     """Request model for fleet battle plan assignment."""
     empire_id: int
     plan: str
+    # True sets the engagement override (this battle only, cleared by
+    # turn generation) instead of the fleet's standing plan
+    engagement: bool = False
 
 
 @router.post("/{fleet_key}/battle-plan")
@@ -119,7 +122,8 @@ async def set_fleet_battle_plan(
     _require_password(manager, game_id, assignment.empire_id,
                       x_empire_password)
     result = manager.set_fleet_battle_plan(
-        game_id, assignment.empire_id, fleet_key, assignment.plan)
+        game_id, assignment.empire_id, fleet_key, assignment.plan,
+        engagement=assignment.engagement)
     if "error" in result:
         raise HTTPException(status_code=result.get("code", 400),
                             detail=result["error"])

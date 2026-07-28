@@ -10,6 +10,7 @@ from .battle_step import (
     BattleStepTarget,
     BattleStepWeapons,
     BattleStepDestroy,
+    BattleStepWithdraw,
     TokenDefence,
     WeaponTarget,
 )
@@ -27,6 +28,7 @@ __all__ = [
     'BattleStepTarget',
     'BattleStepWeapons',
     'BattleStepDestroy',
+    'BattleStepWithdraw',
     'TokenDefence',
     'WeaponTarget',
     'BattleReport',

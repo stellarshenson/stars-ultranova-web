@@ -26,6 +26,8 @@ import random
 
 import pytest
 
+from backend.services.galaxy_generator import UNIVERSE_SIZES
+
 SEED = 20260713
 MISHAP_ATTEMPTS = 30
 
@@ -54,10 +56,12 @@ def _enemy_starbase(server_data):
                 if f.is_starbase)
 
 
-def _find_storm_center(server_data, width=400, height=400):
+def _find_storm_center(server_data, size="small"):
     """Point 45 ly from the enemy homeworld with the most clearance
     from every other star, in-bounds with room for the warp-9 approach
-    run from the -x side."""
+    run from the -x side. Board bounds come from the generator's
+    canonical size table."""
+    width, height = UNIVERSE_SIZES[size]
     base = _enemy_starbase(server_data)
     others = [s for s in server_data.all_stars.values()
               if math.hypot(s.position.x - base.position.x,

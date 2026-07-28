@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stars Nova Web - Galaxy Preview</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body {
+            margin: 0;
+            padding: 24px 32px 48px;
+            background: #0a0c18;
+            color: #c8d4ea;
+            font-family: "Segoe UI", Tahoma, sans-serif;
+        }
+        h1 {
+            font-size: 15px;
+            font-weight: normal;
+            color: #6fa8dc;
+            margin: 0 0 4px;
+        }
+        h2 {
+            font-size: 13px;
+            font-weight: normal;
+            color: #6fa8dc;
+            margin: 32px 0 8px;
+        }
+        p.note {
+            font-size: 11px;
+            color: #7d8aa5;
+            margin: 0 0 16px;
+            max-width: 1100px;
+        }
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 24px;
+        }
+        .cell {
+            text-align: center;
+        }
+        canvas {
+            display: block;
+            background: #05070f;
+            border: 1px solid #1d2740;
+        }
+        .name {
+            font-size: 12px;
+            font-weight: bold;
+            margin-top: 6px;
+        }
+        .meta {
+            font-size: 11px;
+            color: #8fa0bd;
+        }
+    </style>
+</head>
+<body>
+    <h1>Galaxy preview - clustering and star size</h1>
+    <p class="note">
+        Static page: no game state, no API calls. The star fields come from
+        the real backend generator (scripts/preview_galaxy.py) and are drawn
+        by the shipped GalaxyMap.renderStar, so nothing here is a mock-up.
+    </p>
+
+    <h2>Clumping strength - weak / agreed / strong, same seed</h2>
+    <p class="note">
+        One seed, one board (medium, 1000 ly, 400 stars). Only the clumping
+        strength dial differs. The middle panel is the setting the game
+        ships with.
+    </p>
+    <div class="row" id="row-clumping"></div>
+
+    <h2>Star size vs zoom - same region at three zooms</h2>
+    <p class="note">
+        The same 300 ly patch of the shipped galaxy at the zoom-out floor,
+        the default zoom and a close-up. Symbols ride
+        clamp(zoom ^ gamma, min, max), so zooming out stops shrinking them
+        at the floor and zooming in grows them only modestly. Each panel is
+        drawn at the same pixel size, so the stars can be compared directly.
+    </p>
+    <div class="row" id="row-zoom"></div>
+
+    <script src="js/views/galaxy-map.js"></script>
+    <script src="preview-galaxy-data.js"></script>
+    <script>
+        const DATA = window.PREVIEW_GALAXY;
+        const MAP_SIZE = 480;
+        const ZOOM_SIZE = 340;
+        const ZOOM_PATCH = 300;   // ly of board shown at the default zoom
+
+        // Drive the shipped renderer directly: set the view state it
+        // reads, then call its own star routine.
+        function drawStars(canvas, stars, zoom, viewX, viewY) {
+            GalaxyMap.canvas = canvas;
+            GalaxyMap.ctx = canvas.getContext('2d');
+            GalaxyMap.zoom = zoom;
+            GalaxyMap.viewX = viewX;
+            GalaxyMap.viewY = viewY;
+            GalaxyMap.showNames = false;
+            GalaxyMap.selectedStar = null;
+            GalaxyMap.ctx.clearRect(0, 0, canvas.width, canvas.height);
+            stars.forEach(star => GalaxyMap.renderStar(star));
+        }
+
+        function addCell(parent, width, height, title, meta) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            cell.appendChild(canvas);
+            const name = document.createElement('div');
+            name.className = 'name';
+            name.textContent = title;
+            cell.appendChild(name);
+            const note = document.createElement('div');
+            note.className = 'meta';
+            note.textContent = meta;
+            cell.appendChild(note);
+            parent.appendChild(cell);
+            return canvas;
+        }
+
+        // -- clumping candidates ------------------------------------------
+        const rowClumping = document.getElementById('row-clumping');
+        const fitZoom = MAP_SIZE / DATA.width;
+        DATA.candidates.forEach(candidate => {
+            const canvas = addCell(
+                rowClumping, MAP_SIZE, MAP_SIZE,
+                `${candidate.label} - clumping ${candidate.clumping.toFixed(2)}`,
+                `${candidate.stars.length} stars, seed ${DATA.seed}, `
+                + `${DATA.width} ly board`);
+            canvas.dataset.candidate = candidate.label;
+            drawStars(canvas, candidate.stars, fitZoom,
+                      DATA.width / 2, DATA.height / 2);
+        });
+
+        // -- star size vs zoom --------------------------------------------
+        const rowZoom = document.getElementById('row-zoom');
+        const shipped = DATA.candidates.find(c => c.label === 'agreed');
+        const defaultZoom = ZOOM_SIZE / ZOOM_PATCH;
+        const ZOOMS = [
+            ['zoom floor', defaultZoom * 0.35],
+            ['default', defaultZoom],
+            ['zoomed in', defaultZoom * 4]
+        ];
+        ZOOMS.forEach(([label, zoom]) => {
+            GalaxyMap.zoom = zoom;
+            const scale = GalaxyMap.symbolScale();
+            const canvas = addCell(
+                rowZoom, ZOOM_SIZE, ZOOM_SIZE, label,
+                `zoom ${zoom.toFixed(2)} - symbol scale ${scale.toFixed(2)}`);
+            canvas.dataset.zoomLabel = label;
+            canvas.dataset.symbolScale = scale.toFixed(3);
+            drawStars(canvas, shipped.stars, zoom,
+                      DATA.width / 2, DATA.height / 2);
+        });
+
+        window.PREVIEW_READY = true;
+    </script>
+</body>
+</html>

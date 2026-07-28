@@ -286,15 +286,17 @@ class TestWave4Integration:
 
         # Electronics: the first raider beam hit lands exactly
         # power(10) x quantity(2) x 1.21 (2x Energy Capacitor stacked)
-        # x 0.9 (Beam Deflector) on the escort - beams have no
-        # accuracy roll, so the value is deterministic
+        # x 0.9 (Beam Deflector) on the escort x 0.9 (beam range
+        # dissipation - the first exchange happens at the weapon's
+        # maximum range, where a beam keeps 90 percent of its power)
+        # - beams have no accuracy roll, so the value is deterministic
         raider_fire = [s for s in steps
                        if s["type"] == "Weapons"
                        and (s["weapon_target"]["stack_key"] >> 32) == 1
                        and (s["weapon_target"]["target_key"] >> 32) == 2]
         assert raider_fire, "raiders never fired"
         assert raider_fire[0]["damage"] == pytest.approx(
-            10 * 2 * 1.21 * 0.9)
+            10 * 2 * 1.21 * 0.9 * 0.9)
 
         # Battle plans: the Escort tier outranks the freighter's Any
         # Ship tier in the Default plan, so every raider volley up to

@@ -217,6 +217,10 @@ class TurnGenerator:
 
         self.server_state.cleanup_fleets()
 
+        # An engagement override was chosen for ONE battle; clearing it
+        # here guarantees the revert
+        self._clear_engagement_overrides()
+
         # Victory check
         self._victory_check()
 
@@ -1750,6 +1754,23 @@ class TurnGenerator:
         """Run Ron's battle engine variant."""
         from .battle.ron_battle_engine import RonBattleEngine
         self._execute_battles(RonBattleEngine)
+
+    def _clear_engagement_overrides(self):
+        """
+        Revert every fleet to its standing battle plan.
+
+        Combat resolves inside turn generation with no player input
+        during the fight, so an engagement override is chosen in the
+        pre-generation window - the last moment the player still has -
+        and applies to the battle that window forecast. Clearing runs
+        unconditionally over every fleet after the battle engine, so
+        the revert happens whether the fleet fought, was destroyed
+        down to a survivor, or never met anyone at all: an override
+        can never survive into a second turn.
+        """
+        for empire in self.server_state.all_empires.values():
+            for fleet in empire.owned_fleets.values():
+                fleet.engagement_plan = ""
 
     def _execute_battles(self, engine_cls):
         """Run a battle engine and distribute reports and messages."""

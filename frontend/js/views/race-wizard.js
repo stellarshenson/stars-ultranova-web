@@ -214,7 +214,7 @@ const RaceWizard = {
                 <div class="wizard-buttons">
                     <button class="btn-small" onclick="RaceWizard.prevTab()" ${this.currentTab === 0 ? 'disabled' : ''}>Previous</button>
                     <button class="btn-small" onclick="RaceWizard.nextTab()" ${this.currentTab === this.tabs.length - 1 ? 'disabled' : ''}>Next</button>
-                    <button class="btn-small btn-primary" onclick="RaceWizard.saveRace()" ${this.advantagePoints === null || this.advantagePoints < 0 ? 'disabled' : ''}>Save Race</button>
+                    <button class="btn-small btn-primary" onclick="RaceWizard.saveRace()" ${this.advantagePoints !== null && this.advantagePoints < 0 ? 'disabled' : ''}>Save Race</button>
                     <button class="btn-small" onclick="RaceWizard.hide()">Cancel</button>
                 </div>
             </div>
@@ -444,7 +444,7 @@ const RaceWizard = {
                 <h3>Habitability Ranges</h3>
                 <p class="section-desc">Define the environmental conditions your race can tolerate.</p>
 
-                <div class="env-group">
+                <div class="env-group" data-axis="gravity">
                     <label>Gravity Range</label>
                     <div class="range-inputs">
                         <input type="number" min="0" max="100" value="${this.raceData.gravityMin}"
@@ -460,7 +460,7 @@ const RaceWizard = {
                     </div>
                 </div>
 
-                <div class="env-group">
+                <div class="env-group" data-axis="temperature">
                     <label>Temperature Range</label>
                     <div class="range-inputs">
                         <input type="number" min="0" max="100" value="${this.raceData.temperatureMin}"
@@ -476,7 +476,7 @@ const RaceWizard = {
                     </div>
                 </div>
 
-                <div class="env-group">
+                <div class="env-group" data-axis="radiation">
                     <label>Radiation Range</label>
                     <div class="range-inputs">
                         <input type="number" min="0" max="100" value="${this.raceData.radiationMin}"
@@ -595,8 +595,29 @@ const RaceWizard = {
      */
     updateField(field, value) {
         this.raceData[field] = value;
+        // No full re-render: the control that fired the change already
+        // shows the new value, and rebuilding the wizard would discard
+        // whatever the player has typed into the next field before its
+        // own change event commits. Only the derived parts are updated.
+        if (field.startsWith('immune')) {
+            this.syncImmunityInputs();
+        }
         this.calculatePoints();
-        this.render();
+        this.updatePointsDisplay();
+    },
+
+    /**
+     * Sync the environment min/max inputs with the immunity checkboxes
+     * (an immune axis has no range to set).
+     */
+    syncImmunityInputs() {
+        ['gravity', 'temperature', 'radiation'].forEach(axis => {
+            const flag = 'immune' + axis.charAt(0).toUpperCase() + axis.slice(1);
+            const disabled = !!this.raceData[flag];
+            this.container
+                .querySelectorAll(`.env-group[data-axis="${axis}"] input[type="number"]`)
+                .forEach(input => { input.disabled = disabled; });
+        });
     },
 
     /**
@@ -723,11 +744,25 @@ const RaceWizard = {
             containerEl.classList.toggle('valid', !invalid);
             containerEl.classList.toggle('invalid', invalid);
         }
-        // Update save button
+        // Update save button. A pending validation must not disable it:
+        // the button would flicker out from under a click and swallow
+        // it - saveRace settles the pending total itself.
         const saveBtn = this.container.querySelector('.btn-primary');
         if (saveBtn) {
-            saveBtn.disabled = pending || invalid;
+            saveBtn.disabled = invalid;
         }
+    },
+
+    /**
+     * Settle a pending point validation: flush the debounce timer and
+     * await the server round-trip, so a Save click that lands inside
+     * the debounce window still sees an authoritative total.
+     */
+    async ensurePointsSettled() {
+        if (this.advantagePoints !== null) return;
+        clearTimeout(this._validateTimer);
+        this._validateTimer = null;
+        await this.fetchPoints();
     },
 
     /**
@@ -757,6 +792,7 @@ const RaceWizard = {
      * Save the race.
      */
     async saveRace() {
+        await this.ensurePointsSettled();
         const errors = this.validate();
         if (errors.length > 0) {
             alert('Cannot save race:\n' + errors.join('\n'));

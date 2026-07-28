@@ -32,6 +32,17 @@ class WeaponDetails:
     source_stack: Optional['Stack'] = None
     target_stack: TargetPercent = field(default_factory=TargetPercent)
     weapon: Optional['Weapon'] = None
+    # Doctrine stance shifts when this attack resolves inside the
+    # round (battle_plan.STANCE_MODIFIERS). 0 for every attack under
+    # the C#-exact engine and under a Balanced stance.
+    initiative_bonus: int = 0
+
+    @property
+    def effective_initiative(self) -> int:
+        """Weapon initiative after the stance shift."""
+        if self.weapon is None:
+            return 0
+        return self.weapon.initiative + self.initiative_bonus
 
     def beam_dispersal(self, distance_squared: float) -> float:
         """
@@ -130,7 +141,7 @@ class WeaponDetails:
             return True
         if other.weapon is None:
             return False
-        return self.weapon.initiative < other.weapon.initiative
+        return self.effective_initiative < other.effective_initiative
 
     def __eq__(self, other: object) -> bool:
         """Equal comparison by initiative."""
@@ -138,4 +149,4 @@ class WeaponDetails:
             return False
         if self.weapon is None or other.weapon is None:
             return self.weapon is None and other.weapon is None
-        return self.weapon.initiative == other.weapon.initiative
+        return self.effective_initiative == other.effective_initiative

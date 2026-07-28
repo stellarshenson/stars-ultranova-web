@@ -65,7 +65,6 @@ def test_fleet_waypoint_editing(page, server):
 
     wp = page.evaluate("() => GameState.fleets[0].waypoints[0]")
     assert wp["warp_factor"] == 6
-    # The server reports the task as the task-object class name
-    # ("LayMinesTaskObj") while the edit command sends "LayMines"
-    task = wp.get("task_type") or (wp.get("task") or {}).get("type")
-    assert task in ("LayMines", "LayMinesTaskObj")
+    # The server reports the task in the command vocabulary, so the
+    # value read back is exactly what the edit command sent (DEF-1)
+    assert wp["task_type"] == "LayMines"

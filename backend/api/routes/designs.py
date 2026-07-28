@@ -10,6 +10,7 @@ from ...core.components import (
     Component, ShipDesign, Hull
 )
 from ...core.game_objects.item import ItemType
+from ...core.race.traits import RaceAvailability
 from ...services.design_builder import COMPONENTS_XML
 
 router = APIRouter(prefix="/api/designs", tags=["designs"])
@@ -36,6 +37,7 @@ class HullResponse(BaseModel):
     modules: List[HullModuleResponse]
     is_starbase: bool
     cost: Dict[str, int]
+    tech_requirements: Dict[str, int]
 
 
 class EngineResponse(BaseModel):
@@ -59,6 +61,10 @@ class ComponentResponse(BaseModel):
     description: str
     tech_requirements: Dict[str, int]
     properties: Dict[str, Any]
+    # Race availability (RaceRestriction.cs): only races holding every
+    # required trait and none of the forbidden ones may mount this
+    required_traits: List[str]
+    forbidden_traits: List[str]
 
 
 class ShipDesignResponse(BaseModel):
@@ -91,6 +97,22 @@ def _ensure_components_loaded() -> ComponentLoader:
     return loader
 
 
+def _trait_lists(comp: Component) -> tuple:
+    """
+    Split a component's race restrictions into required/forbidden trait
+    codes, so a client can pre-filter what its race may mount instead of
+    discovering it at design submission (RaceRestriction.cs).
+    """
+    required = []
+    forbidden = []
+    for trait, avail in comp.restrictions.restrictions.items():
+        if avail == RaceAvailability.REQUIRED:
+            required.append(trait)
+        elif avail == RaceAvailability.NOT_AVAILABLE:
+            forbidden.append(trait)
+    return sorted(required), sorted(forbidden)
+
+
 def _hull_to_response(comp: Component) -> HullResponse:
     """Convert hull component to response model."""
     hull_prop = comp.get_property("Hull")
@@ -121,7 +143,8 @@ def _hull_to_response(comp: Component) -> HullResponse:
             "boranium": comp.cost.boranium,
             "germanium": comp.cost.germanium,
             "energy": comp.cost.energy
-        }
+        },
+        tech_requirements=comp.required_tech.levels
     )
 
 
@@ -213,6 +236,7 @@ async def list_components(item_type: Optional[str] = None) -> List[ComponentResp
         for prop_type, prop in comp.properties.items():
             props[prop_type] = prop.values
 
+        required, forbidden = _trait_lists(comp)
         results.append(ComponentResponse(
             name=comp.name,
             item_type=comp.item_type.name,
@@ -225,7 +249,9 @@ async def list_components(item_type: Optional[str] = None) -> List[ComponentResp
             },
             description=comp.description,
             tech_requirements=comp.required_tech.levels,
-            properties=props
+            properties=props,
+            required_traits=required,
+            forbidden_traits=forbidden
         ))
 
     return results
@@ -243,6 +269,7 @@ async def get_component(component_name: str) -> ComponentResponse:
     for prop_type, prop in comp.properties.items():
         props[prop_type] = prop.values
 
+    required, forbidden = _trait_lists(comp)
     return ComponentResponse(
         name=comp.name,
         item_type=comp.item_type.name,
@@ -255,7 +282,9 @@ async def get_component(component_name: str) -> ComponentResponse:
         },
         description=comp.description,
         tech_requirements=comp.required_tech.levels,
-        properties=props
+        properties=props,
+        required_traits=required,
+        forbidden_traits=forbidden
     )
 
 

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stars Nova Web - Orbital Station Detail Preview</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body {
+            margin: 0;
+            padding: 24px 32px 48px;
+            background: #07090f;
+            color: #c8d4ea;
+            font-family: "Segoe UI", Tahoma, sans-serif;
+        }
+        h1 {
+            font-size: 15px;
+            font-weight: normal;
+            color: #6fa8dc;
+            margin: 0 0 4px;
+        }
+        h2 {
+            font-size: 13px;
+            font-weight: normal;
+            color: #6fa8dc;
+            margin: 30px 0 8px;
+        }
+        p.note {
+            font-size: 11px;
+            color: #7d8aa5;
+            margin: 0 0 16px;
+            max-width: 1080px;
+            line-height: 1.5;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 300px);
+            gap: 22px 26px;
+        }
+        .cell {
+            text-align: center;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: #05060b;
+            border: 1px solid #161d2e;
+        }
+        .name {
+            font-size: 13px;
+            font-weight: bold;
+            margin-top: 8px;
+            color: #dbe6f7;
+        }
+        .info {
+            font-size: 11px;
+            color: #8fa0bd;
+        }
+        .arch {
+            font-size: 11px;
+            color: #6fa8dc;
+            margin-top: 2px;
+            line-height: 1.4;
+        }
+        .zoomrow {
+            display: grid;
+            grid-template-columns: repeat(3, 300px);
+            gap: 22px 26px;
+        }
+        .zoom {
+            image-rendering: pixelated;
+        }
+        #summary {
+            font-size: 12px;
+            color: #8fa0bd;
+            margin-top: 22px;
+            line-height: 1.7;
+        }
+        .ok { color: #7fd39b; }
+        .bad { color: #e07a7a; }
+    </style>
+</head>
+<body>
+    <h1>Orbital station detail preview - StationDetail</h1>
+    <p class="note">
+        Static page: no game state, no API calls. Every station is a signed
+        distance field sphere traced per pixel at 256 x 256, with soft
+        shadows, ambient occlusion, Fresnel rim, a cool planetlight fill and
+        triplanar surface texture. Each class contributes one scene function
+        built from exact analytic primitives; the raymarcher, the shading
+        and the camera are shared and never branch on a class name. Cameras
+        are off axis in yaw and pitch for every design.
+    </p>
+
+    <h2>Six classes at render resolution</h2>
+    <div class="grid" id="grid-stations"></div>
+
+    <h2>Detail crops at 3x, smoothing off</h2>
+    <p class="note">
+        The centre of each hull magnified, so the plating seams, the panel
+        drift, the brushed streaking and the occlusion inside the recesses
+        are visible as pixels rather than as an impression.
+    </p>
+    <div class="zoomrow" id="grid-zoom"></div>
+
+    <div id="summary"></div>
+
+    <script src="js/views/station-detail.js"></script>
+    <script>
+        const SIZE = 256;
+        const ZOOM = 3;
+        const CROP = 96;
+
+        // The ladder, in the order the reference art establishes it.
+        const CLASSES = [
+            ['Orbital Fort',
+             'Drum on an axle, two armoured nodes. No bay. Six recessed ports.'],
+            ['Space Dock',
+             'Larger drum, three rim nodes, docking bay let into the forward face.'],
+            ['Space Station',
+             'Deep Space 9: habitat ring on curved pylons, bay in the core.'],
+            ['Ultra Station',
+             'Heavier rim, six pods faired in, radiator and solar arrays.'],
+            ['Death Star',
+             'Sphere in a strut cage, reactor core glowing in an open well.'],
+            ['Shipyard',
+             'Open scaffold, part-built hull in the slip, warm work lights.']
+        ];
+
+        function bytesEqual(a, b) {
+            if (a.length !== b.length) return false;
+            for (let i = 0; i < a.length; i++) {
+                if (a[i] !== b[i]) return false;
+            }
+            return true;
+        }
+
+        function inkOf(data) {
+            let n = 0;
+            for (let i = 3; i < data.length; i += 4) {
+                if (data[i] > 8) n++;
+            }
+            return n;
+        }
+
+        const results = [];
+
+        function addCell(parent, name, blurb) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = SIZE;
+            canvas.className = 'station';
+            canvas.dataset.station = name;
+            cell.appendChild(canvas);
+            const label = document.createElement('div');
+            label.className = 'name';
+            label.textContent = name;
+            cell.appendChild(label);
+            const info = document.createElement('div');
+            info.className = 'info';
+            cell.appendChild(info);
+            const arch = document.createElement('div');
+            arch.className = 'arch';
+            arch.textContent = blurb;
+            cell.appendChild(arch);
+            parent.appendChild(cell);
+
+            // cold render: clear the cache so the printed time is the real
+            // first-open cost rather than a cache hit
+            StationDetail.cache.clear();
+            const t0 = performance.now();
+            const first = StationDetail.renderPixels(name, SIZE);
+            const ms = performance.now() - t0;
+
+            // determinism: a second render from a cleared cache must be
+            // byte identical, or the seeding has leaked somewhere
+            StationDetail.cache.clear();
+            const second = StationDetail.renderPixels(name, SIZE);
+            const stable = bytesEqual(first, second);
+
+            const ctx = canvas.getContext('2d');
+            const img = ctx.createImageData(SIZE, SIZE);
+            img.data.set(first);
+            ctx.putImageData(img, 0, 0);
+
+            const ink = inkOf(first);
+            canvas.dataset.ms = ms.toFixed(1);
+            canvas.dataset.ink = ink;
+            canvas.dataset.stable = stable ? '1' : '0';
+            info.textContent = `${ms.toFixed(0)} ms cold - `
+                + `${(ink / (SIZE * SIZE) * 100).toFixed(1)}% coverage - `
+                + (stable ? 'deterministic' : 'NOT DETERMINISTIC');
+
+            results.push({ name, ms, ink, stable, canvas });
+            return canvas;
+        }
+
+        function addZoom(parent, name, source) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = CROP * ZOOM;
+            canvas.className = 'zoom';
+            cell.appendChild(canvas);
+            const label = document.createElement('div');
+            label.className = 'name';
+            label.textContent = name;
+            cell.appendChild(label);
+            parent.appendChild(cell);
+
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+            ctx.fillStyle = '#05060b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const o = Math.round((SIZE - CROP) / 2);
+            ctx.drawImage(source, o, o, CROP, CROP,
+                0, 0, CROP * ZOOM, CROP * ZOOM);
+        }
+
+        // warm the renderer once so the printed timings measure the
+        // renderer rather than the JIT warming up
+        StationDetail.renderPixels('Orbital Fort', 64);
+        StationDetail.cache.clear();
+
+        const grid = document.getElementById('grid-stations');
+        CLASSES.forEach(([name, blurb]) => addCell(grid, name, blurb));
+
+        const zoom = document.getElementById('grid-zoom');
+        results.forEach(r => addZoom(zoom, r.name, r.canvas));
+
+        const slowest = results.reduce((a, b) => (a.ms > b.ms ? a : b));
+        const total = results.reduce((s, r) => s + r.ms, 0);
+        const allStable = results.every(r => r.stable);
+        const allDrawn = results.every(r => r.ink > 2000);
+        document.getElementById('summary').innerHTML =
+            `Six classes at ${SIZE} x ${SIZE}. `
+            + `Slowest cold render ${slowest.ms.toFixed(0)} ms (${slowest.name}), `
+            + `total ${total.toFixed(0)} ms. `
+            + `<span class="${allStable ? 'ok' : 'bad'}">`
+            + `Determinism ${allStable ? 'PASS' : 'FAIL'}</span> - `
+            + `<span class="${allDrawn ? 'ok' : 'bad'}">`
+            + `Non-empty ${allDrawn ? 'PASS' : 'FAIL'}</span><br>`
+            + `Budget is 800 ms per station on a cold render, cached after.`;
+
+        window.PREVIEW_TIMINGS = results.map(r => ({
+            name: r.name, ms: +r.ms.toFixed(1), ink: r.ink, stable: r.stable
+        }));
+        window.PREVIEW_READY = true;
+    </script>
+</body>
+</html>

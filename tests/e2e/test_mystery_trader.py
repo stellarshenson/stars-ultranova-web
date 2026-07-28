@@ -18,6 +18,8 @@ toggle keeps the galaxy trader-free.
 
 import pytest
 
+from backend.services.galaxy_generator import UNIVERSE_SIZES
+
 SEED = 20260727
 SPAWN_ATTEMPTS = 80   # spawn chance 1/16 per year past the gate
 REWARD_ATTEMPTS = 12  # component odds 55% per 4000 kT gift
@@ -256,7 +258,9 @@ class TestMysteryTraderE2E:
             server_data = _load(harness)
         key = min(server_data.all_traders)
         trader = server_data.all_traders[key]
-        trader.x = 392.0  # next 49 ly step leaves the 400 ly board
+        # One 49 ly step short of the board edge, so the next step
+        # leaves the galaxy (board width from the canonical size table)
+        trader.x = float(UNIVERSE_SIZES["small"][0]) - 8.0
         _save(harness, server_data)
 
         harness.generate_turn()

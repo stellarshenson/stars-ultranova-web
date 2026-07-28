@@ -128,8 +128,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (window.MessagePanel) {
                     MessagePanel.setMessages(GameState.messages);
                 }
-                // Show turn report if there are messages
-                if (GameState.game) {
+                // Show turn report if there are messages - an empty
+                // report forces a pointless dismiss every year
+                if (GameState.game && GameState.messages
+                        && GameState.messages.length > 0) {
                     this.showTurnReport();
                 }
             });
@@ -281,6 +283,16 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 this.setStatus('Generating turn...');
                 await GameState.generateTurn();
+                // The pre-generation window is the last moment an
+                // engagement override can be given, so say once per
+                // turn that one is open (Commands -> Imminent Battles)
+                const imminent = GameState.imminentBattles || [];
+                if (imminent.length) {
+                    ApiClient.showStatus(
+                        `Battle imminent for ${imminent.length} fleet` +
+                        `${imminent.length === 1 ? '' : 's'} - see ` +
+                        'Commands / Imminent Battles', 'warning');
+                }
             } catch (error) {
                 this.setStatus('Turn generation failed');
                 ApiClient.showStatus('Failed to generate turn: ' + error.message, 'error');

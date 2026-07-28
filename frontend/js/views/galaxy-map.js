@@ -33,10 +33,14 @@ const GalaxyMap = {
     tooltip: null,
     tooltipTarget: null,
 
-    // Visual settings
-    starRadius: 6,
+    // Visual settings - base sizes in pixels at scale 1.0
+    starRadius: 3.4,
     fleetRadius: 4,
     selectionRadius: 12,
+    // Screen-space click tolerance in pixels (unchanged by the star
+    // size curve below, so shrinking the stars does not make them
+    // harder to hit)
+    clickRadius: 12,
     gridSize: 100,
     showGrid: true,
     showNames: true,
@@ -174,6 +178,40 @@ const GalaxyMap = {
             x: (worldX - this.viewX) * this.zoom + centerX,
             y: (worldY - this.viewY) * this.zoom + centerY
         };
+    },
+
+    // =========================================================================
+    // Symbol size vs zoom (user directive 2026-07-28)
+    // =========================================================================
+    //
+    //   scale(zoom) = clamp(zoom ^ SYMBOL_ZOOM_GAMMA,
+    //                       SYMBOL_SCALE_MIN, SYMBOL_SCALE_MAX)
+    //
+    // and a map symbol is drawn at baseRadius * scale(zoom), with the
+    // star's spectral-class multiplier applied AFTER the clamp so the
+    // relative size ordering between classes survives at every zoom.
+    //
+    // The gamma sits well under 1, so zooming in grows the stars only
+    // modestly instead of linearly - a 16x zoom range moves the symbols
+    // by 2.5x. Below the floor a wide view stops dissolving into
+    // invisible dots; above the ceiling a close-up stops turning into
+    // blobs. The zoom clamp itself (minAllowedZoom) is untouched - this
+    // curve only decides how big a symbol is drawn at a given zoom.
+
+    // Growth exponent - well under 1 by design
+    SYMBOL_ZOOM_GAMMA: 0.4,
+    // Floor: binds below zoom 0.33, the readable-at-a-glance size
+    SYMBOL_SCALE_MIN: 0.65,
+    // Ceiling: binds above zoom 3.3
+    SYMBOL_SCALE_MAX: 1.62,
+
+    /**
+     * Size multiplier for map symbols at the current zoom.
+     */
+    symbolScale() {
+        return Math.min(this.SYMBOL_SCALE_MAX,
+                        Math.max(this.SYMBOL_SCALE_MIN,
+                                 Math.pow(this.zoom, this.SYMBOL_ZOOM_GAMMA)));
     },
 
     /**
@@ -470,7 +508,7 @@ const GalaxyMap = {
      * Find object at world coordinates.
      */
     findObjectAt(worldX, worldY) {
-        const threshold = this.starRadius * 2 / this.zoom;
+        const threshold = this.clickRadius / this.zoom;
 
         // Check fleets first (on top)
         for (const fleet of GameState.allVisibleFleets) {
@@ -505,7 +543,7 @@ const GalaxyMap = {
      * to match findObjectAt.
      */
     findObjectsAt(worldX, worldY) {
-        const threshold = this.starRadius * 2 / this.zoom;
+        const threshold = this.clickRadius / this.zoom;
 
         const stars = GameState.stars
             .filter(s => Math.hypot(s.position_x - worldX,
@@ -598,11 +636,9 @@ const GalaxyMap = {
 
         // Generate SVG nebulae
         if (window.NebulaSVG && GameState.stars && GameState.stars.length > 0) {
-            const universeSize = GameState.game?.universe_size || 'medium';
-            const sizes = { tiny: 200, small: 400, medium: 600, large: 800, huge: 1000 };
-            const size = sizes[universeSize] || 600;
+            const board = GameState.universeDimensions();
             const seed = GameState.game ? (GameState.game.id.charCodeAt(0) || 1) : Date.now();
-            NebulaSVG.generate(GameState.stars, size, size, seed);
+            NebulaSVG.generate(GameState.stars, board.width, board.height, seed);
         }
 
         // Start within the zoom-out clamp for this board
@@ -1010,10 +1046,9 @@ const GalaxyMap = {
 
         // Use NebulaDesigner if available and we have stars
         if (window.NebulaDesigner && GameState.stars && GameState.stars.length > 0) {
-            const universeSize = GameState.game?.universe_size || 'medium';
-            const sizes = { tiny: 200, small: 400, medium: 600, large: 800, huge: 1000 };
-            const size = sizes[universeSize] || 600;
-            this.nebulae = NebulaDesigner.generate(GameState.stars, size, size, seed);
+            const board = GameState.universeDimensions();
+            this.nebulae = NebulaDesigner.generate(
+                GameState.stars, board.width, board.height, seed);
         } else {
             // Fallback to simple generation
             this.nebulae = this.generateSimpleNebulae(seed);
@@ -1190,10 +1225,12 @@ const GalaxyMap = {
         const ctx = this.ctx;
         const pos = this.worldToScreen(star.position_x, star.position_y);
 
-        // Base radius scaled by star_radius (normalized, 1.0 = Sun)
+        // Spectral-class size multiplier from the physical stellar
+        // radius (normalized, 1.0 = Sun), applied after the zoom clamp
+        // so class differences read at every zoom
         const starRadius = star.star_radius || 1.0;
         const sizeMultiplier = Math.min(2.5, Math.max(0.5, 0.8 + Math.log10(starRadius + 0.1) * 0.5));
-        const radius = this.starRadius * this.zoom * sizeMultiplier;
+        const radius = this.starRadius * this.symbolScale() * sizeMultiplier;
 
         // Skip if off screen
         if (pos.x < -radius * 3 || pos.x > this.canvas.width + radius * 3 ||
@@ -1253,18 +1290,20 @@ const GalaxyMap = {
         if (star.colonists > 0 && (star.intel === 'owned' || star.owner > 0)) {
             const ringColor = star.intel === 'owned' ? this.colors.starFriendly : this.colors.starEnemy;
             ctx.strokeStyle = ringColor;
-            ctx.lineWidth = Math.max(1, 2 * this.zoom);
+            ctx.lineWidth = Math.max(1, 2 * this.symbolScale());
             ctx.beginPath();
-            ctx.arc(pos.x, pos.y, radius + 2 * this.zoom, 0, Math.PI * 2);
+            ctx.arc(pos.x, pos.y, radius + 2 * this.symbolScale(),
+                    0, Math.PI * 2);
             ctx.stroke();
         }
 
         // Draw name if enabled and zoomed in enough
         if (this.showNames && this.zoom >= 0.5) {
-            ctx.font = `${Math.round(10 * this.zoom)}px sans-serif`;
+            ctx.font = `${Math.round(10 * this.symbolScale())}px sans-serif`;
             ctx.fillStyle = this.colors.text;
             ctx.textAlign = 'center';
-            ctx.fillText(star.name, pos.x, pos.y + radius + 12 * this.zoom);
+            ctx.fillText(star.name, pos.x,
+                         pos.y + radius + 10 * this.symbolScale());
         }
     },
 
@@ -1274,7 +1313,7 @@ const GalaxyMap = {
     renderFleet(fleet) {
         const ctx = this.ctx;
         const pos = this.worldToScreen(fleet.position_x, fleet.position_y);
-        const radius = this.fleetRadius * this.zoom;
+        const radius = this.fleetRadius * this.symbolScale();
 
         // Skip if off screen
         if (pos.x < -radius || pos.x > this.canvas.width + radius ||
@@ -1325,10 +1364,11 @@ const GalaxyMap = {
 
         // Draw name if selected or zoomed in
         if ((fleet === this.selectedFleet || this.zoom >= 1.0) && this.showNames) {
-            ctx.font = `${Math.round(9 * this.zoom)}px sans-serif`;
+            ctx.font = `${Math.round(9 * this.symbolScale())}px sans-serif`;
             ctx.fillStyle = this.colors.text;
             ctx.textAlign = 'center';
-            ctx.fillText(fleet.name, pos.x, pos.y + radius + 10 * this.zoom);
+            ctx.fillText(fleet.name, pos.x,
+                         pos.y + radius + 9 * this.symbolScale());
         }
     },
 
@@ -1368,7 +1408,7 @@ const GalaxyMap = {
     renderSelection(worldX, worldY) {
         const ctx = this.ctx;
         const pos = this.worldToScreen(worldX, worldY);
-        const radius = this.selectionRadius * this.zoom;
+        const radius = this.selectionRadius * this.symbolScale();
 
         ctx.strokeStyle = this.colors.selection;
         ctx.lineWidth = 2;
@@ -1383,7 +1423,7 @@ const GalaxyMap = {
     renderHover(worldX, worldY) {
         const ctx = this.ctx;
         const pos = this.worldToScreen(worldX, worldY);
-        const radius = this.selectionRadius * this.zoom;
+        const radius = this.selectionRadius * this.symbolScale();
 
         ctx.strokeStyle = this.colors.hover;
         ctx.lineWidth = 1;

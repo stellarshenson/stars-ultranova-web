@@ -77,6 +77,12 @@ class BattleStepTarget(BattleStep):
     stack_key: int = 0
     target_key: int = 0
     percent_to_fire: int = 100
+    # Why this target was picked: the plan tier that matched
+    # (RonBattleEngine._get_priority, 7 = primary down to 3 = quinary;
+    # 0 for the C#-exact engine, which has no tiers) and the role the
+    # tier matched. Web-only - the C# BattleStepTarget carries neither
+    priority: int = 0
+    target_role: str = ""
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -85,6 +91,8 @@ class BattleStepTarget(BattleStep):
             "stack_key": self.stack_key,
             "target_key": self.target_key,
             "percent_to_fire": self.percent_to_fire,
+            "priority": self.priority,
+            "target_role": str(self.target_role),
         }
 
     @classmethod
@@ -94,6 +102,8 @@ class BattleStepTarget(BattleStep):
         step.stack_key = data.get("stack_key", 0)
         step.target_key = data.get("target_key", 0)
         step.percent_to_fire = data.get("percent_to_fire", 100)
+        step.priority = data.get("priority", 0)
+        step.target_role = data.get("target_role", "")
         return step
 
 
@@ -143,6 +153,33 @@ class BattleStepWeapons(BattleStep):
         step.weapon_target = WeaponTarget.from_dict(wt_data) if wt_data else WeaponTarget()
         step.damage = data.get("damage", 0.0)
         step.targeting = TokenDefence(data.get("targeting", 0))
+        return step
+
+
+@dataclass
+class BattleStepWithdraw(BattleStep):
+    """
+    Records a stack completing its disengagement and leaving the board.
+
+    Web-only step (C# absent - BattleEngine.cs:603 TODO admits fleeing
+    is unimplemented, so no C# step class exists). Without it a
+    withdrawal only showed as movement steps that silently stop.
+    """
+    step_type: str = field(default="Withdraw", init=False)
+    stack_key: int = 0
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "type": self.step_type,
+            "stack_key": self.stack_key,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'BattleStepWithdraw':
+        """Deserialize from dictionary."""
+        step = cls()
+        step.stack_key = data.get("stack_key", 0)
         return step
 
 

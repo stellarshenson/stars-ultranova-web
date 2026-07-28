@@ -59,7 +59,7 @@ class TestInTransitWaypoints:
         # Placeholder + destination remain
         assert len(scout["waypoints"]) == 2
         placeholder = scout["waypoints"][0]
-        assert placeholder["task_type"] == "NoTaskObj"
+        assert placeholder["task_type"] == "NoTask"
         assert placeholder["position_x"] == scout["position_x"]
         assert placeholder["warp_factor"] == ORDERED_WARP
         assert scout["warp_factor"] == ORDERED_WARP

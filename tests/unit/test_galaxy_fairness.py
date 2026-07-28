@@ -4,12 +4,14 @@ Homeworld placement fairness (DEF-16).
 The C# reference places homeworlds first on a uniform density field
 with enforced minimum separation (StarMapGenerator.cs:93-106, 156-172,
 215-238), making every start statistically equivalent. The web
-generator keeps its GMM star field and guarantees fairness by
+generator keeps its clustered star field and guarantees fairness by
 SELECTION: every homeworld must have at least
 N_min = max(3, ceil(0.5 * median neighborhood count)) stars within
-50 ly, and homeworlds are mutually separated by at least the
+HOMEWORLD_NEIGHBORHOOD_RADIUS (two mean star spacings, 100 ly on the
+enlarged boards), and homeworlds are mutually separated by at least the
 C#-derived min(width, height) / (2 * (floor(sqrt(players)) + 1)),
-relaxable to half that on candidate shortage.
+relaxable to half that on candidate shortage. The bound is re-verified
+on the clustered field that replaced the centre-weighted mixture.
 
 run100 regression: seed 4242 (small map) gave e1 nine stars within
 50 ly and e2 one, with the second-nearest 80 ly away - the expansion
@@ -24,7 +26,8 @@ from backend.services.galaxy_generator import GalaxyGenerator, UNIVERSE_SIZES
 
 SEEDS = [4242, 0, 1, 3, 42, 99, 777, 1111, 12345, 20260713]
 
-RADIUS = GalaxyGenerator.HOMEWORLD_NEIGHBORHOOD_RADIUS  # 50 ly
+RADIUS = GalaxyGenerator.HOMEWORLD_NEIGHBORHOOD_RADIUS  # 100 ly
+SIZES = ["small", "medium"]
 
 
 def _generate(seed, players, size):
@@ -58,12 +61,13 @@ def _n_min(counts):
 
 class TestHomeworldFairness:
 
+    @pytest.mark.parametrize("size", SIZES)
     @pytest.mark.parametrize("players", [2, 4])
     @pytest.mark.parametrize("seed", SEEDS)
-    def test_neighborhood_floor(self, seed, players):
-        """Every homeworld has at least N_min stars within 50 ly -
-        the stated fairness bound; no more 1-star corner exiles."""
-        stars, homes = _generate(seed, players, "small")
+    def test_neighborhood_floor(self, seed, players, size):
+        """Every homeworld has at least N_min neighbor stars inside the
+        fairness radius; no more 1-star corner exiles."""
+        stars, homes = _generate(seed, players, size)
         counts = _neighborhood_counts(stars)
         n_min = _n_min(counts)
 
@@ -73,16 +77,17 @@ class TestHomeworldFairness:
                 f"stars within {RADIUS} ly, floor {n_min}"
             )
 
+    @pytest.mark.parametrize("size", SIZES)
     @pytest.mark.parametrize("players", [2, 4])
     @pytest.mark.parametrize("seed", SEEDS)
-    def test_mutual_separation(self, seed, players):
+    def test_mutual_separation(self, seed, players, size):
         """Pairwise separation honors the C#-derived floor
         (StarMapGenerator.cs:160-163), relaxable to half."""
-        width, height = UNIVERSE_SIZES["small"]
+        width, height = UNIVERSE_SIZES[size]
         player_factor = int(math.floor(math.sqrt(players))) + 1
         min_sep = min(width, height) / (2 * player_factor)
 
-        _, homes = _generate(seed, players, "small")
+        _, homes = _generate(seed, players, size)
         for i, a in enumerate(homes):
             for b in homes[i + 1:]:
                 dist = math.hypot(a.position.x - b.position.x,
@@ -93,7 +98,7 @@ class TestHomeworldFairness:
                 )
 
     def test_tiny_map_still_terminates(self):
-        """Tiny maps (64 stars, min_sep 50) always yield a full set
+        """Tiny maps (64 stars, min_sep 100) always yield a full set
         of sufficiently-dense starts via the relaxation ladder."""
         stars, homes = _generate(4242, 2, "tiny")
         counts = _neighborhood_counts(stars)
@@ -112,7 +117,7 @@ class TestHomeworldFairness:
 
     def test_run100_seed_4242_regression(self):
         """The forensic case: both starts on seed 4242 now clear the
-        floor (was 9-vs-1 within 50 ly)."""
+        floor (was 9-vs-1 within the fairness radius)."""
         stars, homes = _generate(4242, 2, "small")
         counts = _neighborhood_counts(stars)
         home_counts = [counts[h.name] for h in homes]

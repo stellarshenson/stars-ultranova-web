@@ -736,6 +736,21 @@ class StarUpdateStep(ITurnStep):
 
         return messages
 
+    def _default_battle_plan(self, empire: 'EmpireData') -> str:
+        """
+        The plan a newly built fleet inherits.
+
+        The empire-wide default, so a commander who never opens the
+        battle screen still fights coherently; production used to set
+        nothing at all and every fleet silently took the Fleet
+        dataclass default. Falls back to that name if the empire's
+        default has been deleted.
+        """
+        name = getattr(empire, 'default_battle_plan', '') or "Default"
+        if name not in empire.battle_plans:
+            return "Default"
+        return name
+
     def _build_ships(self, order: ProductionOrder, star: 'Star',
                      empire: 'EmpireData', count: int) -> List[Message]:
         """Build ships from a design and place them in a new fleet at the star."""
@@ -759,6 +774,7 @@ class StarUpdateStep(ITurnStep):
             fleet.in_orbit_name = star.name
             fleet.tokens[token.design_key] = token
             fleet.fuel_available = 0
+            fleet.battle_plan = self._default_battle_plan(empire)
             # ISB starbases are built 20% cloaked
             # (Manufacture.cs:126-134: fleet.Cloaked = 20 when the
             # empire's race has the ISB trait)
@@ -781,6 +797,7 @@ class StarUpdateStep(ITurnStep):
         fleet.in_orbit_name = star.name
         fleet.tokens[token.design_key] = token
         fleet.fuel_available = fleet.total_fuel_capacity
+        fleet.battle_plan = self._default_battle_plan(empire)
         empire.owned_fleets[fleet.key] = fleet
 
         messages.append(Message(

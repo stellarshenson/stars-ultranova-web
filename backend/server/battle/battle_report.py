@@ -14,6 +14,7 @@ from .battle_step import (
     BattleStepTarget,
     BattleStepWeapons,
     BattleStepDestroy,
+    BattleStepWithdraw,
 )
 
 if TYPE_CHECKING:
@@ -84,6 +85,8 @@ class BattleReport:
                 report.steps.append(BattleStepWeapons.from_dict(step_data))
             elif step_type == "Destroy":
                 report.steps.append(BattleStepDestroy.from_dict(step_data))
+            elif step_type == "Withdraw":
+                report.steps.append(BattleStepWithdraw.from_dict(step_data))
             else:
                 report.steps.append(BattleStep.from_dict(step_data))
 

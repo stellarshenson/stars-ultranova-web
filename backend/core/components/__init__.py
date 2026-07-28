@@ -8,6 +8,8 @@ from .hull import Hull
 from .hull_module import HullModule
 from .engine import Engine
 from .ship_design import ShipDesign, Weapon, Bomb, MineLayer
+from .ship_role import (
+    CAPITAL_SHIP_POWER_RATING, ShipRole, battle_role_of, infer_battle_role)
 
 __all__ = [
     'Component',
@@ -21,5 +23,9 @@ __all__ = [
     'ShipDesign',
     'Weapon',
     'Bomb',
-    'MineLayer'
+    'MineLayer',
+    'CAPITAL_SHIP_POWER_RATING',
+    'ShipRole',
+    'battle_role_of',
+    'infer_battle_role'
 ]

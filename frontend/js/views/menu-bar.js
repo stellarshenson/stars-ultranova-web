@@ -69,6 +69,7 @@ const MenuBar = {
                 { type: 'separator' },
                 { id: 'player-relations', label: 'Player Relations...', shortcut: 'F7', action: 'playerRelations' },
                 { id: 'battle-plans', label: 'Battle Plans...', action: 'battlePlans' },
+                { id: 'imminent-battles', label: 'Imminent Battles...', action: 'imminentBattles' },
                 { type: 'separator' },
                 { id: 'design-ship', label: 'Design Ship...', shortcut: 'F4', action: 'designShip' },
                 { type: 'separator' },
@@ -522,6 +523,11 @@ const MenuBar = {
                 // C# parity: Commands menu opens the BattlePlans
                 // dialog (NovaGUI.cs:228-231)
                 if (window.Dialogs) Dialogs.showBattlePlans();
+                break;
+            case 'imminentBattles':
+                // Web-only: the pre-generation window, where an
+                // engagement override is still possible
+                if (window.Dialogs) Dialogs.showImminentBattles();
                 break;
             case 'production':
                 if (window.StarPanel && GameState.selectedStar &&

@@ -54,6 +54,21 @@
             font-size: 11px;
             color: #6fa8dc;
         }
+        .stationgrid {
+            display: grid;
+            grid-template-columns: repeat(4, 380px);
+            gap: 16px 20px;
+        }
+        .pair {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .zoom {
+            image-rendering: pixelated;
+            border: 1px solid #1e2740;
+        }
     </style>
 </head>
 <body>
@@ -72,6 +87,14 @@
         by star id, so the seeded per-world parameters carry the difference.
     </p>
     <div class="grid" id="grid-pairs"></div>
+
+    <h2>Orbital stations - six classes over four worlds</h2>
+    <p class="note">
+        Panel scale on the left, the same bitmap at 4x with smoothing off on
+        the right, so the pixel construction is visible. Every class fits an
+        L x L box, L being 0.08 to 0.15 of the planet radius.
+    </p>
+    <div class="stationgrid" id="grid-stations"></div>
 
     <script src="js/views/encyclopedia.js"></script>
     <script src="js/views/planet-art.js"></script>
@@ -156,6 +179,140 @@
             ['A', 'B'].forEach(tag => {
                 const id = `${name} pair ${tag}`;
                 addCell(pairs, makeStar(id, id, t, r, g), `${name} - ${tag}`);
+            });
+        });
+
+        // ---------------------------------------------------------------
+        // Station row. Each cell renders the world twice - with and
+        // without a starbase - so the difference isolates the station:
+        // that gives the crop for the 4x inset and the measured footprint
+        // and contrast reported under every cell.
+        // ---------------------------------------------------------------
+
+        const STATION_CLASSES = [
+            'Orbital Fort', 'Space Dock', 'Space Station',
+            'Ultra Station', 'Death Star', 'Shipyard'
+        ];
+        const STATION_WORLDS = [
+            ['Temperate ideal', 50, 50, 50],
+            ['Hot desert', 70, 30, 50],
+            ['Frozen', 10, 15, 50],
+            ['Volcanic', 75, 70, 60]
+        ];
+
+        function pixels(canvas) {
+            return canvas.getContext('2d')
+                .getImageData(0, 0, canvas.width, canvas.height).data;
+        }
+
+        function luma(d, i) {
+            const a = d[i + 3] / 255;
+            return (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) * a;
+        }
+
+        /**
+         * Compare the two renders. Returns the station's bounding box, the
+         * count of changed pixels (its ink), and the Weber contrast of the
+         * station against whatever the bare world put in the same place.
+         */
+        function measureStation(withBase, without, size) {
+            const a = pixels(withBase), b = pixels(without);
+            let x0 = size, y0 = size, x1 = -1, y1 = -1, n = 0;
+            let sumS = 0, sumB = 0;
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const i = (y * size + x) * 4;
+                    if (a[i] === b[i] && a[i + 1] === b[i + 1]
+                        && a[i + 2] === b[i + 2] && a[i + 3] === b[i + 3]) {
+                        continue;
+                    }
+                    n++;
+                    sumS += luma(a, i);
+                    sumB += luma(b, i);
+                    if (x < x0) x0 = x;
+                    if (y < y0) y0 = y;
+                    if (x > x1) x1 = x;
+                    if (y > y1) y1 = y;
+                }
+            }
+            if (n === 0) return null;
+            const st = sumS / n, bg = sumB / n;
+            return {
+                x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, ink: n,
+                station: st, background: bg,
+                contrast: Math.abs(st - bg) / Math.max(1, bg + st)
+            };
+        }
+
+        function addStationCell(parent, cls, world) {
+            const [wname, t, r, g] = world;
+            const id = `${cls} @ ${wname}`;
+            const star = makeStar(id, id, t, r, g);
+            star.starbase_hull = cls;
+            const bare = makeStar(id, id, t, r, g);
+
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            const pair = document.createElement('div');
+            pair.className = 'pair';
+            const panel = document.createElement('canvas');
+            panel.width = panel.height = SIZE;
+            panel.className = 'station';
+            panel.dataset.station = cls;
+            panel.dataset.world = wname;
+            const zoom = document.createElement('canvas');
+            zoom.width = zoom.height = 160;
+            zoom.className = 'zoom';
+            pair.appendChild(panel);
+            pair.appendChild(zoom);
+            cell.appendChild(pair);
+            const name = document.createElement('div');
+            name.className = 'name';
+            name.textContent = `${cls} - ${wname}`;
+            cell.appendChild(name);
+            const info = document.createElement('div');
+            info.className = 'env';
+            cell.appendChild(info);
+            parent.appendChild(cell);
+
+            const t0 = performance.now();
+            PlanetArt.render(panel, star);
+            const ms = performance.now() - t0;
+            panel.dataset.ms = ms.toFixed(2);
+
+            const off = document.createElement('canvas');
+            off.width = off.height = SIZE;
+            PlanetArt.render(off, bare);
+
+            const m = measureStation(panel, off, SIZE);
+            const R = SIZE * (0.3125 + ((g - 50) / 50) * 0.1);
+            const disc = Math.PI * R * R;
+            if (m) {
+                const zc = zoom.getContext('2d');
+                zc.imageSmoothingEnabled = false;
+                zc.fillStyle = '#05070f';
+                zc.fillRect(0, 0, 160, 160);
+                const crop = 40;
+                const cxp = Math.round(m.x + m.w / 2 - crop / 2);
+                const cyp = Math.round(m.y + m.h / 2 - crop / 2);
+                zc.drawImage(panel, cxp, cyp, crop, crop, 0, 0, 160, 160);
+                const box = Math.max(m.w, m.h);
+                panel.dataset.box = box;
+                panel.dataset.ink = m.ink;
+                panel.dataset.inkPct = (m.ink / disc * 100).toFixed(3);
+                panel.dataset.contrast = m.contrast.toFixed(3);
+                info.textContent = `${box} px box - `
+                    + `${(m.ink / disc * 100).toFixed(2)}% ink - `
+                    + `contrast ${m.contrast.toFixed(2)} - ${ms.toFixed(1)} ms`;
+            } else {
+                info.textContent = 'NO STATION DRAWN';
+            }
+        }
+
+        const stations = document.getElementById('grid-stations');
+        STATION_CLASSES.forEach(cls => {
+            STATION_WORLDS.forEach(world => {
+                addStationCell(stations, cls, world);
             });
         });
 

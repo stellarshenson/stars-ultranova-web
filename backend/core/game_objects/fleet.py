@@ -251,6 +251,13 @@ class Fleet(Mappable):
     fuel_available: float = 0.0
     target_distance: float = 100.0
     battle_plan: str = "Default"
+    # Plan this fleet fights the NEXT battle under, overriding
+    # battle_plan for that engagement only. Set in the pre-generation
+    # window when a battle is imminent and cleared unconditionally by
+    # turn generation (TurnGenerator._clear_engagement_overrides), so
+    # the fleet always reverts to its standing plan. Empty for a fleet
+    # with no override, which is what every existing save loads as
+    engagement_plan: str = ""
     max_population: int = 1000000  # For AR starbases
     turn_year: int = -1  # For salvage decay
 
@@ -261,6 +268,12 @@ class Fleet(Mappable):
     # ordinary fleets, so legacy saves load unchanged.
     packet_warp: int = 0
     packet_safe_warp: int = 0
+
+    # Year this fleet last broke off a battle (doctrine withdrawal,
+    # RonBattleEngine._apply_withdrawal_consequences). -1 for a fleet
+    # that never withdrew, which is what a save written before
+    # doctrine existed loads as
+    withdrawn_year: int = -1
 
     def __post_init__(self):
         """Initialize fleet-specific defaults."""
@@ -786,10 +799,12 @@ class Fleet(Mappable):
             "fuel_available": self.fuel_available,
             "target_distance": self.target_distance,
             "battle_plan": self.battle_plan,
+            "engagement_plan": self.engagement_plan,
             "max_population": self.max_population,
             "turn_year": self.turn_year,
             "packet_warp": self.packet_warp,
-            "packet_safe_warp": self.packet_safe_warp
+            "packet_safe_warp": self.packet_safe_warp,
+            "withdrawn_year": self.withdrawn_year
         })
         return data
 
@@ -832,6 +847,11 @@ class Fleet(Mappable):
         fleet.turn_year = data.get("turn_year", -1)
         fleet.packet_warp = data.get("packet_warp", 0)
         fleet.packet_safe_warp = data.get("packet_safe_warp", 0)
+        # Absent in saves written before doctrine withdrawal existed
+        fleet.withdrawn_year = data.get("withdrawn_year", -1)
+        # Absent in saves written before the engagement override
+        # existed; empty means "fight under the standing plan"
+        fleet.engagement_plan = data.get("engagement_plan", "")
 
         return fleet
 

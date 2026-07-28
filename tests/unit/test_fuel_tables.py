@@ -14,27 +14,54 @@ Deliberate web mods under test:
 - Fuel property "Generation" is subtracted from a design's burn
 """
 
+import os
+import xml.etree.ElementTree as ET
+
 import pytest
 
-from backend.core.components.engine import Engine
+from backend.core.components.engine import (
+    Engine, WEB_MOD_RAMSCOOP_ENGINES,
+)
 from backend.core.data_structures.cargo import Cargo
 from backend.core.game_objects.fleet import Fleet, ShipToken
 from backend.core.race.race import Race
 from backend.services.ship_specs import (
-    ENGINE_FUEL_TABLES, STARTING_DESIGN_SPECS, _design_from_spec,
-    make_token, SimpleDesign,
+    STARTING_DESIGN_SPECS, _design_from_spec, _free_warp_from_table,
+    engine_fuel_table, make_token, SimpleDesign,
 )
 
-# Canonical tables (references/original-game/components.xml,
-# Warp0..Warp9 = warp 1..10)
-QUICK_JUMP_5 = [0, 25, 100, 100, 100, 180, 500, 800, 900, 1080]
-# Web tables with the negative ramscoop free-warp mod
-# (backend/data/components.xml)
-FUEL_MIZER_WEB = [-5000, -7830, -3915, -1300, 35, 120, 175, 235, 360, 420]
-GALAXY_SCOOP_WEB = [-5000, -7830, -3915, -1300, -1111, -999, -999, -999,
-                    -999, 60]
-SETTLERS_DELIGHT_WEB = [-5000, -7830, -3915, -1300, -1300, -999, 140, 275,
-                        480, 576]
+# Tables come from the single source, backend/data/components.xml -
+# no literals here. The docstrings below keep the numeric burn
+# expectations, which anchor the arithmetic
+QUICK_JUMP_5 = engine_fuel_table("Quick Jump 5")
+FUEL_MIZER_WEB = engine_fuel_table("Fuel Mizer")
+GALAXY_SCOOP_WEB = engine_fuel_table("Galaxy Scoop")
+SETTLERS_DELIGHT_WEB = engine_fuel_table("Settler's Delight")
+
+# The source file itself, parsed independently of the component loader
+WEB_XML = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))),
+    "backend", "data", "components.xml")
+CANON_XML = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))),
+    "references", "original-game", "components.xml")
+
+
+def _tables_from_xml(path):
+    """Engine name -> fuel table, read straight out of the XML."""
+    tables = {}
+    for component in ET.parse(path).getroot().findall("Component"):
+        name = component.find("Item/Name").text
+        for prop in component.findall("Property"):
+            consumption = prop.find("FuelConsumption")
+            if consumption is not None:
+                tables[name] = [
+                    int(consumption.find("Warp%d" % i).text)
+                    for i in range(10)
+                ]
+    return tables
 
 
 def _spec(name):
@@ -68,7 +95,6 @@ class TestTokenTableWiring:
     def test_settlers_delight_table_on_spore_cloud(self):
         token = make_token(_design_from_spec(_spec("Spore Cloud")))
         assert token.fuel_table == SETTLERS_DELIGHT_WEB
-        assert token.fuel_table == ENGINE_FUEL_TABLES["Settler's Delight"]
 
     def test_spore_cloud_free_warp_derived_from_table(self):
         """Settler's Delight is free through warp 6 (table entry at
@@ -236,3 +262,86 @@ class TestSerialization:
             {"design_class": "SimpleDesign", "name": "Old"})
         assert restored.engine_name == ""
         assert restored.fuel_table == [0] * 10
+
+
+class TestCanonicalSource:
+    """backend/data/components.xml is the single source of every table.
+
+    Every assertion here compares runtime values against the XML parsed
+    directly with ElementTree, so a literal reintroduced anywhere in the
+    backend fails the moment it drifts from the source file.
+    """
+
+    def test_xml_holds_fifteen_engines(self):
+        assert len(_tables_from_xml(WEB_XML)) == 15
+
+    def test_lookup_matches_xml_for_every_engine(self):
+        for name, table in _tables_from_xml(WEB_XML).items():
+            assert engine_fuel_table(name) == table, name
+
+    def test_loader_matches_xml_for_every_engine(self):
+        from backend.services.design_builder import ensure_components_loaded
+        loader = ensure_components_loaded()
+        for name, table in _tables_from_xml(WEB_XML).items():
+            prop = loader.get_component(name).get_property("Engine")
+            assert prop.values["fuel_consumption"] == table, name
+
+    def test_every_starting_design_and_token_matches_xml(self):
+        tables = _tables_from_xml(WEB_XML)
+        for spec in STARTING_DESIGN_SPECS:
+            design = _design_from_spec(spec)
+            expected = tables.get(spec.get("engine", ""), [0] * 10)
+            assert design.fuel_table == expected, spec["name"]
+            assert make_token(design).fuel_table == expected, spec["name"]
+
+    def test_starbase_has_no_engine_table(self):
+        design = _design_from_spec(_spec("Starbase"))
+        assert design.engine_name == ""
+        assert design.fuel_table == [0] * 10
+
+    def test_free_warp_convention_has_one_implementation(self):
+        for name, table in _tables_from_xml(WEB_XML).items():
+            assert _free_warp_from_table(table) == Engine(
+                fuel_consumption=list(table)).free_warp_speed, name
+
+    def test_negatives_only_on_the_marked_engines(self):
+        tables = _tables_from_xml(WEB_XML)
+        negative = {name for name, table in tables.items()
+                    if any(entry < 0 for entry in table)}
+        assert negative == set(WEB_MOD_RAMSCOOP_ENGINES)
+
+    def test_every_marked_engine_is_a_known_engine(self):
+        tables = _tables_from_xml(WEB_XML)
+        assert set(WEB_MOD_RAMSCOOP_ENGINES) <= set(tables)
+
+    def test_negatives_form_a_prefix_of_the_table(self):
+        """A negative run is the free-warp band: it starts at warp 1
+        and ends at the first fuel-burning entry."""
+        for name, table in _tables_from_xml(WEB_XML).items():
+            positives = [i for i, entry in enumerate(table) if entry > 0]
+            first_positive = positives[0] if positives else len(table)
+            for i, entry in enumerate(table):
+                if i < first_positive:
+                    assert entry <= 0, (name, i)
+                else:
+                    assert entry > 0, (name, i)
+
+    @pytest.mark.skipif(not os.path.exists(CANON_XML),
+                        reason="gitignored C# reference tree not present")
+    def test_only_delta_from_canon_is_the_marked_web_mod(self):
+        """Against references/original-game/components.xml: identical
+        everywhere except the marked ram scoops, and there only canon 0
+        entries became negative."""
+        web = _tables_from_xml(WEB_XML)
+        canon = _tables_from_xml(CANON_XML)
+        assert set(web) == set(canon)
+        modified = set()
+        for name, table in web.items():
+            reference = canon[name]
+            if table == reference:
+                continue
+            modified.add(name)
+            for entry, canon_entry in zip(table, reference):
+                if entry != canon_entry:
+                    assert canon_entry == 0 and entry < 0, name
+        assert modified == set(WEB_MOD_RAMSCOOP_ENGINES)

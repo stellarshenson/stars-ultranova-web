@@ -16,6 +16,8 @@ const GameState = {
     foreignFleets: [],     // Scanned foreign fleet contacts
     relations: [],         // Per-opponent relation (Enemy/Neutral/Friend)
     battlePlans: {},       // Own battle plans keyed by name
+    defaultBattlePlan: '', // Plan newly built fleets inherit
+    imminentBattles: [],   // Fleets about to fight, from the forecast
     nebulae: null,         // Nebula field data from backend
     messages: [],          // Last turn's messages for this empire
     research: null,        // Research budget/levels/progress
@@ -70,6 +72,21 @@ const GameState = {
     },
 
     /**
+     * Board dimensions in light years.
+     *
+     * The server resolves them from the generator's UNIVERSE_SIZES
+     * table and ships them with the game record, so the client never
+     * restates the size table. Falls back to the medium board only
+     * when no game is loaded.
+     */
+    universeDimensions() {
+        return {
+            width: this.game?.universe_width || 1000,
+            height: this.game?.universe_height || 1000
+        };
+    },
+
+    /**
      * Reload the player-scoped state snapshot.
      */
     async refreshState() {
@@ -98,6 +115,8 @@ const GameState = {
         this.foreignFleets = state.foreign_fleets || [];
         this.relations = state.relations || [];
         this.battlePlans = state.battle_plans || {};
+        this.defaultBattlePlan = state.default_battle_plan || 'Default';
+        this.imminentBattles = state.imminent_battles || [];
         this.messages = state.messages || [];
         this.research = state.research;
         this.designs = state.designs || [];

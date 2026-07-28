@@ -113,11 +113,10 @@ const Dialogs = {
                 <div class="form-group">
                     <label for="universe-size">Universe Size</label>
                     <select id="universe-size" class="form-select">
-                        <option value="tiny">Tiny (200 ly)</option>
-                        <option value="small">Small (400 ly)</option>
-                        <option value="medium" selected>Medium (600 ly)</option>
-                        <option value="large">Large (800 ly)</option>
-                        <option value="huge">Huge (1000 ly)</option>
+                        <!-- Options are filled from GET
+                             /api/games/universe-sizes so the light-year
+                             figures come from the generator's table and
+                             are never restated here -->
                     </select>
                 </div>
 
@@ -198,6 +197,9 @@ const Dialogs = {
 
         this.show(html);
 
+        // Fill the universe size options from the canonical table
+        this.populateUniverseSizes();
+
         // Bind create button
         document.getElementById('btn-create-game')?.addEventListener('click', async () => {
             const name = document.getElementById('game-name').value || 'New Game';
@@ -250,6 +252,31 @@ const Dialogs = {
                 RaceWizard.show();
             }
         });
+    },
+
+    /**
+     * Fill the universe size selector from the canonical table.
+     *
+     * The generator's UNIVERSE_SIZES is the single source of truth for
+     * board dimensions; the labels quote whatever it says, so a size
+     * change never leaves a stale "(600 ly)" behind on the client.
+     */
+    async populateUniverseSizes() {
+        const select = document.getElementById('universe-size');
+        if (!select) return;
+        let sizes;
+        try {
+            sizes = await ApiClient.getUniverseSizes();
+        } catch (error) {
+            console.error('Failed to load universe sizes:', error);
+            return;
+        }
+        select.innerHTML = sizes.map(size => {
+            const label = size.name.charAt(0).toUpperCase() + size.name.slice(1);
+            const selected = size.name === 'medium' ? ' selected' : '';
+            return `<option value="${size.name}"${selected}>`
+                + `${label} (${size.width} ly)</option>`;
+        }).join('');
     },
 
     /**
@@ -917,8 +944,16 @@ const Dialogs = {
         { value: 3, label: 'Escort' },
         { value: 4, label: 'Armed Ship' },
         { value: 5, label: 'Any Ship' },
-        { value: 6, label: 'Support Ship' }
+        { value: 6, label: 'Support Ship' },
+        { value: 7, label: 'Logistics' }
     ],
+    // Doctrine axes (backend battle_plan.STANCES / POSTURES /
+    // WITHDRAW_OPTIONS). They sit behind a disclosure: picking a named
+    // plan is the default path, the parameters are the opt-in
+    BATTLE_PLAN_STANCES: ['Aggressive', 'Balanced', 'Defensive'],
+    BATTLE_PLAN_POSTURES: ['Standard', 'Brace', 'Scatter'],
+    BATTLE_PLAN_WITHDRAW: ['Never', 'On Damage', 'Half Armour',
+                           'Outnumbered'],
 
     /**
      * Battle Plans dialog - two-pane layout after the C# BattlePlans
@@ -938,11 +973,16 @@ const Dialogs = {
             selectedName = names.includes('Default') ? 'Default' : names[0];
         }
 
+        const empireDefault = GameState.defaultBattlePlan || 'Default';
         const listHtml = names.map(n =>
-            `<option value="${n}" ${n === selectedName ? 'selected' : ''}>${n}</option>`
+            `<option value="${n}" ${n === selectedName ? 'selected' : ''}>` +
+            `${n}${n === empireDefault ? ' (default)' : ''}</option>`
         ).join('');
         const targetOptions = (selected) => this.BATTLE_PLAN_TARGETS.map(t =>
             `<option value="${t.value}" ${t.value === selected ? 'selected' : ''}>${t.label}</option>`
+        ).join('');
+        const axisOptions = (values, selected) => values.map(v =>
+            `<option ${v === selected ? 'selected' : ''}>${v}</option>`
         ).join('');
         const tiers = [
             ['primary_target', 'Primary Target'],
@@ -974,35 +1014,54 @@ const Dialogs = {
                             <input type="text" id="battle-plan-name" class="form-input"
                                    value="${plan.name}">
                         </div>
-                        ${tiers.map(([key, label]) => `
                         <div class="form-group">
-                            <label for="battle-plan-${key}">${label}</label>
-                            <select id="battle-plan-${key}" class="form-select">
-                                ${targetOptions(plan[key])}
-                            </select>
-                        </div>`).join('')}
-                        <div class="form-group">
-                            <label for="battle-plan-tactic">Tactic</label>
-                            <select id="battle-plan-tactic" class="form-select">
-                                ${this.BATTLE_PLAN_TACTICS.map(t =>
-                                    `<option ${t === plan.tactic ? 'selected' : ''}>${t}</option>`
-                                ).join('')}
+                            <label for="battle-plan-stance">Stance</label>
+                            <select id="battle-plan-stance" class="form-select">
+                                ${axisOptions(this.BATTLE_PLAN_STANCES, plan.stance || 'Balanced')}
                             </select>
                         </div>
-                        <div class="form-group">
-                            <label for="battle-plan-attack">Attack</label>
-                            <select id="battle-plan-attack" class="form-select">
-                                ${this.BATTLE_PLAN_ATTACK.map(a =>
-                                    `<option ${a === plan.attack ? 'selected' : ''}>${a}</option>`
-                                ).join('')}
-                            </select>
-                        </div>
+                        <details class="plan-details">
+                            <summary>Detailed parameters</summary>
+                            ${tiers.map(([key, label]) => `
+                            <div class="form-group">
+                                <label for="battle-plan-${key}">${label}</label>
+                                <select id="battle-plan-${key}" class="form-select">
+                                    ${targetOptions(plan[key])}
+                                </select>
+                            </div>`).join('')}
+                            <div class="form-group">
+                                <label for="battle-plan-posture">Posture</label>
+                                <select id="battle-plan-posture" class="form-select">
+                                    ${axisOptions(this.BATTLE_PLAN_POSTURES, plan.posture || 'Standard')}
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="battle-plan-withdraw">Withdraw When</label>
+                                <select id="battle-plan-withdraw" class="form-select">
+                                    ${axisOptions(this.BATTLE_PLAN_WITHDRAW, plan.withdraw || 'Never')}
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="battle-plan-tactic">Tactic</label>
+                                <select id="battle-plan-tactic" class="form-select">
+                                    ${axisOptions(this.BATTLE_PLAN_TACTICS, plan.tactic)}
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="battle-plan-attack">Attack</label>
+                                <select id="battle-plan-attack" class="form-select">
+                                    ${axisOptions(this.BATTLE_PLAN_ATTACK, plan.attack)}
+                                </select>
+                            </div>
+                        </details>
                     </fieldset>
                 </div>
             </div>
             <div class="dialog-footer">
                 <button class="btn-small" id="btn-battle-plan-new">New</button>
                 <button class="btn-primary" id="btn-battle-plan-save">Save</button>
+                <button class="btn-small" id="btn-battle-plan-default"
+                        ${selectedName === empireDefault ? 'disabled' : ''}>Make Default</button>
                 <button class="btn-small btn-danger" id="btn-battle-plan-delete"
                         ${selectedName === 'Default' ? 'disabled' : ''}>Delete</button>
                 <button class="btn-secondary" onclick="Dialogs.close()">Done</button>
@@ -1033,7 +1092,10 @@ const Dialogs = {
             const payload = {
                 name: name,
                 tactic: document.getElementById('battle-plan-tactic')?.value,
-                attack: document.getElementById('battle-plan-attack')?.value
+                attack: document.getElementById('battle-plan-attack')?.value,
+                stance: document.getElementById('battle-plan-stance')?.value,
+                posture: document.getElementById('battle-plan-posture')?.value,
+                withdraw: document.getElementById('battle-plan-withdraw')?.value
             };
             for (const [key] of tiers) {
                 payload[key] = parseInt(document.getElementById(`battle-plan-${key}`)?.value) || 0;
@@ -1048,6 +1110,22 @@ const Dialogs = {
             }
         });
 
+        // The one-dial path: every fleet production builds inherits
+        // this plan, so a commander who never opens the fleet panel
+        // still fights coherently
+        document.getElementById('btn-battle-plan-default')?.addEventListener('click', async () => {
+            try {
+                await GameState.submitCommand('battle_plan',
+                                              { mode: 'default', name: selectedName });
+                await GameState.refreshState();
+                ApiClient.showStatus(
+                    `New fleets will use '${selectedName}'`, 'success');
+                this.showBattlePlans(selectedName);
+            } catch (error) {
+                ApiClient.showStatus('Failed to set default: ' + error.message, 'error');
+            }
+        });
+
         document.getElementById('btn-battle-plan-delete')?.addEventListener('click', async () => {
             if (selectedName === 'Default') return;
             try {
@@ -1058,6 +1136,83 @@ const Dialogs = {
             } catch (error) {
                 ApiClient.showStatus('Failed to delete plan: ' + error.message, 'error');
             }
+        });
+    },
+
+    /**
+     * Imminent Battles dialog - every fleet about to fight, with the
+     * engagement override for each.
+     *
+     * Combat resolves inside turn generation with no player input
+     * during the fight, so the window before the turn is generated is
+     * the last moment a commander has. An override applies to that
+     * battle only: turn generation clears it and the fleet reverts to
+     * its standing plan, whether or not the battle happened.
+     */
+    showImminentBattles() {
+        const warnings = GameState.imminentBattles || [];
+        const planNames = Object.keys(GameState.battlePlans || {});
+
+        const rows = warnings.map(w => {
+            const options = [
+                `<option value="">Standing plan (${w.battle_plan})</option>`
+            ].concat(planNames.map(name =>
+                `<option value="${name}" ${name === w.engagement_plan ? 'selected' : ''}>${name}</option>`
+            )).join('');
+            const races = [...new Set(w.hostiles.map(h => h.race_name))].join(', ');
+            return `
+                <tr>
+                    <td>${w.fleet_name}</td>
+                    <td>${w.arriving ? 'Arriving at' : 'Engaged at'} ${w.location}</td>
+                    <td>${w.hostile_ships} ship${w.hostile_ships === 1 ? '' : 's'} (${races})</td>
+                    <td>
+                        <select class="form-select imminent-override"
+                                data-fleet-key="${w.fleet_key}">${options}</select>
+                    </td>
+                </tr>`;
+        }).join('');
+
+        const body = warnings.length ? `
+                <p>These fleets meet hostile forces when the turn is
+                generated. A plan chosen here applies to that battle
+                only - the fleet reverts to its standing plan
+                afterwards.</p>
+                <table class="data-table">
+                    <thead>
+                        <tr><th>Fleet</th><th>Where</th><th>Against</th>
+                            <th>This battle only</th></tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>`
+            : '<p>No battle is imminent. Nothing of yours is in contact with hostile forces.</p>';
+
+        this.show(`
+            <div class="dialog-header">
+                <h2>Imminent Battles</h2>
+                <button class="btn-close" onclick="Dialogs.close()">X</button>
+            </div>
+            <div class="dialog-body">${body}</div>
+            <div class="dialog-footer">
+                <button class="btn-secondary" onclick="Dialogs.close()">Done</button>
+            </div>
+        `);
+
+        document.querySelectorAll('.imminent-override').forEach(select => {
+            select.addEventListener('change', async () => {
+                try {
+                    await ApiClient.setFleetBattlePlan(
+                        GameState.game.id,
+                        parseInt(select.dataset.fleetKey),
+                        GameState.empireId, select.value, true);
+                    await GameState.refreshState();
+                    ApiClient.showStatus(select.value
+                        ? `This battle only: ${select.value}`
+                        : 'Reverted to the standing plan', 'info');
+                } catch (error) {
+                    ApiClient.showStatus(
+                        'Failed to set engagement plan: ' + error.message, 'error');
+                }
+            });
         });
     }
 };

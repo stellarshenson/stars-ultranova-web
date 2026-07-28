@@ -251,8 +251,12 @@ const PlanetArt = {
 
     _cacheKey(star, W, H) {
         const env = this._env(star);
+        // the starbase belongs in the key: build or lose a station and the
+        // cached bitmap must be discarded, or the orbit never changes
+        const base = star ? (star.starbase_hull || star.starbase_name || '') : '';
         return `${this._seedKey(star)}|${W}x${H}|${env.gravity}|`
-            + `${env.temperature}|${env.radiation}|${env.colonized ? 1 : 0}`;
+            + `${env.temperature}|${env.radiation}|${env.colonized ? 1 : 0}`
+            + `|${base}`;
     },
 
     /**
@@ -798,7 +802,15 @@ const PlanetArt = {
                 const mu0 = dotNL < 0 ? 0 : dotNL;
                 let mn = Math.pow(mu0, spec.k) * Math.pow(mu, spec.k - 1);
                 if (mn > 1.7) mn = 1.7;
-                const shade = 0.06 + lit * mn;
+                // Ambient floor rises toward the limb. A flat 6% floor left
+                // the night limb of a dark world at ~4/255 - indistinguishable
+                // from the background, so the silhouette disappeared on the
+                // unlit side and the planet read as two mismatched circles.
+                // Grazing angles scatter more starlight, so lifting the floor
+                // as nz falls is both physical and exactly what keeps the
+                // sphere's outline readable all the way round.
+                const ambient = 0.05 + 0.06 * (1 - nz) * (1 - nz);
+                const shade = ambient + lit * mn;
 
                 let r = out[0] * shade;
                 let gch = out[1] * shade;
@@ -843,6 +855,11 @@ const PlanetArt = {
 
         this._composite(ctx, W, H, cx, cy, R, P, spec, pal, env, rng,
             Lx, Ly, perm);
+
+        const station = this.stationSpec(star);
+        if (station) {
+            this._drawStation(ctx, W, H, cx, cy, R, station, P, Lx, Ly);
+        }
 
         this.lastRenderMs = ((typeof performance !== 'undefined')
             ? performance.now() : Date.now()) - t0;
@@ -898,26 +915,56 @@ const PlanetArt = {
         }
 
         if (spec.rimAlpha > 0) {
-            // Fresnel-style crescent: the gradient centre sits toward the
-            // light, so the ring fades out on the night limb
+            // Atmospheric limb scattering. Two constraints fight here and
+            // both must hold, or the disc stops reading as a sphere:
+            //   1. CONCENTRIC with the disc. An offset gradient centre makes
+            //      the bright band an off-centre circle whose curvature
+            //      disagrees with the planet's edge - the eye reads that as a
+            //      lumpy, potato-shaped world.
+            //   2. NO hard inner boundary. Clipping to an annulus, or fading
+            //      the gradient back to zero before the limb, draws a second
+            //      visible circle inside the first.
+            // So the profile peaks AT the limb and decays smoothly inward
+            // (the disc's own alpha feather finishes the outer edge), and the
+            // day/night crescent is applied afterwards by masking the ring
+            // offscreen - which changes its brightness without touching its
+            // geometry.
+            const ring = this._scratch(W, H);
+            const rc = ring.getContext('2d');
+            rc.clearRect(0, 0, W, H);
+            const g = rc.createRadialGradient(cx, cy, R * 0.55, cx, cy, R);
+            g.addColorStop(0, `rgba(${spec.rim},0)`);
+            g.addColorStop(0.72, `rgba(${spec.rim},${spec.rimAlpha * 0.28})`);
+            g.addColorStop(1, `rgba(${spec.rim},${spec.rimAlpha})`);
+            rc.fillStyle = g;
+            rc.beginPath();
+            rc.arc(cx, cy, R, 0, Math.PI * 2);
+            rc.fill();
+
+            // fade the ring toward the night limb, geometry untouched
+            rc.globalCompositeOperation = 'destination-in';
+            const lg = rc.createLinearGradient(
+                cx - Lx * R, cy + Ly * R, cx + Lx * R, cy - Ly * R);
+            lg.addColorStop(0, 'rgba(0,0,0,0.18)');
+            lg.addColorStop(0.5, 'rgba(0,0,0,0.6)');
+            lg.addColorStop(1, 'rgba(0,0,0,1)');
+            rc.fillStyle = lg;
+            rc.fillRect(0, 0, W, H);
+            rc.globalCompositeOperation = 'source-over';
+
             ctx.save();
             ctx.globalCompositeOperation = 'lighter';
-            const gx = cx + Lx * R * 0.14, gy = cy - Ly * R * 0.14;
-            const g = ctx.createRadialGradient(gx, gy, R * 0.70, gx, gy, R);
-            g.addColorStop(0, `rgba(${spec.rim},0)`);
-            g.addColorStop(0.86, `rgba(${spec.rim},${spec.rimAlpha})`);
-            g.addColorStop(1, `rgba(${spec.rim},0)`);
-            ctx.fillStyle = g;
-            ctx.beginPath();
-            ctx.arc(cx, cy, R, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.drawImage(ring, 0, 0);
             ctx.restore();
             if (art) {
                 // the outer halo goes around the disc, never over it
                 ctx.save();
                 this._clipOutsideDisc(ctx, W, H, cx, cy, R);
                 ctx.globalCompositeOperation = 'lighter';
-                art._cloud(ctx, cx + Lx * R * 0.1, cy - Ly * R * 0.1, R * 1.28,
+                // concentric: an offset halo brightens the space on one side
+                // only, which reads as a second circle disagreeing with the
+                // disc - the crescent belongs on the ring, not the halo
+                art._cloud(ctx, cx, cy, R * 1.28,
                     spec.rim, spec.rimAlpha * 0.34);
                 ctx.restore();
             }
@@ -950,6 +997,375 @@ const PlanetArt = {
             art._vignette(ctx, R * 3.2, R * 3.2);
             ctx.restore();
         }
+    },
+
+    /**
+     * Orbital station classes. `len` is the station's LONGEST dimension as
+     * a fraction of the planet radius - the whole footprint, keyline and
+     * all, fits inside a box of that side. `kind` picks the builder in
+     * _stationParts. Hull names come from components.xml; anything
+     * unrecognised falls back to the fort.
+     *
+     * Classes differ by topology and feature count, never by scale alone:
+     * six sizes of one shape is one shape. See
+     * docs/research-station-rendering.md.
+     *
+     * The architecture is Deep Space 9 and Privateer's Perry Station: a
+     * core with a habitat ring on pylons for the large classes, a
+     * pressurised drum on an axle for the small ones. Radial symmetry is
+     * allowed here BECAUSE the parts are solid volumes - the first attempt
+     * failed as an emblem because it was radial *wire*, thin spars with no
+     * mass. No class hangs guns outside its hull: a station this size
+     * carries internal emplacements.
+     *
+     * `min` is the smallest box the class's topology survives in - a twin
+     * spine needs eight pixels, a slip needs seven - and it only binds on
+     * the 80 px star panel, where R is 25 and the fractions would round
+     * every class down to the same illegible stub.
+     */
+    STATIONS: {
+        'Orbital Fort':  { len: 0.10, min: 6, kind: 'fort' },
+        'Space Dock':    { len: 0.12, min: 7, kind: 'dock' },
+        'Space Station': { len: 0.13, min: 7, kind: 'station' },
+        'Ultra Station': { len: 0.14, min: 8, kind: 'ultra' },
+        'Death Star':    { len: 0.11, min: 6, kind: 'sphere' },
+        'Shipyard':      { len: 0.13, min: 7, kind: 'yard' },
+    },
+
+    /**
+     * Three luminance steps plus warm accents. Value contrast is what
+     * survives at five pixels; hue does not. Every one of these is
+     * OPAQUE - lighting lives in RGB, never in alpha, or a bright desert
+     * bleeds through the hull.
+     */
+    STATION_COLORS: {
+        key:        'rgb(4,6,10)',
+        bodyDark:   'rgb(84,96,116)',
+        bodyLight:  'rgb(186,198,214)',
+        hilite:     'rgb(240,246,254)',
+        panelDark:  'rgb(46,58,84)',
+        panelLight: 'rgb(96,120,158)',
+        hull:       'rgb(208,216,228)',
+        cut:        'rgb(8,11,16)',
+        warm:       'rgb(255,206,128)',
+        work:       'rgb(255,172,64)',
+        discDark:   'rgb(88,92,102)',
+        discLight:  'rgb(178,178,188)',
+        core:       'rgb(255,150,60)',
+    },
+
+    /** Draw a dim arc where the station's orbit runs. Off by default. */
+    STATION_ORBIT_ARC: false,
+
+    stationSpec(star) {
+        const hull = star && (star.starbase_hull || star.starbase_name);
+        if (!hull) return null;
+        if (this.STATIONS[hull]) return this.STATIONS[hull];
+        // a shipyard is named rather than hulled until the class ships
+        if (/yard|dock/i.test(hull)) return this.STATIONS['Shipyard'];
+        return this.STATIONS['Orbital Fort'];
+    },
+
+    /**
+     * Lay the station out as axis-aligned integer rectangles in a local
+     * frame: spine along +X, the planet toward +Y, the sun toward -Y. The
+     * whole footprint fits in an L x L box, which is what keeps the ink
+     * under one percent of the planet disc.
+     *
+     * Returns rectangle lists by role:
+     *   body   - hull structure, two-toned about the spine axis
+     *   panels - flat plates, darker and bluer, edge-on to the spine
+     *   hull   - the shipyard's part-built ship: bright, not two-toned
+     *   struts - gantries, drawn over the hull
+     *   cuts   - dock apertures and trenches, punched out near-black
+     *   lights - one warm running light
+     *   work   - amber work lights inside a slip
+     */
+    _stationParts(kind, L) {
+        const xa = -Math.floor(L / 2);
+        // the L rows are top..top+L-1, straddling the terminator at row 0
+        // with the sunward half never the smaller of the two
+        const top = -Math.ceil(L / 2);
+        const bot = top + L - 1;
+        // a feature `w` wide placed at fraction `f` along the spine, held
+        // clear of the far edge so it never lands as a 1 px sliver
+        const at = (f, w = 2) =>
+            Math.min(xa + Math.round(f * L), xa + L - w);
+        const body = [], panels = [], hull = [], struts = [],
+            cuts = [], lights = [], work = [];
+        // every rectangle is clipped into the L x L box on the way in, so
+        // the footprint cannot outgrow the class budget at any planet size
+        const r = (list, x, y, w, h) => {
+            const y0 = Math.max(y, top), y1 = Math.min(y + h, bot + 1);
+            const x0 = Math.max(x, xa), x1 = Math.min(x + w, xa + L);
+            if (y1 > y0 && x1 > x0) {
+                list.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+            }
+        };
+
+        if (kind === 'fort') {
+            // A short pressurised drum on an axle. Dock capacity 0 - it
+            // services nothing, so no bay is cut. Its weapons are internal
+            // emplacements, not barrels: a station this size does not hang
+            // guns off the outside.
+            // the drum must dominate the axle, or the pair reads as a bar
+            const dh = Math.max(4, L - 2);
+            r(body, xa + 1, -Math.floor(dh / 2), L - 2, dh);   // drum
+            r(body, xa, -1, L, 2);                             // axle
+            r(cuts, xa + 2, -1, L - 5, 1);                     // window band
+            r(lights, xa + L - 1, -2, 1, 1);                   // running light
+        } else if (kind === 'dock') {
+            // A larger drum with a docking bay cut into the forward face.
+            // Dock capacity 200 kT, so the bay is a notch, not an aperture
+            // a capital ship could enter.
+            const dh = Math.max(4, L - 3);
+            const t0 = -Math.floor(dh / 2);
+            r(body, xa + 1, t0, L - 2, dh);                    // drum
+            r(body, xa, -1, L, 2);                             // axle
+            r(cuts, xa + L - 3, -2, 2, 4);                     // docking bay
+            r(cuts, xa + 2, t0 + 1, L - 6, 1);                 // window band
+            r(lights, xa + 1, t0, 1, 1);                       // running light
+        } else if (kind === 'station') {
+            // A truss station: spine, two modules, one panel pair and a
+            // dock aperture punched through the larger module.
+            //
+            // NOT the Deep Space 9 ring the detail view uses. A ring was
+            // tried here and failed: at ten pixels the rim leaves a six
+            // pixel interior, and once a core and its pylons sit in it
+            // there is no annulus left to see - it reads as a solid block
+            // with two slots. The ring architecture lives in
+            // station-detail.js, which has the pixels to carry it.
+            const pl = Math.max(2, Math.floor((L - 2) / 2));
+            r(body, xa, -1, L, 2);                  // spine
+            r(body, xa, -2, 2, 4);                  // module, aft
+            r(body, xa + L - 4, -2, 4, 4);          // module, dock
+            r(cuts, xa + L - 3, -1, 2, 2);          // dock aperture
+            r(panels, at(0.30), -1 - pl, 2, pl);    // panel, sunward
+            r(panels, at(0.30), 1, 2, pl);          // panel, shadow
+            r(lights, xa + L - 1, -2, 1, 1);        // running light
+        } else if (kind === 'ultra') {
+            // Twice the structure, not twice the length: two parallel
+            // spines cross-tied into an H-truss, three modules stacked
+            // asymmetrically along it.
+            const ta = top + 1, tb = bot - 2;       // the two spine rows
+            r(body, xa, ta, L, 2);                  // spine, sunward
+            r(body, xa, tb, L, 2);                  // spine, planetward
+            r(body, at(0.10), ta, 2, tb - ta + 2);  // cross-tie
+            r(body, at(0.75), ta, 2, tb - ta + 2);  // cross-tie
+            r(body, xa, ta - 1, 2, 4);              // module, aft
+            r(body, at(0.60), tb - 1, 2, 4);        // module, lower
+            r(body, at(0.80), ta - 1, 2, 4);        // module, forward
+            r(panels, at(0.34, 2), ta - 3, 2, 2);   // array, sunward
+            r(lights, xa + L - 1, ta - 1, 1, 1);    // running light
+        } else if (kind === 'yard') {
+            // An open frame with a part-built ship cradled in it. The gap
+            // in the outward long bar is what makes it a slip and not a
+            // box; the absence of guns is half the read. Three rows
+            // either side of the slip - two of frame, one of interior -
+            // or the ship has nowhere to sit.
+            const hh = Math.max(3, Math.floor((L - 2) / 2) - 1);
+            const seg = Math.max(2, Math.round(L * 0.38));
+            r(body, xa, -hh, 2, hh * 2);            // frame, aft
+            r(body, xa + L - 2, -hh, 2, hh * 2);    // frame, forward
+            r(body, xa, hh - 2, L, 2);              // frame, planetward
+            r(body, xa, -hh, seg, 2);               // frame, sunward, part
+            r(body, xa + L - seg, -hh, seg, 2);     // frame, sunward, part
+            r(hull, xa + 2, -1, L - 5, 2);          // part-built ship
+            // uneven on purpose: evenly spaced gantries read as decoration.
+            // 0.25 and 0.50 keep the PAIR off-centre in the slip, which
+            // survives the integer grid at these sizes where prettier
+            // fractions round back into symmetry.
+            r(struts, at(0.25, 1), -hh, 1, hh * 2); // gantry
+            r(struts, at(0.50, 1), -hh, 1, hh * 2); // gantry
+            r(work, xa + 2, -1, 1, 1);              // work light
+            r(work, xa + 4, 0, 1, 1);               // work light
+        }
+        return { body, panels, hull, struts, cuts, lights, work };
+    },
+
+    /**
+     * Draw the starbase in orbit.
+     *
+     * Small, but plainly there. Legibility at five to ten pixels comes
+     * from three cheap things, none of them bulk:
+     *   1. an opaque high-value body inside a near-black keyline laid down
+     *      by DILATION - inflating every rectangle 1 px - because stroking
+     *      a 2 px bar leaves no interior
+     *   2. placement off the limb on the sunward side, so a lit object
+     *      sits against black sky instead of over a bright surface
+     *   3. elongation - the eye detects oriented edges before it detects
+     *      area, so a bar reads larger than a blob of the same ink
+     * Lit from the same direction as the surface, with a hard terminator
+     * on the spine axis, or the station reads as a decal.
+     */
+    _drawStation(ctx, W, H, cx, cy, R, spec, P, Lx, Ly) {
+        const C = this.STATION_COLORS;
+        const L = Math.max(spec.min, Math.round(R * spec.len));
+
+        // the surface shader lights with (Lx, -Ly) in screen space
+        let ux = Lx, uy = -Ly;
+        const ul = Math.sqrt(ux * ux + uy * uy) || 1;
+        ux /= ul; uy /= ul;
+
+        // sunward side of the limb, jittered per world so the six classes
+        // do not all sit at the same clock position on a review sheet
+        const jitter = (P.rotationPhase / (Math.PI * 2) - 0.5) * 0.85;
+        const phi = Math.atan2(uy, ux) + jitter;
+        const room = Math.min(W, H) / 2 - (L * 0.75 + 2);
+        const dist = Math.min(R * 1.18, room);
+        const sx = Math.round(cx + Math.cos(phi) * dist);
+        const sy = Math.round(cy + Math.sin(phi) * dist);
+
+        // Spine follows the orbit tangent, but QUANTIZED to a right angle.
+        // An arbitrary rotation anti-aliases every fillRect, which at 5-9 px
+        // turns a 1 px keyline into grey haze and loses the hard terminator -
+        // the "too soft" complaint that got the previous version rejected.
+        // Snapping to a multiple of 90 degrees keeps every edge on a pixel
+        // boundary, so the sprite stays crisp; the tangent is still followed
+        // to within 45 degrees, which is enough to read as travelling.
+        const tangent = phi + Math.PI / 2 + P.axialTilt * 0.28;
+        const ang = Math.round(tangent / (Math.PI / 2)) * (Math.PI / 2);
+
+        if (this.STATION_ORBIT_ARC) {
+            ctx.save();
+            this._clipOutsideDisc(ctx, W, H, cx, cy, R);
+            ctx.strokeStyle = 'rgba(160,185,225,0.12)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(cx, cy, dist, phi - 0.26, phi + 0.26);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(ang);
+
+        if (spec.kind === 'sphere') {
+            this._drawDeathStar(ctx, L, ang, ux, uy);
+            ctx.restore();
+            return;
+        }
+
+        const parts = this._stationParts(spec.kind, L);
+        // the sun in the local frame: the rotation puts it near -Y, so the
+        // spine axis is the terminator and the split is a single hard line
+        const sly = -ux * Math.sin(ang) + uy * Math.cos(ang);
+        const litUp = sly <= 0;
+
+        // 1 - keyline, by dilation
+        ctx.fillStyle = C.key;
+        const outline = [...parts.panels, ...parts.body, ...parts.hull];
+        for (const q of outline) {
+            ctx.fillRect(q.x - 1, q.y - 1, q.w + 2, q.h + 2);
+        }
+
+        // 2 - panels behind the structure, hard two-tone
+        this._stationTone(ctx, parts.panels, litUp, C.panelDark, C.panelLight);
+        // 3 - hull structure
+        this._stationTone(ctx, parts.body, litUp, C.bodyDark, C.bodyLight);
+        // 4 - the part-built ship: bright and flat, so it reads smoother
+        //     than the frame around it
+        ctx.fillStyle = C.hull;
+        for (const q of parts.hull) ctx.fillRect(q.x, q.y, q.w, q.h);
+        // 5 - gantries over the slip
+        this._stationTone(ctx, parts.struts, litUp, C.bodyDark, C.bodyLight);
+        // 6 - apertures and trenches punched back out
+        ctx.fillStyle = C.cut;
+        for (const q of parts.cuts) ctx.fillRect(q.x, q.y, q.w, q.h);
+
+        // 7 - one-pixel sunward highlight on the spine
+        if (parts.body.length) {
+            const s = parts.body[0];
+            ctx.fillStyle = C.hilite;
+            ctx.fillRect(s.x, litUp ? s.y : s.y + s.h - 1, s.w, 1);
+        }
+        // 8 - specular flip on the panel whose face is within about thirty
+        //     degrees of the light: a bright blade against a black one
+        if (parts.panels.length && Math.abs(sly) > 0.866) {
+            const p = litUp ? parts.panels[0] : parts.panels[1];
+            ctx.fillStyle = C.hilite;
+            ctx.fillRect(p.x, litUp ? p.y : p.y + p.h - 1, p.w, 1);
+        }
+
+        // 9 - running and work lights
+        ctx.fillStyle = C.warm;
+        for (const q of parts.lights) ctx.fillRect(q.x, q.y, q.w, q.h);
+        ctx.fillStyle = C.work;
+        for (const q of parts.work) ctx.fillRect(q.x, q.y, q.w, q.h);
+
+        ctx.restore();
+    },
+
+    /**
+     * Fill rectangles in the shadow value, then repaint the sunward half
+     * in the light value. The boundary is the spine axis and it is hard -
+     * a gradient across a six-pixel body is two grey pixels and blur.
+     */
+    _stationTone(ctx, rects, litUp, dark, light) {
+        if (!rects.length) return;
+        ctx.fillStyle = dark;
+        for (const q of rects) ctx.fillRect(q.x, q.y, q.w, q.h);
+        ctx.fillStyle = light;
+        for (const q of rects) {
+            if (litUp) {
+                const h = Math.min(q.y + q.h, 0) - q.y;
+                if (h > 0) ctx.fillRect(q.x, q.y, q.w, h);
+            } else {
+                const y = Math.max(q.y, 0);
+                const h = q.y + q.h - y;
+                if (h > 0) ctx.fillRect(q.x, y, q.w, h);
+            }
+        }
+    },
+
+    /**
+     * The Death Star is the only compact class - a filled sphere rather
+     * than a truss, which is how the reference art distinguishes it too.
+     * Disc, hard terminator, one offset meridian trench, one warm core.
+     */
+    _drawDeathStar(ctx, L, ang, ux, uy) {
+        const C = this.STATION_COLORS;
+        const rad = L / 2;
+        const sly = -ux * Math.sin(ang) + uy * Math.cos(ang);
+        const litUp = sly <= 0;
+
+        ctx.fillStyle = C.key;
+        ctx.beginPath();
+        ctx.arc(0, 0, rad + 1, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0, 0, rad, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.fillStyle = C.discDark;
+        ctx.fillRect(-rad - 1, -rad - 1, L + 2, L + 2);
+        ctx.fillStyle = C.discLight;
+        if (litUp) ctx.fillRect(-rad - 1, -rad - 1, L + 2, rad + 1);
+        else ctx.fillRect(-rad - 1, 0, L + 2, rad + 1);
+        // meridian trench, offset from centre so the sphere has a pole
+        ctx.fillStyle = C.cut;
+        ctx.fillRect(-Math.max(1, Math.round(rad * 0.35)), -rad - 1, 1, L + 2);
+        ctx.restore();
+
+        ctx.fillStyle = C.core;
+        ctx.fillRect(0, litUp ? 1 : -2, 1, 1);
+    },
+
+    /**
+     * A reusable offscreen canvas, so masking a layer costs no allocation
+     * per world. Grown on demand, never shrunk.
+     */
+    _scratch(W, H) {
+        let c = this._scratchCanvas;
+        if (!c) {
+            c = this._scratchCanvas = document.createElement('canvas');
+            c.width = 0; c.height = 0;
+        }
+        if (c.width < W) c.width = W;
+        if (c.height < H) c.height = H;
+        return c;
     },
 
     /** Clip to everything except the planet disc - halos and glow rings. */

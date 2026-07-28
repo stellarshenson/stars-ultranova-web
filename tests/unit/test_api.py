@@ -671,7 +671,7 @@ class TestClientParityState:
 
         fleet = self._fleet(client, game_id, fleet["key"])
         wp = fleet["waypoints"][-1]
-        assert wp["task_type"] == "CargoTaskObj"
+        assert wp["task_type"] == "Cargo"
         assert wp["task"]["type"] == "CargoTask"
         assert wp["task"]["mode"] == "UNLOAD"
         assert wp["task"]["amount"]["ironium"] == 30
@@ -742,3 +742,135 @@ class TestClientParityState:
         fleet_now = self._fleet(client, game_id, fleet["key"])
         names = [w["destination"] for w in fleet_now["waypoints"][base:]]
         assert names == ["A", "A2", "B", "C"]
+
+
+class TestWaypointTaskVocabulary:
+    """DEF-1: a serialized task_type must be a name the command API
+    accepts, not the Python class name of the task object."""
+
+    def _setup(self, client):
+        response = client.post("/api/games/", json={
+            "name": "Vocabulary", "seed": 4242, "universe_size": "small",
+            "player_count": 2})
+        game_id = response.json()["id"]
+        state = client.get(f"/api/games/{game_id}/empires/1/state").json()
+        return game_id, state
+
+    def test_every_task_name_is_accepted_as_a_command(self):
+        """Every name get_task_name emits round-trips through the
+        command parser back to the same task type."""
+        from backend.core.waypoints.waypoint import (
+            WaypointTask, WaypointTaskBase, get_task_name, get_task_type)
+
+        for task_type in WaypointTask:
+            name = get_task_name(task_type)
+            assert not name.endswith("TaskObj")
+            parsed = WaypointTaskBase.from_dict({"type": name})
+            assert get_task_type(parsed) == task_type
+            assert get_task_name(parsed) == name
+
+    def _add_lay_mines(self, client, game_id, fleet):
+        response = client.post(
+            f"/api/games/{game_id}/empires/1/commands",
+            json={"command_type": "waypoint", "command_data": {
+                "mode": "Add", "fleet_key": fleet["key"],
+                "index": len(fleet["waypoints"]),
+                "waypoint": {
+                    "position_x": fleet["position_x"] + 20,
+                    "position_y": fleet["position_y"],
+                    "warp_factor": 5, "destination": "Mine Site",
+                    "task": {"type": "LayMines", "years": 1},
+                }}})
+        assert response.json()["status"] == "applied"
+
+    def test_player_state_task_type_uses_command_vocabulary(self, client):
+        """A task submitted as "LayMines" reads back as "LayMines"."""
+        game_id, state = self._setup(client)
+        fleet = state["fleets"][0]
+        self._add_lay_mines(client, game_id, fleet)
+
+        state = client.get(f"/api/games/{game_id}/empires/1/state").json()
+        fleet = next(f for f in state["fleets"] if f["key"] == fleet["key"])
+        assert fleet["waypoints"][-1]["task_type"] == "LayMines"
+        assert all(not wp["task_type"].endswith("TaskObj")
+                   for wp in fleet["waypoints"])
+
+    def test_fleet_waypoints_endpoint_uses_command_vocabulary(self, client):
+        """The /fleets/{key}/waypoints payload uses the same names."""
+        game_id, state = self._setup(client)
+        fleet = state["fleets"][0]
+        self._add_lay_mines(client, game_id, fleet)
+
+        waypoints = client.get(
+            f"/api/games/{game_id}/fleets/{fleet['key']}/waypoints").json()
+        assert waypoints
+        assert waypoints[-1]["task_type"] == "LayMines"
+
+
+class TestDesignCatalogAvailability:
+    """DEF-5 / DEF-6: the design catalog must carry enough data for a
+    client to pre-filter what its race and tech level may build."""
+
+    def test_components_expose_race_restrictions(self, client):
+        """Trait-restricted components name the traits that gate them."""
+        components = client.get("/api/designs/components").json()
+        by_name = {c["name"]: c for c in components}
+
+        assert all("required_traits" in c and "forbidden_traits" in c
+                   for c in components)
+
+        # Settler's Delight is the HE-only engine the playtest commander
+        # kept being rejected for (design_builder "not available to your race")
+        settlers = by_name["Settler's Delight"]
+        assert settlers["required_traits"] == ["HE"]
+
+        # Fuel Mizer needs IFE and is barred by CE (components.xml)
+        mizer = by_name["Fuel Mizer"]
+        assert "IFE" in mizer["required_traits"]
+
+        # Restrictions are the exception, not the rule
+        assert any(not c["required_traits"] and not c["forbidden_traits"]
+                   for c in components)
+
+    def test_single_component_exposes_race_restrictions(self, client):
+        response = client.get("/api/designs/components/Settler's Delight")
+        assert response.status_code == 200
+        assert response.json()["required_traits"] == ["HE"]
+
+    def test_hulls_expose_tech_requirements(self, client):
+        """Hull buildability no longer needs a join on the component list."""
+        hulls = client.get("/api/designs/hulls").json()
+        by_name = {h["name"]: h for h in hulls}
+
+        assert all("tech_requirements" in h for h in hulls)
+
+        components = client.get(
+            "/api/designs/components?item_type=hull").json()
+        for comp in components:
+            assert (by_name[comp["name"]]["tech_requirements"]
+                    == comp["tech_requirements"])
+
+        # At least one hull is gated behind real tech
+        assert any(h["tech_requirements"] for h in hulls)
+
+    def test_single_hull_exposes_tech_requirements(self, client):
+        response = client.get("/api/designs/hulls/Scout")
+        assert response.status_code == 200
+        assert "tech_requirements" in response.json()
+
+
+class TestFirstTurnMessages:
+    """DEF-4: a new game starts with the canonical welcome message
+    (StarMapInitialiser.cs:113-117), so turn 1 is not message-less."""
+
+    def test_new_game_has_a_welcome_message(self, client):
+        response = client.post("/api/games/", json={
+            "name": "Welcome", "seed": 1111, "universe_size": "small",
+            "player_count": 2})
+        game_id = response.json()["id"]
+
+        for empire_id in (1, 2):
+            state = client.get(
+                f"/api/games/{game_id}/empires/{empire_id}/state").json()
+            texts = [m["text"] for m in state["messages"]]
+            assert "Your race is ready to explore the universe." in texts

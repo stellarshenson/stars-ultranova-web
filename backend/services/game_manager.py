@@ -17,9 +17,11 @@ from ..persistence.game_repository import GameRepository
 from ..server.server_data import ServerData, VictorySettings
 from ..server.scores import Scores
 from ..server.victory_check import VictoryCheck
+from ..server.imminent_battle import forecast_imminent_battles
 from ..server.turn_generator import TurnGenerator
 from ..core.data_structures.empire_data import EmpireData
 from ..core.data_structures.tech_level import RESEARCH_KEYS, ResearchField
+from ..core.components.ship_role import battle_role_of
 from ..core.defenses import compute_defense_coverage
 from ..core.research import research_cost
 from ..core.game_objects.star import Star
@@ -38,7 +40,7 @@ from ..core.globals import (
     MT_GIFT_THRESHOLD, TURN_PACKAGE_FORMAT, ORDERS_FILE_FORMAT,
     GAME_FILE_FORMAT, CORRESPONDENCE_FILE_VERSION
 )
-from ..core.waypoints.waypoint import Waypoint, NoTaskObj
+from ..core.waypoints.waypoint import Waypoint, NoTaskObj, get_task_name
 from .galaxy_generator import GalaxyGenerator
 from .race_points import calculate_advantage_points
 from .ship_specs import (
@@ -308,6 +310,16 @@ class GameManager:
         # Initial scan so empires start with intel about their surroundings
         TurnGenerator(server_data).assemble_empire_data()
         server_data.all_messages.clear()
+
+        # Welcome message for every empire, so the first turn is not
+        # message-less (StarMapInitialiser.cs:113-117 - GeneratePlayerAssets
+        # adds it with Audience = Global.Everyone, which is NOBODY)
+        welcome = Message(
+            audience=NOBODY,
+            text="Your race is ready to explore the universe."
+        )
+        server_data.all_messages.append(welcome)
+        self._last_messages[game_id] = [welcome]
 
         # Save game state
         self._save_game_state(game_id, server_data)
@@ -828,6 +840,9 @@ class GameManager:
                 "cargo_capacity": getattr(design, 'cargo_capacity', 0),
                 "can_colonize": getattr(design, 'can_colonize', False),
                 "is_starbase": getattr(design, 'is_starbase', False),
+                # Battle role the targeting tiers hunt by
+                # (backend/core/components/ship_role.py)
+                "battle_role": str(battle_role_of(design)),
                 "has_weapons": getattr(design, 'has_weapons', False),
                 "obsolete": getattr(design, 'obsolete', False),
             }
@@ -931,6 +946,12 @@ class GameManager:
                 name: (plan.to_dict() if hasattr(plan, 'to_dict') else plan)
                 for name, plan in empire.battle_plans.items()
             },
+            "default_battle_plan": getattr(
+                empire, 'default_battle_plan', 'Default'),
+            # Fleets about to fight, so an engagement override is an
+            # informed choice (backend/server/imminent_battle.py)
+            "imminent_battles": forecast_imminent_battles(
+                server_data, empire_id),
             "messages": messages,
             "research": research,
             "designs": designs,
@@ -949,10 +970,22 @@ class GameManager:
         # Mass driver rating on the star's starbase (0 = none) for the
         # star panel's fling controls
         mass_driver = 0
+        # Starbase identity for the star panel's orbital rendering: the
+        # hull decides which station silhouette is drawn in orbit
+        starbase_name = None
+        starbase_hull = None
         if empire is not None and star.starbase_key:
             starbase = empire.owned_fleets.get(star.starbase_key)
             if starbase is not None:
                 mass_driver = starbase.mass_driver
+                for token in starbase.tokens.values():
+                    design = empire.designs.get(token.design_key)
+                    if design is not None:
+                        starbase_name = design.name
+                        starbase_hull = getattr(
+                            design, "hull_name", None) or getattr(
+                            token, "hull_name", None)
+                        break
         view = {
             "owner": star.owner,
             "colonists": star.colonists,
@@ -977,6 +1010,8 @@ class GameManager:
             # detail (PlanetDetail.cs:174-178)
             "defense_coverage": compute_defense_coverage(star)["summary"],
             "starbase_key": star.starbase_key,
+            "starbase_name": starbase_name,
+            "starbase_hull": starbase_hull,
             "mass_driver": mass_driver,
             "production_queue": [
                 order.to_dict() for order in star.manufacturing_queue.orders
@@ -1167,11 +1202,15 @@ class GameManager:
 
         Payloads: {mode: "set", plan: {...}} adds or replaces a plan;
         {mode: "delete", name: str} removes one (never "Default",
-        EmpireData.cs:160 always seeds it) and reassigns fleets that
-        referenced it back to "Default" (canonical safety, C# absent).
+        EmpireData.cs:160 always seeds it, and never an admiralty
+        standard plan, which ships in every empire's list) and
+        reassigns fleets that referenced it to the empire default
+        (canonical safety, C# absent); {mode: "default", name: str}
+        sets the plan newly built fleets inherit.
         """
         from ..server.battle.battle_plan import (
-            BattlePlan, Victims, TACTICS, ATTACK_OPTIONS, MAX_BATTLE_PLANS)
+            BattlePlan, Victims, TACTICS, ATTACK_OPTIONS, MAX_BATTLE_PLANS,
+            STANCES, POSTURES, WITHDRAW_OPTIONS, ADMIRALTY_PLANS)
 
         mode = (data.get("mode") or "").strip().lower()
         if mode == "set":
@@ -1185,6 +1224,16 @@ class GameManager:
             if plan_data.get("attack", "Enemies") not in ATTACK_OPTIONS:
                 return {"error": f"Unknown attack option "
                                  f"'{plan_data.get('attack')}'"}
+            # Doctrine axes are optional in the payload - an omitted
+            # one takes the no-modifier default in BattlePlan.from_dict
+            for field_name, options in (("stance", STANCES),
+                                        ("posture", POSTURES),
+                                        ("withdraw", WITHDRAW_OPTIONS)):
+                if field_name not in plan_data:
+                    continue
+                if plan_data[field_name] not in options:
+                    return {"error": f"Unknown {field_name} "
+                                     f"'{plan_data[field_name]}'"}
             valid_targets = {int(v) for v in Victims}
             for tier in ("primary_target", "secondary_target",
                          "tertiary_target", "quaternary_target",
@@ -1205,12 +1254,25 @@ class GameManager:
             if name == "Default":
                 return {"error": "The Default battle plan cannot be "
                                  "deleted"}
+            if name in ADMIRALTY_PLANS:
+                return {"error": f"'{name}' is an admiralty standard "
+                                 f"plan and cannot be deleted"}
             if name not in empire.battle_plans:
                 return {"error": f"Unknown battle plan '{name}'"}
             del empire.battle_plans[name]
+            fallback = getattr(empire, 'default_battle_plan', 'Default')
+            if fallback not in empire.battle_plans:
+                fallback = "Default"
             for fleet in empire.owned_fleets.values():
                 if fleet.battle_plan == name:
-                    fleet.battle_plan = "Default"
+                    fleet.battle_plan = fallback
+            return {"status": "applied"}
+
+        if mode == "default":
+            name = (data.get("name") or "").strip()
+            if name not in empire.battle_plans:
+                return {"error": f"Unknown battle plan '{name}'"}
+            empire.default_battle_plan = name
             return {"status": "applied"}
 
         return {"error": f"Unknown battle_plan mode '{data.get('mode')}'"}
@@ -1560,13 +1622,21 @@ class GameManager:
         return {"status": "ok", "name": name}
 
     def set_fleet_battle_plan(self, game_id: str, empire_id: int,
-                              fleet_key: int, plan_name: str) -> dict:
+                              fleet_key: int, plan_name: str,
+                              engagement: bool = False) -> dict:
         """
         Assign a named battle plan to an owned fleet.
 
         Fleets reference plans by name (Fleet.cs:60, default
         "Default"); the plan must exist in the empire's plan dict
         (EmpireData.cs:91).
+
+        With engagement set the assignment is the ENGAGEMENT OVERRIDE
+        instead: the plan applies to the imminent battle only and turn
+        generation clears it (TurnGenerator._clear_engagement_overrides),
+        so the fleet reverts to its standing plan. An empty plan name
+        cancels an override the commander has changed their mind about
+        - it is the only way an empty name is accepted.
         """
         server_data = self._load_game_state(game_id)
         if not server_data:
@@ -1586,14 +1656,20 @@ class GameManager:
 
         plan_name = (plan_name or "").strip()
         if plan_name not in empire.battle_plans:
-            return {"error": f"Unknown battle plan '{plan_name}'"}
+            if not (engagement and not plan_name):
+                return {"error": f"Unknown battle plan '{plan_name}'"}
 
-        fleet.battle_plan = plan_name
+        if engagement:
+            fleet.engagement_plan = plan_name
+        else:
+            fleet.battle_plan = plan_name
         self._record_fleet_op(empire, "set_fleet_battle_plan", {
             "fleet_key": fleet_key, "plan_name": plan_name,
+            "engagement": engagement,
         })
         self._save_game_state(game_id, server_data)
-        return {"status": "ok", "battle_plan": plan_name}
+        return {"status": "ok", "battle_plan": fleet.battle_plan,
+                "engagement_plan": fleet.engagement_plan}
 
     def transfer_cargo(
         self,
@@ -2128,7 +2204,10 @@ class GameManager:
             if op == "set_fleet_battle_plan":
                 return self.set_fleet_battle_plan(
                     game_id, empire_id, int(args["fleet_key"]),
-                    args.get("plan_name", ""))
+                    args.get("plan_name", ""),
+                    # Absent in orders files written before the
+                    # engagement override existed
+                    engagement=bool(args.get("engagement", False)))
             if op == "transfer_cargo":
                 return self.transfer_cargo(
                     game_id, empire_id, int(args["fleet_key"]),
@@ -2301,7 +2380,7 @@ class GameManager:
                         "position_y": wp.position.y,
                         "warp_factor": wp.warp_factor,
                         "destination": wp.destination or "",
-                        "task_type": str(wp.task.__class__.__name__) if wp.task else "NoTask",
+                        "task_type": get_task_name(wp.task),
                     }
                     for wp in fleet.waypoints
                 ]
@@ -2393,6 +2472,8 @@ class GameManager:
                 name: (plan.to_dict() if hasattr(plan, 'to_dict') else plan)
                 for name, plan in empire.battle_plans.items()
             }
+            empire_dict["default_battle_plan"] = getattr(
+                empire, 'default_battle_plan', 'Default')
             empire_dict["battle_reports"] = list(
                 getattr(empire, 'battle_reports', []))
             empire_dict["known_wormholes"] = sorted(
@@ -2487,7 +2568,8 @@ class GameManager:
                 int(k): v
                 for k, v in empire_dict.get("empire_reports", {}).items()
             }
-            from ..server.battle.battle_plan import BattlePlan
+            from ..server.battle.battle_plan import (
+                BattlePlan, seed_admiralty_plans)
             empire.battle_plans = {
                 name: BattlePlan.from_dict(plan)
                 for name, plan in empire_dict.get("battle_plans", {}).items()
@@ -2497,6 +2579,14 @@ class GameManager:
                 # pre-relations saves lack relation keys, which default
                 # to Enemy - identical net behavior
                 empire.battle_plans["Default"] = BattlePlan(attack="Enemies")
+            # Migration: the six admiralty standard plans ship in every
+            # empire's list, so a save written before doctrine existed
+            # gains the ones it lacks and keeps every plan it had. Its
+            # empire default stays "Default" unless the save names one,
+            # so existing fleets and production are unaffected
+            seed_admiralty_plans(empire.battle_plans)
+            empire.default_battle_plan = empire_dict.get(
+                "default_battle_plan", "Default")
 
             empire.battle_reports = list(
                 empire_dict.get("battle_reports", []))
@@ -2578,6 +2668,12 @@ class GameManager:
             "name": fleet.name,
             "owner": fleet.owner,
             "battle_plan": fleet.battle_plan,
+            # Plan chosen for the imminent battle only ("" = none);
+            # turn generation clears it, so the fleet reverts
+            "engagement_plan": fleet.engagement_plan,
+            # Year this fleet last broke off a battle (-1 = never), so
+            # the client can show that a withdrawal happened
+            "withdrawn_year": fleet.withdrawn_year,
             "position_x": fleet.position.x,
             "position_y": fleet.position.y,
             "fuel_available": fleet.fuel_available,
@@ -2616,7 +2712,7 @@ class GameManager:
                     "position_y": wp.position.y,
                     "warp_factor": wp.warp_factor,
                     "destination": wp.destination or "",
-                    "task_type": str(wp.task.__class__.__name__) if wp.task else "NoTask",
+                    "task_type": get_task_name(wp.task),
                     # Full task dict so a warp-only Edit can round-trip
                     # the task with its parameters intact (C# preserves
                     # the Task object on speed edits, FleetDetail.cs:110)

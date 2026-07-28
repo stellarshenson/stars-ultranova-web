@@ -238,9 +238,13 @@ class TestBattlePlan:
 
     def test_plan_cap_and_labels(self):
         from backend.server.battle.battle_plan import (
-            MAX_BATTLE_PLANS, VICTIMS_LABELS)
-        assert MAX_BATTLE_PLANS == 14  # canonical Stars! cap
-        assert len(VICTIMS_LABELS) == 7
+            MAX_BATTLE_PLANS, VICTIMS_LABELS, ADMIRALTY_PLANS)
+        # Canonical Stars! cap of 14 player plans plus the six
+        # admiralty standard plans seeded into every empire, which
+        # must not eat the commander's own allowance
+        assert MAX_BATTLE_PLANS == 14 + len(ADMIRALTY_PLANS)
+        # Seven trunk tiers plus the web-only Logistics tier
+        assert len(VICTIMS_LABELS) == 8
         assert VICTIMS_LABELS[Victims.CAPITAL_SHIP] == "Capital Ship"
 
     def test_full_custom_plan_round_trip(self):
@@ -936,6 +940,7 @@ def _make_battle_stack(owner, stack_id, x, y, armor=200.0, shields=0.0,
     stack.position = NovaPoint(x, y)
     stack.token = StackToken(design_key=stack_id, quantity=quantity,
                              armor=armor, shields=shields, mass=mass)
+    stack.token.initial_armor = armor
     stack.token.has_weapons = has_weapons
     stack.token.is_bomber = is_bomber
     stack.token.battle_speed = battle_speed
@@ -1322,3 +1327,175 @@ class TestElectronicsInBattle:
         # Missiles are unaffected by capacitors/deflectors
         attack.weapon = MockWeapon(power=100, group="torpedo")
         assert engine._calculate_weapon_power(attack) == 100.0
+
+
+# =============================================================================
+# Beam Range Dissipation (DEF-24) and Initiative Order (DEF-25)
+# =============================================================================
+
+class TestBeamRangeDissipation:
+    """Beam damage falls off with range, so closing beats standing off.
+
+    Canon (BATTLE.TXT, quoted in docs/research-battle-doctrine.md):
+    a beam does full damage in the target's own square and loses 10
+    percent of its damage at the weapon's maximum range.
+    """
+
+    SCALE = RonBattleEngine.GRID_SCALE
+
+    def _attack_at(self, separation, weapon_range=3):
+        """One beam attack with the target `separation` squares away."""
+        attacker = Stack()
+        attacker.key = 1
+        attacker.owner = 0
+        attacker.position = NovaPoint(0, 0)
+        attacker.token = StackToken()
+        attacker.token.design = MockDesign()
+        attacker.token.quantity = 1
+        attacker.token.armor = 10000.0
+        attacker.token.shields = 10000.0
+
+        target = Stack()
+        target.key = 2
+        target.owner = 1
+        target.position = NovaPoint(int(separation * self.SCALE), 0)
+        target.token = StackToken()
+        target.token.design = MockDesign()
+        target.token.quantity = 1
+        # Deep shields so all damage lands in a single shields step
+        target.token.armor = 10000.0
+        target.token.shields = 10000.0
+
+        attack = WeaponDetails()
+        attack.source_stack = attacker
+        attack.target_stack = TargetPercent(target, 100)
+        attack.weapon = MockWeapon(power=100, range=weapon_range)
+        return attack
+
+    def _damage_at(self, separation, weapon_range=3):
+        engine = RonBattleEngine(MockServerData(), [])
+        battle = BattleReport()
+        engine._execute_attack(self._attack_at(separation, weapon_range),
+                               battle)
+        return sum(s.damage for s in battle.steps
+                   if isinstance(s, BattleStepWeapons))
+
+    def test_point_blank_beam_does_full_damage(self):
+        assert self._damage_at(0) == pytest.approx(100.0)
+
+    def test_beam_at_range_does_strictly_less_than_point_blank(self):
+        assert self._damage_at(3) < self._damage_at(0)
+        assert self._damage_at(1) < self._damage_at(0)
+
+    def test_falloff_matches_canonical_curve_at_each_step(self):
+        """Range-3 beam: dispersal is 100 - 10 * (d / range)^2 percent,
+        so 100 / 98.888 / 95.555 / 90 percent at 0 / 1 / 2 / 3 squares."""
+        for separation, percent in ((0, 100.0), (1, 100 - 10 / 9),
+                                    (2, 100 - 40 / 9), (3, 90.0)):
+            assert self._damage_at(separation) == \
+                pytest.approx(percent, rel=1e-9)
+
+    def test_falloff_is_strictly_decreasing_in_range(self):
+        damages = [self._damage_at(d) for d in range(4)]
+        assert all(a > b for a, b in zip(damages, damages[1:]))
+
+    def test_max_range_loses_ten_percent_for_every_weapon_range(self):
+        """The 10 percent loss is across the weapon's full range, so a
+        range-1 and a range-4 beam both do 90 percent at their max."""
+        for weapon_range in (1, 2, 3, 4):
+            assert self._damage_at(weapon_range, weapon_range) == \
+                pytest.approx(90.0)
+
+
+class TestInitiativeOrder:
+    """Weapons fire highest initiative first (BATTLE.TXT round order)."""
+
+    def _shooter(self, key, initiative, target):
+        stack = Stack()
+        stack.key = key
+        stack.owner = 0
+        stack.position = NovaPoint(0, 0)
+        stack.token = StackToken()
+        stack.token.design = MockDesign(
+            weapons=[MockWeapon(power=10, range=3, initiative=initiative)])
+        stack.token.quantity = 1
+        stack.token.armor = 100.0
+        stack.token.shields = 0.0
+        stack.target_list = [target]
+        return stack
+
+    def test_high_initiative_fires_before_low(self):
+        target = Stack()
+        target.key = 9
+        target.owner = 1
+        target.position = NovaPoint(0, 0)
+        target.token = StackToken()
+        target.token.design = MockDesign(weapons=[])
+        target.token.quantity = 1
+        target.token.armor = 1000.0
+        target.token.shields = 0.0
+
+        slow = self._shooter(1, 10, target)
+        fast = self._shooter(2, 200, target)
+
+        engine = RonBattleEngine(MockServerData(), [])
+        # Source order puts the slow weapon first, so only the sort
+        # can put the fast one at the front
+        attacks = engine._generate_attacks([slow, fast, target])
+
+        initiatives = [a.weapon.initiative for a in attacks]
+        assert initiatives == [200, 10]
+        assert attacks[0].source_stack.key == fast.key
+
+
+class TestBattleReportYear:
+    """Every battle report carries the year it was fought (DEF-23)."""
+
+    def _one_battle_report(self, engine_class):
+        server = MockServerData()
+        server.turn_year = 2455
+
+        for i in range(2):
+            empire = MockEmpire(id=i, turn_year=2455)
+            empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+            empire.empire_reports[1 - i] = {"relation": "Enemy"}
+
+            design = MockDesign(key=1, name="Warship",
+                                weapons=[MockWeapon(power=10, range=3)])
+            empire.designs[1] = design
+
+            fleet = Fleet()
+            fleet.key = empire.get_next_fleet_key()
+            fleet.owner = i
+            fleet.name = f"Battle Fleet {i}"
+            fleet.position = NovaPoint(100, 100)
+            fleet.battle_plan = "Default"
+
+            token = ShipToken()
+            token.design_key = 1
+            token.design_name = "Warship"
+            token.quantity = 5
+            token.armor = 100
+            token.shields = 50
+            # Non-zero mass so the standard engine's attractiveness
+            # (cost / defences) is above zero and a target is picked
+            token.mass = 100
+            token.has_weapons = True
+            fleet.tokens[token.design_key] = token
+
+            empire.owned_fleets[fleet.key] = fleet
+            server.all_empires[i] = empire
+
+        reports: List[BattleReport] = []
+        engine_class(server, reports).run()
+        return reports
+
+    def test_ron_engine_stamps_the_turn_year(self):
+        reports = self._one_battle_report(RonBattleEngine)
+        assert reports
+        assert all(r.year == 2455 for r in reports)
+
+    def test_standard_engine_stamps_the_turn_year(self):
+        reports = self._one_battle_report(BattleEngine)
+        assert reports
+        assert all(r.year == 2455 for r in reports)

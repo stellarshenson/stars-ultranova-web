@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, TYPE_CHECKING
 
 from ...core.data_structures import NovaPoint, Resources, Cargo
+from ...core.components.ship_role import ShipRole, infer_battle_role
 from ...core.game_objects import Fleet, ShipToken
 
 if TYPE_CHECKING:
@@ -30,6 +31,9 @@ class StackToken:
     quantity: int = 0
     shields: float = 0.0  # Current shields (mutable during battle)
     armor: float = 0.0  # Current armor (mutable during battle)
+    # Armour the stack entered the battle with, so the "Half Armour"
+    # withdrawal threshold has a baseline to compare against
+    initial_armor: float = 0.0
 
     # Cached design values
     mass: int = 0
@@ -37,6 +41,9 @@ class StackToken:
     is_starbase: bool = False
     is_bomber: bool = False
     battle_speed: float = 0.5
+    # Battle role of the design (ship_role.py cascade); cached so a
+    # deserialized report stack still names its class
+    battle_role: str = ""
 
     # Design reference (optional - for weapon access)
     design: Optional['ShipDesign'] = None
@@ -51,6 +58,7 @@ class StackToken:
         st.quantity = token.quantity
         st.shields = float(token.shields * token.quantity)  # Total shields
         st.armor = float(token.armor * token.quantity)  # Total armor
+        st.initial_armor = st.armor
         st.mass = token.mass
         st.has_weapons = token.has_weapons
         st.is_starbase = token.is_starbase
@@ -58,6 +66,7 @@ class StackToken:
         st.design = design
         if design:
             st.battle_speed = design.battle_speed
+            st.battle_role = getattr(design, 'battle_role', "")
         return st
 
     def to_dict(self) -> dict:
@@ -69,6 +78,7 @@ class StackToken:
             "shields": self.shields,
             "armor": self.armor,
             "mass": self.mass,
+            "battle_role": str(self.battle_role),
         }
 
 
@@ -96,6 +106,10 @@ class Stack:
     # Battle state
     target: Optional['Stack'] = None
     target_list: List['Stack'] = field(default_factory=list)
+    # Plan tier that matched each target, keyed by target stack key.
+    # The engine used to compute and discard it; the battle report now
+    # carries it so a replay can explain every targeting choice
+    target_priorities: Dict[int, int] = field(default_factory=dict)
     velocity_vector: Optional[NovaPoint] = None
     in_orbit: Optional['Star'] = None
 
@@ -107,6 +121,10 @@ class Stack:
     damage_taken: bool = False
     flee_rounds: int = 0
     disengaged: bool = False
+    # True when the hostile side outnumbers this stack's own side in
+    # armed ships at the start of the battle, which is what the
+    # "Outnumbered" withdrawal threshold tests
+    outnumbered: bool = False
 
     # Cargo
     cargo: Cargo = field(default_factory=Cargo)
@@ -133,7 +151,11 @@ class Stack:
         stack.owner = fleet.owner
         stack.parent_key = fleet.key
         stack.name = f"Stack #{stack_id:X}"
-        stack.battle_plan = fleet.battle_plan
+        # The engagement override wins for this battle only; turn
+        # generation clears it unconditionally afterwards, so the
+        # fleet always reverts to its standing plan
+        stack.battle_plan = (getattr(fleet, 'engagement_plan', "")
+                             or fleet.battle_plan)
         stack.position = NovaPoint(fleet.position.x, fleet.position.y)
         # Note: Fleet has in_orbit_name (string), Stack has in_orbit (Star)
         # Leave as None - battle engine resolves orbit separately
@@ -159,9 +181,11 @@ class Stack:
         stack.in_orbit = other.in_orbit
         stack.target = other.target
         stack.target_list = list(other.target_list)
+        stack.target_priorities = dict(other.target_priorities)
         stack.damage_taken = other.damage_taken
         stack.flee_rounds = other.flee_rounds
         stack.disengaged = other.disengaged
+        stack.outnumbered = other.outnumbered
         if other.velocity_vector:
             stack.velocity_vector = NovaPoint(
                 other.velocity_vector.x, other.velocity_vector.y
@@ -175,11 +199,13 @@ class Stack:
             stack.token.quantity = other.token.quantity
             stack.token.shields = other.token.shields
             stack.token.armor = other.token.armor
+            stack.token.initial_armor = other.token.initial_armor
             stack.token.mass = other.token.mass
             stack.token.has_weapons = other.token.has_weapons
             stack.token.is_starbase = other.token.is_starbase
             stack.token.is_bomber = other.token.is_bomber
             stack.token.battle_speed = other.token.battle_speed
+            stack.token.battle_role = other.token.battle_role
             stack.token.design = other.token.design
         stack.cargo = Cargo(
             ironium=other.cargo.ironium,
@@ -225,6 +251,32 @@ class Stack:
         if self.token:
             return self.token.is_starbase
         return False
+
+    @property
+    def battle_role(self) -> str:
+        """
+        The battle role this stack's design falls into.
+
+        Prefers the value cached when the stack was built; a stack
+        rebuilt from an older save has none, so the cascade re-runs on
+        the token's own capability flags.
+        """
+        if self.token is None:
+            return ShipRole.SUPPORT
+        if self.token.battle_role:
+            return self.token.battle_role
+        design = self.token.design
+        return infer_battle_role(
+            is_starbase=self.token.is_starbase,
+            is_bomber=self.token.is_bomber,
+            has_weapons=self.token.has_weapons,
+            power_rating=int(getattr(design, 'power_rating', 0) or 0),
+            can_refuel=bool(getattr(design, 'can_refuel', False)),
+            can_colonize=bool(getattr(design, 'can_colonize', False)),
+            heals_others_percent=int(
+                getattr(design, 'heals_others_percent', 0) or 0),
+            cargo_capacity=int(getattr(design, 'cargo_capacity', 0) or 0),
+        )
 
     @property
     def has_bombers(self) -> bool:
@@ -290,6 +342,7 @@ class Stack:
             "position": self.position.to_dict(),
             "token": self.token.to_dict() if self.token else None,
             "cargo": self.cargo.to_dict(),
+            "battle_role": str(self.battle_role),
         }
 
     @classmethod
@@ -315,6 +368,7 @@ class Stack:
             st.shields = token_data.get("shields", 0.0)
             st.armor = token_data.get("armor", 0.0)
             st.mass = token_data.get("mass", 0)
+            st.battle_role = token_data.get("battle_role", "")
             stack.token = st
 
         cargo_data = data.get("cargo", {})

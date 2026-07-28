@@ -5,9 +5,32 @@ from fastapi import APIRouter, Body, Header, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 
+from ...services.galaxy_generator import UNIVERSE_SIZES
 from ...services.game_manager import get_game_manager
 
 router = APIRouter(prefix="/api/games", tags=["games"])
+
+
+def _game_response(game_data: dict) -> "GameResponse":
+    """
+    Build a GameResponse, resolving the board dimensions.
+
+    UNIVERSE_SIZES in the generator is the single source of truth for
+    board size; the client reads width and height from here instead of
+    restating the table.
+    """
+    size = game_data["universe_size"]
+    width, height = UNIVERSE_SIZES.get(size, UNIVERSE_SIZES["medium"])
+    return GameResponse(
+        id=game_data["id"],
+        name=game_data["name"],
+        player_count=game_data["player_count"],
+        universe_size=size,
+        universe_width=width,
+        universe_height=height,
+        turn=game_data.get("turn", 0),
+        status=game_data["status"]
+    )
 
 
 def _require_password(manager, game_id: str, empire_id: int,
@@ -55,8 +78,19 @@ class GameResponse(BaseModel):
     name: str
     player_count: int
     universe_size: str
+    # Board dimensions in light years, resolved from the generator's
+    # UNIVERSE_SIZES table so the client never restates it
+    universe_width: int
+    universe_height: int
     turn: int
     status: str
+
+
+class UniverseSizeResponse(BaseModel):
+    """Response model for one entry of the universe size table."""
+    name: str
+    width: int
+    height: int
 
 
 class TurnResponse(BaseModel):
@@ -109,31 +143,28 @@ async def create_game(game: GameCreate) -> GameResponse:
         # Over-budget race rejected (the web equivalent of the C# race
         # designer's Finish_Click gate, RaceDesigner.cs:1712-1719)
         raise HTTPException(status_code=422, detail=str(e))
-    return GameResponse(
-        id=game_data["id"],
-        name=game_data["name"],
-        player_count=game_data["player_count"],
-        universe_size=game_data["universe_size"],
-        turn=game_data.get("turn", 0),
-        status=game_data["status"]
-    )
+    return _game_response(game_data)
 
 
 @router.get("/", response_model=List[GameResponse])
 async def list_games() -> List[GameResponse]:
     """List all games."""
     manager = get_game_manager()
-    games = manager.list_games()
+    return [_game_response(g) for g in manager.list_games()]
+
+
+@router.get("/universe-sizes", response_model=List[UniverseSizeResponse])
+async def universe_sizes() -> List[UniverseSizeResponse]:
+    """
+    The canonical universe size table.
+
+    Declared before /{game_id} so the literal path wins the match. The
+    new-game dialog builds its size options from this, so the size
+    labels cannot drift from the generator.
+    """
     return [
-        GameResponse(
-            id=g["id"],
-            name=g["name"],
-            player_count=g["player_count"],
-            universe_size=g["universe_size"],
-            turn=g.get("turn", 0),
-            status=g["status"]
-        )
-        for g in games
+        UniverseSizeResponse(name=name, width=size[0], height=size[1])
+        for name, size in UNIVERSE_SIZES.items()
     ]
 
 
@@ -144,14 +175,7 @@ async def get_game(game_id: str) -> GameResponse:
     game_data = manager.get_game(game_id)
     if not game_data:
         raise HTTPException(status_code=404, detail="Game not found")
-    return GameResponse(
-        id=game_data["id"],
-        name=game_data["name"],
-        player_count=game_data["player_count"],
-        universe_size=game_data["universe_size"],
-        turn=game_data.get("turn", 0),
-        status=game_data["status"]
-    )
+    return _game_response(game_data)
 
 
 @router.delete("/{game_id}")
@@ -389,14 +413,7 @@ async def import_game(game_file: dict = Body(...)) -> GameResponse:
     if "error" in result:
         raise HTTPException(status_code=result.get("code", 400),
                             detail=result["error"])
-    return GameResponse(
-        id=result["id"],
-        name=result["name"],
-        player_count=result["player_count"],
-        universe_size=result["universe_size"],
-        turn=result.get("turn", 0),
-        status=result["status"]
-    )
+    return _game_response(result)
 
 
 @router.get("/{game_id}/nebulae")

@@ -15,6 +15,8 @@ import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from ...core.commands.base import Message
+from ...core.components.ship_role import ShipRole
 from ...core.data_structures import NovaPoint, Resources, Cargo
 from ...core.game_objects import Fleet, ShipToken
 from ...core.globals import MAX_WEAPON_RANGE
@@ -24,11 +26,18 @@ from .battle_step import (
     BattleStepTarget,
     BattleStepWeapons,
     BattleStepDestroy,
+    BattleStepWithdraw,
     WeaponTarget,
     TokenDefence,
 )
 from .battle_report import BattleReport
-from .battle_plan import BattlePlan, Victims
+from .battle_plan import (
+    BattlePlan,
+    Victims,
+    MIN_DISENGAGE_MOVES,
+    OUTNUMBERED_RATIO,
+    WITHDRAWAL_DAMAGE_PERCENT,
+)
 from .stack import Stack, StackToken
 from .weapon_details import WeaponDetails, TargetPercent
 from .space_allocator import SpaceAllocator
@@ -111,6 +120,7 @@ class RonBattleEngine:
                     continue
 
                 battle = BattleReport()
+                battle.year = self.server_state.turn_year
                 previous_locations.append(battle_location)
 
                 battling_stacks = self._generate_stacks(
@@ -141,6 +151,7 @@ class RonBattleEngine:
                     battle.stacks[stack.key] = Stack.copy(stack)
 
                 self._do_battle(battling_stacks, battle)
+                self._apply_withdrawal_consequences(battling_stacks, battle)
                 self._report_battle(battle)
 
     def _determine_weapon_range_fleets(self) -> List[List[Fleet]]:
@@ -247,7 +258,88 @@ class RonBattleEngine:
             pos = race_positions[stack.owner]
             stack.position = NovaPoint(pos[0], pos[1])
 
+        self._apply_doctrine(battling_stacks)
         self._update_intel_designs(battling_stacks, empires)
+
+    def _plan_of(self, stack: Stack) -> BattlePlan:
+        """
+        The battle plan a stack is fighting under.
+
+        A stack whose empire or plan name cannot be resolved falls back
+        to a stock plan, whose doctrine axes are all no-modifier
+        values, so an unresolvable plan never changes the fight.
+        """
+        empire = self.server_state.all_empires.get(stack.owner)
+        if empire is None:
+            return BattlePlan()
+        return empire.battle_plans.get(stack.battle_plan) or BattlePlan()
+
+    def _apply_doctrine(self, battling_stacks: List[Stack]) -> None:
+        """
+        Apply the doctrine state a stack enters the battle with.
+
+        Two things are fixed before the first round: the shield pool
+        (stance and posture both scale it, and they stack), and
+        whether the stack's own side is outnumbered, which is what the
+        "Outnumbered" withdrawal threshold reads. Armour is never
+        scaled - a stance that touched both pools would be the
+        symmetric multiplier docs/research-battle-doctrine.md rejects.
+        """
+        armed_by_owner: Dict[int, int] = {}
+        for stack in battling_stacks:
+            if stack.token is None or not stack.is_armed:
+                continue
+            armed_by_owner[stack.owner] = (
+                armed_by_owner.get(stack.owner, 0) + stack.token.quantity)
+
+        total_armed = sum(armed_by_owner.values())
+
+        for stack in battling_stacks:
+            if stack.token is None:
+                continue
+            plan = self._plan_of(stack)
+            stack.token.shields *= (plan.stance_modifiers.shields
+                                    * plan.posture_modifiers.shields)
+
+            own = armed_by_owner.get(stack.owner, 0)
+            hostile = total_armed - own
+            stack.outnumbered = (
+                own == 0 or hostile >= own * OUTNUMBERED_RATIO)
+
+    def _withdraw_threshold_met(self, stack: Stack) -> bool:
+        """
+        Whether this stack's withdrawal threshold has been reached.
+
+        Generalises the canonical "Disengage if Challenged" tactic,
+        which is the "On Damage" threshold expressed as a tactic.
+        """
+        threshold = self._plan_of(stack).withdraw
+
+        if threshold == "On Damage":
+            return stack.damage_taken
+        if threshold == "Half Armour":
+            if stack.token is None:
+                return False
+            baseline = stack.token.initial_armor or stack.token.armor
+            if baseline <= 0:
+                return False
+            return stack.token.armor <= baseline / 2.0
+        if threshold == "Outnumbered":
+            return stack.outnumbered
+        return False
+
+    def _disengage_moves_required(self, stack: Stack) -> int:
+        """
+        Board moves this stack needs to leave the battle.
+
+        Canonical 7 (DISENGAGE_MOVES); Defensive stance and the
+        Scatter posture each shorten it, never below
+        MIN_DISENGAGE_MOVES.
+        """
+        plan = self._plan_of(stack)
+        moves = (plan.stance_modifiers.disengage_moves
+                 + plan.posture_modifiers.disengage_moves_delta)
+        return max(MIN_DISENGAGE_MOVES, moves)
 
     def _update_intel_designs(
         self, battling_stacks: List[Stack], empires: Dict[int, int]
@@ -313,6 +405,7 @@ class RonBattleEngine:
 
             wolf.target = None
             wolf.target_list = []
+            wolf.target_priorities = {}
 
             # A disengaged stack has left the battle: it neither picks
             # targets nor fires (canonical Stars! disengage;
@@ -368,6 +461,10 @@ class RonBattleEngine:
                 # leftover percent onto lower tiers
                 wolf.target_list = [t.fleet
                                     for t in reversed(selected_targets)]
+                # Keep the tier that matched each target so the report
+                # can name it (the engine used to discard it here)
+                wolf.target_priorities = {t.fleet.key: t.priority
+                                          for t in selected_targets}
 
         return number_of_targets
 
@@ -403,29 +500,31 @@ class RonBattleEngine:
             return 0
 
     def _target_matches_priority(self, priority: int, target: Stack) -> bool:
-        """Check if target matches the given priority type."""
-        if target.is_starbase and priority == Victims.STARBASE:
-            return True
-        if target.has_bombers and priority == Victims.BOMBER:
-            return True
+        """
+        Check if target matches the given priority type.
 
-        # Check power rating for capital vs escort
-        power_rating = 0
-        if target.token and target.token.design:
-            power_rating = target.token.design.power_rating
+        The class tiers test the target's inferred battle role (the
+        ship_role.py cascade, one role per design), so an order may
+        name a real class. ARMED_SHIP and ANY_SHIP stay the broad
+        catch-alls they always were and cut across roles.
+        """
+        role = target.battle_role
 
-        if power_rating > 2000 and target.is_armed:
-            if priority == Victims.CAPITAL_SHIP:
-                return True
-        elif power_rating <= 2000 and target.is_armed:
-            if priority == Victims.ESCORT:
-                return True
-
-        if target.is_armed and priority == Victims.ARMED_SHIP:
-            return True
+        if priority == Victims.STARBASE:
+            return role == ShipRole.STARBASE
+        if priority == Victims.BOMBER:
+            return role == ShipRole.BOMBER
+        if priority == Victims.CAPITAL_SHIP:
+            return role == ShipRole.CAPITAL
+        if priority == Victims.ESCORT:
+            return role == ShipRole.ESCORT
+        if priority == Victims.LOGISTICS:
+            return role == ShipRole.LOGISTICS
+        if priority == Victims.SUPPORT_SHIP:
+            return role == ShipRole.SUPPORT
+        if priority == Victims.ARMED_SHIP:
+            return target.is_armed
         if priority == Victims.ANY_SHIP:
-            return True
-        if not target.is_armed and priority == Victims.SUPPORT_SHIP:
             return True
 
         return False
@@ -490,6 +589,14 @@ class RonBattleEngine:
             if stack.target is None or stack.is_starbase:
                 continue
 
+            # Brace posture: the stack holds its position for the whole
+            # battle. It never closes, so a short-ranged design braced
+            # against a longer-ranged enemy never gets to fire - the
+            # positional commitment the posture is paying for - and it
+            # can never accumulate the moves a disengagement needs
+            if self._plan_of(stack).posture_modifiers.holds_position:
+                continue
+
             vector_to_target = NovaPoint(
                 stack.target.position.x - stack.position.x,
                 stack.target.position.y - stack.position.y
@@ -518,7 +625,7 @@ class RonBattleEngine:
                     # Unarmed disengaging stack flees the board instead
                     # of merely keeping out of weapon range
                     new_heading = NovaPoint(-new_heading.x, -new_heading.y)
-                    self._count_flee_move(stack)
+                    self._count_flee_move(stack, battle)
                 elif stack.distance_to(stack.target) / self.GRID_SCALE < MAX_WEAPON_RANGE:
                     # Run away from armed enemy
                     new_heading = NovaPoint(-new_heading.x, -new_heading.y)
@@ -527,7 +634,7 @@ class RonBattleEngine:
             elif tactic == "Disengage":
                 # Armed disengaging stack flees its target
                 new_heading = NovaPoint(-new_heading.x, -new_heading.y)
-                self._count_flee_move(stack)
+                self._count_flee_move(stack, battle)
             elif tactic in ("Minimise Damage to Self", "Maximise Damage Ratio",
                             "Maximise Net Damage"):
                 # Stand-off tactics: close only until the target is
@@ -573,6 +680,12 @@ class RonBattleEngine:
         "Disengage if Challenged" behaves as Maximise Damage until the
         stack has taken damage, then switches to Disengage (canonical
         Stars! rule; C# absent).
+
+        Two doctrine axes ride on top. The plan's withdrawal threshold
+        turns any tactic into Disengage once it is met. An Aggressive
+        stance forfeits disengagement entirely - it is the sharpest
+        cost of the stance and it overrides everything, including a
+        plan that asked to Disengage outright.
         """
         if stack.owner not in self.server_state.all_empires:
             return "Maximise Damage"
@@ -580,22 +693,40 @@ class RonBattleEngine:
         plan = empire.battle_plans.get(stack.battle_plan)
         if plan is None:
             return "Maximise Damage"
-        if plan.tactic == "Disengage if Challenged":
-            return "Disengage" if stack.damage_taken else "Maximise Damage"
-        return plan.tactic
 
-    def _count_flee_move(self, stack: Stack) -> None:
+        if plan.tactic == "Disengage if Challenged":
+            tactic = "Disengage" if stack.damage_taken else "Maximise Damage"
+        else:
+            tactic = plan.tactic
+
+        if tactic != "Disengage" and self._withdraw_threshold_met(stack):
+            tactic = "Disengage"
+
+        if tactic == "Disengage" and not plan.stance_modifiers.may_disengage:
+            return "Maximise Damage"
+
+        return tactic
+
+    def _count_flee_move(self, stack: Stack, battle: BattleReport) -> None:
         """
         Count a flee move; after DISENGAGE_MOVES the stack has left.
 
         Canonical Stars!: 7 squares of battle board movement to leave
-        the battle; one flee move per round at battle speed
+        the battle, shortened by a Defensive stance or a Scatter
+        posture (_disengage_moves_required); one flee move per round
+        at battle speed
         approximates one square per round (canonical-approx). While
-        still present the stack can be fired upon.
+        still present the stack can be fired upon. Leaving the board
+        is recorded as its own report step, so a withdrawal reads as a
+        withdrawal instead of movement that silently stops.
         """
         stack.flee_rounds += 1
-        if stack.flee_rounds >= self.DISENGAGE_MOVES:
+        required = self._disengage_moves_required(stack)
+        if stack.flee_rounds >= required and not stack.disengaged:
             stack.disengaged = True
+            withdraw = BattleStepWithdraw()
+            withdraw.stack_key = stack.key
+            battle.steps.append(withdraw)
 
     def _battle_speed_vector(
         self, direction: NovaPoint, speed: float
@@ -657,13 +788,23 @@ class RonBattleEngine:
                         attack.source_stack = stack
                         attack.target_stack = TargetPercent(target, percent_to_fire)
                         attack.weapon = weapon
+                        # Stance shifts when this weapon resolves in
+                        # the round; a stack killed before it fires
+                        # contributes nothing, which is why firing
+                        # order is not a symmetric damage multiplier
+                        attack.initiative_bonus = (
+                            self._plan_of(stack).stance_modifiers.initiative)
                         all_attacks.append(attack)
 
                         percent_fired += percent_to_fire
 
                     target_index += 1
 
-        all_attacks.sort()
+        # Highest initiative fires first (BATTLE.TXT: each round is
+        # target selection, movement, then weapon fire ordered
+        # highest-initiative-to-lowest). WeaponDetails.__lt__ compares
+        # initiative ascending, so the descending order is reverse=True
+        all_attacks.sort(reverse=True)
         return all_attacks
 
     def _process_attack(
@@ -691,6 +832,8 @@ class RonBattleEngine:
         report.stack_key = attacker.key
         report.target_key = target.key
         report.percent_to_fire = attack.target_stack.percent_to_fire
+        report.priority = attacker.target_priorities.get(target.key, 0)
+        report.target_role = str(target.battle_role)
         battle.steps.append(report)
 
         if attack.weapon is None:
@@ -698,6 +841,11 @@ class RonBattleEngine:
 
         percent = attack.target_stack.percent_to_fire / 100.0
         hit_power = attack.weapon.power * attacker.token.quantity * percent
+
+        # A Scatter posture spreads the stack out, so it cannot
+        # concentrate its own fire (battle_plan.POSTURE_MODIFIERS)
+        attacker_plan = self._plan_of(attacker)
+        hit_power *= attacker_plan.posture_modifiers.damage_dealt
 
         # Electronics modifiers read per-design aggregates, never
         # multiplied by token quantity (C# passes Token.Design to both
@@ -711,12 +859,29 @@ class RonBattleEngine:
             accuracy = attack.missile_accuracy(
                 source_design, target_design,
                 attack.weapon.accuracy / 100.0)
+            # Stance trades accuracy, which is worth nothing to a beam
+            # fleet - the enemy's weapon class decides its value
+            accuracy = max(0.0, min(
+                1.0,
+                accuracy * attacker_plan.stance_modifiers.missile_accuracy))
             self._fire_missile(attacker, target, hit_power, accuracy, battle)
         else:
             # Capacitors boost / deflectors cut beam damage (canonical
             # Stars! rule; C# stub at BattleEngine.cs:880-908)
             hit_power *= attack.beam_power_modifier(
                 source_design, target_design)
+            # Beam damage dissipates with range: full power in the
+            # target's own square, 10 percent lost at the weapon's
+            # maximum range (BATTLE.TXT - "a weapon that will do 100dp
+            # in the same square as its target will only do 90dp one
+            # square away", quoted in docs/research-battle-doctrine.md;
+            # the C# consumer is the commented-out stub at
+            # BattleEngine.cs:880-908). Ron positions are GRID_SCALE
+            # units per square, so the squared distance is compared
+            # against range^2 * GRID_SCALE^2
+            dist_sq = attacker.position.distance_to_squared(target.position)
+            hit_power *= attack.beam_dispersal_ron(
+                dist_sq, self.GRID_SCALE_SQUARED) / 100.0
             self._fire_beam(attacker, target, hit_power, battle)
 
         if target.token and target.token.armor <= 0:
@@ -756,8 +921,10 @@ class RonBattleEngine:
         percent_hit = accuracy + (probability / 100.0) * accuracy / 2.0
         percent_hit = max(0.0, min(1.0, percent_hit))
 
-        # Misses do splash damage
+        # Misses do splash damage - the engine's area effect, which a
+        # Scatter posture is spread out to blunt
         miss_damage = hit_power * (1 - percent_hit) / 8
+        miss_damage *= self._plan_of(target).posture_modifiers.splash_taken
         self._damage_shields(attacker, target, miss_damage, battle)
 
         # Hits split between shields and armor
@@ -865,6 +1032,63 @@ class RonBattleEngine:
                     del empire.owned_fleets[target.parent_key]
 
         target.token = None
+
+    def _apply_withdrawal_consequences(
+        self, battling_stacks: List[Stack], battle: BattleReport
+    ) -> None:
+        """
+        Charge a fleet for leaving the battle.
+
+        Withdrawal used to be a battle-local flag: the stack stopped
+        firing, the battle ended, and the same fleet sailed on to fight
+        again the next turn for free. Every system that makes retreat
+        work charges for it in one of three currencies (rounds of
+        exposure, hull damage, strategic position - see
+        docs/research-battle-doctrine.md section 5). The board moves
+        already charge exposure; this charges the other two:
+
+        - every surviving ship carries WITHDRAWAL_DAMAGE_PERCENT of
+          damage away, on the same damage_percent the repair step
+          heals
+        - the fleet's remaining waypoint orders are cancelled, so a
+          fleet that broke off does not sail straight back into the
+          engagement it just fled. Waypoint zero is the fleet's own
+          position and is kept
+
+        Charged once per fleet however many of its stacks withdrew.
+        """
+        withdrawn: Dict[int, int] = {}
+        for stack in battling_stacks:
+            if stack.disengaged:
+                withdrawn[stack.parent_key] = stack.owner
+
+        for fleet_key, owner in withdrawn.items():
+            empire = self.server_state.all_empires.get(owner)
+            if empire is None:
+                continue
+            fleet = empire.owned_fleets.get(fleet_key)
+            if fleet is None:
+                continue
+
+            fleet.withdrawn_year = self.server_state.turn_year
+            if len(fleet.waypoints) > 1:
+                del fleet.waypoints[1:]
+
+            for token in fleet.tokens.values():
+                token.damage_percent = min(
+                    99.0, token.damage_percent + WITHDRAWAL_DAMAGE_PERCENT)
+
+            self.server_state.all_messages.append(Message(
+                audience=owner,
+                text=f"{fleet.name} withdrew from the battle at "
+                     f"{battle.location}. Its remaining orders were "
+                     f"cancelled and its ships took "
+                     f"{int(WITHDRAWAL_DAMAGE_PERCENT)}% damage breaking "
+                     f"off.",
+                message_type="Battle",
+                fleet_key=fleet.key,
+                star_name=battle.location
+            ))
 
     def _find_star_at_position(self, position: NovaPoint) -> Optional['Star']:
         """Find star at position."""

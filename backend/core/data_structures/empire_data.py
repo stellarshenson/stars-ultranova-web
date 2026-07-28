@@ -63,6 +63,12 @@ class EmpireData:
     # Battle configuration
     battle_plans: Dict[str, dict] = field(default_factory=dict)
     battle_reports: List[dict] = field(default_factory=list)
+    # Plan every newly built fleet inherits, so a commander who never
+    # opens the battle screen still fights coherently. "Default" is
+    # the legacy plan name every save already carries; a fresh empire
+    # is set to the admiralty "Balanced" plan, which is identical to
+    # it in every parameter
+    default_battle_plan: str = "Default"
 
     # Visible minefields (key -> Minefield)
     visible_minefields: Dict[int, dict] = field(default_factory=dict)

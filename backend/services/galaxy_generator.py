@@ -7,8 +7,10 @@ Ported from Nova/WinForms/NewGame logic.
 
 import random
 import math
-from typing import List, Dict, Tuple, Optional
+from pathlib import Path
+from typing import List, Dict, Optional
 
+from . import star_field
 from ..core.data_structures import NovaPoint, Resources, TechLevel
 from ..core.data_structures.empire_data import EmpireData
 from ..core.defenses import (
@@ -24,17 +26,37 @@ from ..server.server_data import (
 )
 
 
-# Universe size configurations (width x height in light years)
+# Universe size configurations (width x height in light years).
+#
+# THIS TABLE IS THE SINGLE SOURCE OF TRUTH for board dimensions. The API
+# reports width and height alongside the size name (GET /api/games/...),
+# and the client reads them from game state - nothing outside this file
+# restates them.
+#
+# Enlarged 2026-07-28 on the "maps for the players must be larger"
+# directive: tiny 200 -> 400, small 400 -> 700, medium 600 -> 1000,
+# large 800 -> 1300, huge 1000 -> 1600. The C# reference has no size
+# tiers at all - GameSettings.cs:51-52 is a free MapWidth/MapHeight pair
+# defaulting to 400x400 - so the tiers are a web convention and the new
+# values bracket the original Stars! board sizes.
 UNIVERSE_SIZES = {
-    "tiny": (200, 200),
-    "small": (400, 400),
-    "medium": (600, 600),
-    "large": (800, 800),
-    "huge": (1000, 1000),
+    "tiny": (400, 400),
+    "small": (700, 700),
+    "medium": (1000, 1000),
+    "large": (1300, 1300),
+    "huge": (1600, 1600),
 }
 
-# Star density (average distance between stars)
-STAR_DENSITY = 25
+# Star density: mean distance between stars in light years, so a map
+# carries area / STAR_DENSITY^2 stars and density is constant across the
+# tiers - a bigger board is a bigger galaxy, not an emptier one
+# (64 / 196 / 400 / 676 / 1024 stars). Raised 25 -> 50 with the enlarged
+# boards; the old value would put 1024 stars on a tiny map and 4096 on a
+# huge one, far past the canonical name pool.
+STAR_DENSITY = 50
+
+# Keep-out band along the map edge, in light years
+STAR_MARGIN = 20
 
 # Star spectral classes with astronomical distribution (approximated from IMF)
 # Format: (class, luminosity, temp_range, radius_range, weight)
@@ -68,27 +90,27 @@ STAR_COLORS = {
     "M": (255, 204, 111),    # Red-orange
 }
 
-# Star name pool (subset of original Stars! names)
-STAR_NAMES = [
-    "Sol", "Alpha Centauri", "Barnard's Star", "Wolf 359", "Lalande 21185",
-    "Sirius", "Luyten 726-8", "Ross 154", "Ross 248", "Epsilon Eridani",
-    "Lacaille 9352", "Ross 128", "EZ Aquarii", "Procyon", "61 Cygni",
-    "Struve 2398", "Groombridge 34", "Epsilon Indi", "Tau Ceti", "Gliese 1061",
-    "Kapteyn's Star", "Kruger 60", "Ross 614", "Wolf 1061", "Van Maanen's Star",
-    "Gliese 1", "Wolf 424", "TZ Arietis", "Gliese 687", "LHS 292",
-    "Proxima", "Vega", "Altair", "Arcturus", "Rigel",
-    "Betelgeuse", "Aldebaran", "Antares", "Spica", "Pollux",
-    "Fomalhaut", "Deneb", "Regulus", "Capella", "Canopus",
-    "Achernar", "Hadar", "Acrux", "Mimosa", "Shaula",
-    "Bellatrix", "Elnath", "Alnilam", "Alnitak", "Mintaka",
-    "Saiph", "Polaris", "Mira", "Algol", "Rasalhague",
-    "Kochab", "Thuban", "Dubhe", "Merak", "Phecda",
-    "Megrez", "Alioth", "Mizar", "Alkaid", "Alcor",
-    "Castor", "Gemma", "Zubenelgenubi", "Zubeneschamali", "Unukalhai",
-    "Kornephoros", "Ras Algethi", "Sabik", "Rasalhague", "Cebalrai",
-    "Sheliak", "Sulafat", "Albireo", "Sadr", "Gienah",
-    "Azha", "Acamar", "Zaurak", "Rana", "Cursa",
-]
+# Canonical star name pool, ported from the C# reference
+# NameGenerator.cs:157 (starNames, 1210 entries) into
+# backend/data/star_names.txt with its 10 duplicates dropped. The pool
+# is the hard cap on stars per map: 1200 names against the largest
+# board's 1024 stars.
+STAR_NAMES_FILE = Path(__file__).resolve().parents[1] / "data" / "star_names.txt"
+
+
+def _load_star_names() -> List[str]:
+    """Read the canonical star name pool from backend/data."""
+    names = []
+    with open(STAR_NAMES_FILE, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                names.append(line)
+    return names
+
+
+STAR_NAMES = _load_star_names()
+
 
 # Default race templates (using string trait keys from traits.py).
 # Icons index the client's 16 standard SVG emblems (race-icons.js).
@@ -291,9 +313,14 @@ class GalaxyGenerator:
 
     def _generate_stars(self, width: int, height: int) -> List[Star]:
         """
-        Generate stars for the galaxy using Gaussian Mixture Model distribution.
+        Generate the galaxy's stars on a clustered density field.
 
-        Creates natural-looking clusters, streams, and voids.
+        Placement is delegated to star_field: seeded value-noise fBm
+        supplies the density field and variable-radius Poisson-disk
+        sampling (Bridson) lays the stars down on it, so the galaxy
+        clumps into loose clusters without dense knots or empty deserts.
+        Replaces the earlier centre-weighted Gaussian mixture, whose
+        radial bias made corner starts structurally poor.
 
         Args:
             width: Galaxy width in light years.
@@ -302,149 +329,28 @@ class GalaxyGenerator:
         Returns:
             List of Star objects.
         """
-        stars = []
-        used_names = set()
-        used_positions = set()
-
-        # Calculate number of stars based on size
+        # Star count from the constant density, capped by the name pool
         area = width * height
         num_stars = area // (STAR_DENSITY * STAR_DENSITY)
         num_stars = max(20, min(num_stars, len(STAR_NAMES)))
 
-        # Shuffle names
         available_names = list(STAR_NAMES)
         self.rng.shuffle(available_names)
 
-        # Galaxy center
-        cx, cy = width / 2, height / 2
-        max_radius = min(width, height) * 0.45
+        # The density field is keyed on the game seed; an unseeded game
+        # draws its field seed from the rng so two such games do not
+        # share one galaxy shape
+        field_seed = (self.seed if self.seed is not None
+                      else self.rng.randrange(2 ** 31))
+        positions = star_field.generate_positions(
+            width, height, num_stars, STAR_MARGIN, field_seed, self.rng)
 
-        # Create Gaussian mixture components
-        components = []
-
-        # 1. Central core - high weight, circular
-        components.append({
-            'weight': 0.15,
-            'mean_x': cx,
-            'mean_y': cy,
-            'std_x': max_radius * 0.20,
-            'std_y': max_radius * 0.20,
-            'rotation': 0
-        })
-
-        # 2. Main galactic band - elongated ellipse
-        band_angle = self.rng.random() * math.pi
-        band_stretch = 1.5 + self.rng.random() * 1.0  # 1.5 to 2.5
-        components.append({
-            'weight': 0.35,
-            'mean_x': cx,
-            'mean_y': cy,
-            'std_x': max_radius * 0.6 * band_stretch,
-            'std_y': max_radius * 0.25,
-            'rotation': band_angle
-        })
-
-        # 3-5. Star clusters - compact groups
-        num_clusters = 2 + self.rng.randint(0, 3)
-        for i in range(num_clusters):
-            angle = self.rng.random() * math.pi * 2
-            dist = max_radius * (0.3 + self.rng.random() * 0.5)
-            cluster_size = 25 + self.rng.random() * 40
-            components.append({
-                'weight': 0.08,
-                'mean_x': cx + math.cos(angle) * dist,
-                'mean_y': cy + math.sin(angle) * dist,
-                'std_x': cluster_size,
-                'std_y': cluster_size * (0.5 + self.rng.random() * 0.5),
-                'rotation': self.rng.random() * math.pi
-            })
-
-        # 6-7. Star streams - very elongated
-        num_streams = 1 + self.rng.randint(0, 2)
-        for i in range(num_streams):
-            stream_angle = self.rng.random() * math.pi
-            offset_angle = self.rng.random() * math.pi * 2
-            offset_dist = max_radius * (0.2 + self.rng.random() * 0.4)
-            components.append({
-                'weight': 0.06,
-                'mean_x': cx + math.cos(offset_angle) * offset_dist,
-                'mean_y': cy + math.sin(offset_angle) * offset_dist,
-                'std_x': max_radius * (0.3 + self.rng.random() * 0.4),
-                'std_y': 15 + self.rng.random() * 20,
-                'rotation': stream_angle
-            })
-
-        # 8. Outer halo - diffuse background
-        components.append({
-            'weight': 0.10,
-            'mean_x': cx,
-            'mean_y': cy,
-            'std_x': max_radius * 0.8,
-            'std_y': max_radius * 0.8,
-            'rotation': 0
-        })
-
-        # Normalize weights
-        total_weight = sum(c['weight'] for c in components)
-        for c in components:
-            c['weight'] /= total_weight
-
-        # Generate void regions (rejection sampling)
-        voids = []
-        num_voids = 2 + self.rng.randint(0, 3)
-        for i in range(num_voids):
-            angle = self.rng.random() * math.pi * 2
-            dist = max_radius * (0.3 + self.rng.random() * 0.5)
-            voids.append({
-                'x': cx + math.cos(angle) * dist,
-                'y': cy + math.sin(angle) * dist,
-                'radius': 25 + self.rng.random() * 45
-            })
-
-        attempts = 0
-        while len(stars) < num_stars and attempts < num_stars * 20:
-            attempts += 1
-
-            # Sample from Gaussian mixture
-            x, y = self._sample_gmm(components)
-
-            x = int(x)
-            y = int(y)
-
-            # Clamp to bounds with margin
-            margin = 20
-            x = max(margin, min(width - margin, x))
-            y = max(margin, min(height - margin, y))
-
-            # Check if in void region
-            in_void = False
-            for void in voids:
-                dist_to_void = math.sqrt((x - void['x'])**2 + (y - void['y'])**2)
-                if dist_to_void < void['radius']:
-                    in_void = True
-                    break
-            if in_void:
-                continue
-
-            # Check minimum distance from other stars
-            too_close = False
-            for px, py in used_positions:
-                dist = math.sqrt((x - px) ** 2 + (y - py) ** 2)
-                if dist < STAR_DENSITY * 0.5:
-                    too_close = True
-                    break
-
-            if too_close:
-                continue
-
-            # Get name
+        stars = []
+        for x, y in positions:
             if not available_names:
                 break
-            name = available_names.pop()
-
-            # Create star with random environment
             star = Star()
-            star.name = name
+            star.name = available_names.pop()
             star.position = NovaPoint(x, y)
 
             # Random habitability values (0-100)
@@ -464,10 +370,7 @@ class GalaxyGenerator:
             # Assign spectral class based on astronomical distribution
             self._assign_spectral_class(star)
 
-
             stars.append(star)
-            used_names.add(name)
-            used_positions.add((x, y))
 
         return stars
 
@@ -500,44 +403,6 @@ class GalaxyGenerator:
                 # Random radius within range
                 star.star_radius = radius_range[0] + self.rng.random() * (radius_range[1] - radius_range[0])
                 break
-
-    def _sample_gmm(self, components: List[dict]) -> Tuple[float, float]:
-        """
-        Sample a point from a Gaussian Mixture Model.
-
-        Args:
-            components: List of GMM components with weight, mean, std, and rotation.
-
-        Returns:
-            (x, y) coordinate tuple.
-        """
-        # Select component based on weights
-        r = self.rng.random()
-        cumulative = 0
-        selected = components[0]
-        for c in components:
-            cumulative += c['weight']
-            if r <= cumulative:
-                selected = c
-                break
-
-        # Sample from 2D Gaussian
-        # Generate in local coordinates (aligned with ellipse axes)
-        local_x = self.rng.gauss(0, selected['std_x'])
-        local_y = self.rng.gauss(0, selected['std_y'])
-
-        # Rotate to world coordinates
-        rotation = selected.get('rotation', 0)
-        cos_r = math.cos(rotation)
-        sin_r = math.sin(rotation)
-        world_x = local_x * cos_r - local_y * sin_r
-        world_y = local_x * sin_r + local_y * cos_r
-
-        # Translate to mean position
-        x = selected['mean_x'] + world_x
-        y = selected['mean_y'] + world_y
-
-        return x, y
 
     def _generate_storms(self, width: int, height: int,
                          nebula_field=None) -> List[GalacticStorm]:
@@ -761,8 +626,9 @@ class GalaxyGenerator:
         return races
 
     # Neighborhood radius for the homeworld fairness constraint - the
-    # run100 forensic metric (stars within 50 ly), constant at
-    # 2 * STAR_DENSITY
+    # run100 forensic metric, kept at two mean star spacings so it
+    # tracks the board density (2 * STAR_DENSITY; 50 ly before the
+    # 2026-07-28 enlargement, 100 ly after it)
     HOMEWORLD_NEIGHBORHOOD_RADIUS = 2 * STAR_DENSITY
 
     def _select_home_worlds(self, stars: List[Star], player_count: int,
@@ -775,16 +641,18 @@ class GalaxyGenerator:
         field with enforced minimum separation (Generate 93-106,
         SetHomeworldReducer 156-172, PlaceHomeworlds 215-238), so
         every homeworld gets a statistically equivalent neighborhood -
-        fairness is structural. The web keeps its GMM star field for
-        the galaxy aesthetic and delivers the same guarantee by
+        fairness is structural. The web keeps its clustered star field
+        for the galaxy aesthetic and delivers the same guarantee by
         SELECTION instead of construction (DEF-16): every homeworld
-        must have a minimum number of neighbor stars within 50 ly
-        (comparable expansion prospects) and homeworlds must be
-        mutually separated by the C#-derived minimum
-        min(width, height) / (2 * (floor(sqrt(players)) + 1))
-        (StarMapGenerator.cs:160-163; 100 ly for 2 players on a 400
+        must have a minimum number of neighbor stars within
+        HOMEWORLD_NEIGHBORHOOD_RADIUS (comparable expansion prospects)
+        and homeworlds must be mutually separated by the C#-derived
+        minimum min(width, height) / (2 * (floor(sqrt(players)) + 1))
+        (StarMapGenerator.cs:160-163; 175 ly for 2 players on a 700
         map). Constraints relax stepwise on dense-candidate shortage
-        so selection always terminates (tiny maps).
+        so selection always terminates (tiny maps). The clustered field
+        is statistically homogeneous, so unlike the old centre-weighted
+        mixture it does not work against this bound.
 
         Args:
             stars: All stars in galaxy.
@@ -975,8 +843,15 @@ class GalaxyGenerator:
         # combined with the all-Enemy relation init
         # (GameInitialiser.cs:140) fresh games behave as before, and
         # player relation changes now govern battle eligibility
-        from ..server.battle.battle_plan import BattlePlan
+        from ..server.battle.battle_plan import (
+            BattlePlan, DEFAULT_EMPIRE_PLAN, seed_admiralty_plans)
         empire.battle_plans["Default"] = BattlePlan(attack="Enemies")
+        # The six admiralty standard plans ship in every empire's plan
+        # list - they ARE the doctrine, there is no separate doctrine
+        # object - and a fresh empire hands newly built fleets the
+        # Balanced one
+        seed_admiralty_plans(empire.battle_plans)
+        empire.default_battle_plan = DEFAULT_EMPIRE_PLAN
 
         return empire
 

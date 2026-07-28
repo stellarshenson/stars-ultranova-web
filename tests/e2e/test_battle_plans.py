@@ -132,14 +132,18 @@ class TestBattlePlanCrud:
                                 {"mode": "delete", "name": "Ghost"})
         assert result["status"] == "error"
 
-        # Canonical Stars! cap: at most 14 plans per player
-        for i in range(3, 15):
+        # Cap: the canonical 14 player plans plus the six admiralty
+        # standard plans seeded into every empire. Default and Sniper
+        # already occupy two of the player slots
+        from backend.server.battle.battle_plan import MAX_BATTLE_PLANS
+        existing = len(harness.state(1)["battle_plans"])
+        for i in range(existing, MAX_BATTLE_PLANS):
             result = harness.submit(1, "battle_plan", {
                 "mode": "set", "plan": {"name": f"Plan {i}"}})
             assert result["status"] == "applied"
-        assert len(harness.state(1)["battle_plans"]) == 14
+        assert len(harness.state(1)["battle_plans"]) == MAX_BATTLE_PLANS
         result = harness.submit(1, "battle_plan", {
-            "mode": "set", "plan": {"name": "Plan 15"}})
+            "mode": "set", "plan": {"name": "One Too Many"}})
         assert result["status"] == "error"
         # Editing an existing plan is still allowed at the cap
         result = harness.submit(1, "battle_plan", {
@@ -180,8 +184,8 @@ class TestBattlePlanCrud:
                      if f["key"] == fleet["key"]][0]
         assert persisted["battle_plan"] == "Sniper"
 
-        # Deleting an assigned plan reassigns its fleets to Default
-        # (canonical safety, C# absent)
+        # Deleting an assigned plan reassigns its fleets to the empire
+        # default plan (canonical safety, C# absent)
         result = harness.submit(1, "battle_plan",
                                 {"mode": "delete", "name": "Sniper"})
         assert result["status"] == "applied"
@@ -189,7 +193,7 @@ class TestBattlePlanCrud:
         assert "Sniper" not in state["battle_plans"]
         reassigned = [f for f in state["fleets"]
                       if f["key"] == fleet["key"]][0]
-        assert reassigned["battle_plan"] == "Default"
+        assert reassigned["battle_plan"] == state["default_battle_plan"]
 
 
 def _run_convoy_battle(harness, freighter_tactic):

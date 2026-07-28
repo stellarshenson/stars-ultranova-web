@@ -284,6 +284,22 @@ class RemoteMineTaskObj(WaypointTaskBase):
 RemoteMineTask = RemoteMineTaskObj
 
 
+# Command vocabulary: the task names WaypointTaskBase.from_dict accepts
+# on input. Serialized task_type values must come from this table so a
+# task read back from the API can be sent straight back as a command
+# (the Python class name is not part of the API).
+TASK_COMMAND_NAMES = {
+    WaypointTask.NO_TASK: "NoTask",
+    WaypointTask.TRANSFER_CARGO: "Cargo",
+    WaypointTask.COLONIZE: "Colonise",
+    WaypointTask.LAY_MINES: "LayMines",
+    WaypointTask.INVADE: "Invade",
+    WaypointTask.SCRAP: "Scrap",
+    WaypointTask.SPLIT_MERGE: "SplitMerge",
+    WaypointTask.REMOTE_MINE: "RemoteMine",
+}
+
+
 def get_task_type(task: Union[WaypointTask, WaypointTaskBase, None]) -> WaypointTask:
     """
     Get the WaypointTask enum value from a task.
@@ -297,6 +313,16 @@ def get_task_type(task: Union[WaypointTask, WaypointTaskBase, None]) -> Waypoint
     if isinstance(task, WaypointTaskBase):
         return task.task_type
     return WaypointTask.NO_TASK
+
+
+def get_task_name(task: Union[WaypointTask, WaypointTaskBase, None]) -> str:
+    """
+    Get the command-vocabulary name of a task (enum or task object).
+
+    This is the name to serialize; it is accepted verbatim by
+    WaypointTaskBase.from_dict.
+    """
+    return TASK_COMMAND_NAMES[get_task_type(task)]
 
 
 @dataclass
@@ -347,7 +373,10 @@ class Waypoint:
         """Convert to dictionary for JSON serialization."""
         task_dict = {"type": "NoTask"}
         if isinstance(self.task, WaypointTask):
-            task_dict = {"type": self.task.name}
+            # Serialize through the command vocabulary, not the enum's own
+            # name: from_dict normalizes "LAY_MINES" to "lay_mines", which
+            # matches no branch and silently degrades the order to NoTask.
+            task_dict = {"type": TASK_COMMAND_NAMES.get(self.task, "NoTask")}
         elif isinstance(self.task, WaypointTaskBase):
             task_dict = self.task.to_dict()
 

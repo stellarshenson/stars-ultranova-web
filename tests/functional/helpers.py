@@ -60,14 +60,21 @@ def generate_turn(page):
     """Generate a turn via the Turn menu; returns the new year.
 
     Waits for the year to increment, then dismisses the turn report
-    dialog the app opens after each generation.
+    dialog - which the app opens only on turns that carried messages.
     """
     year_before = current_year(page)
     menu_action(page, "turn", "generateTurn")
     page.wait_for_function(
         f"() => GameState.game && GameState.game.turn === {year_before + 1}",
         timeout=120000)
-    close_dialog_if_open(page)
+    # GameState.game.turn is set before the state refresh completes, so
+    # wait for the app's own turnGenerated handling (year indicator)
+    # before reading the turn's messages
+    page.wait_for_function(
+        "() => document.getElementById('turn-indicator')"
+        f".textContent.includes('Year {year_before + 1}')", timeout=120000)
+    if page.evaluate("() => GameState.messages.length") > 0:
+        close_dialog_if_open(page)
     return year_before + 1
 
 

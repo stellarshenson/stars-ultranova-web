@@ -162,6 +162,15 @@ const ApiClient = {
         return this.request('GET', `/games/${gameId}`);
     },
 
+    /**
+     * The canonical universe size table (name, width, height in ly).
+     * The new-game dialog labels its options from this so the sizes
+     * are never restated on the client.
+     */
+    async getUniverseSizes() {
+        return this.request('GET', '/games/universe-sizes');
+    },
+
     async deleteGame(gameId) {
         return this.request('DELETE', `/games/${gameId}`, null, {
             showLoading: true, loadingMessage: 'Deleting game...'
@@ -220,10 +229,13 @@ const ApiClient = {
         return this.request('GET', `/games/${gameId}/empires/${empireId}/battles`);
     },
 
-    async setFleetBattlePlan(gameId, fleetKey, empireId, plan) {
+    // engagement = true sets the override for the imminent battle only;
+    // turn generation clears it and the fleet reverts to its standing plan
+    async setFleetBattlePlan(gameId, fleetKey, empireId, plan, engagement = false) {
         return this.request('POST', `/games/${gameId}/fleets/${fleetKey}/battle-plan`, {
             empire_id: empireId,
-            plan
+            plan,
+            engagement
         });
     },
 

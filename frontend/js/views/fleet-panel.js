@@ -378,7 +378,7 @@ const FleetPanel = {
      */
     taskDisplayName(wp) {
         const raw = (wp.task && wp.task.type) || wp.task_type || 'NoTask';
-        const norm = raw.replace('TaskObj', '').replace('Task', '');
+        const norm = raw.replace('Task', '');
         switch (norm) {
             case 'No': case '': return 'None';
             case 'Cargo': return 'Transfer Cargo';
@@ -492,7 +492,10 @@ const FleetPanel = {
      */
     renderFleetActions(fleet) {
         // Per-fleet battle plan selector (Fleet.cs:60; the C# fleet
-        // summary shows the plan, FleetReport.cs:130)
+        // summary shows the plan, FleetReport.cs:130). Picking one
+        // named plan from the empire list is the whole default path -
+        // the parameters behind each name live in the Battle Plans
+        // dialog the Plans button opens
         const planNames = Object.keys(GameState.battlePlans || {});
         const planOptions = planNames.map(name =>
             `<option value="${name}" ${name === (fleet.battle_plan || 'Default') ? 'selected' : ''}>${name}</option>`
@@ -500,10 +503,15 @@ const FleetPanel = {
         const battlePlanRow = planNames.length ? `
                 <div class="stat-row">
                     <span>Battle Plan:</span>
-                    <select class="form-select" id="fleet-battle-plan">
-                        ${planOptions}
-                    </select>
+                    <span>
+                        <select class="form-select" id="fleet-battle-plan">
+                            ${planOptions}
+                        </select>
+                        <button class="btn-small" id="btn-edit-battle-plans">Plans...</button>
+                    </span>
                 </div>` : '';
+
+        const imminentRow = this.renderImminentBattle(fleet, planNames);
 
         // Gift is enabled only with a Mystery Trader at the fleet's
         // position (co-location, merge tolerance)
@@ -515,6 +523,7 @@ const FleetPanel = {
             <div class="fleet-section">
                 <h3>Actions</h3>
                 ${battlePlanRow}
+                ${imminentRow}
                 <div class="action-buttons">
                     <button class="btn-small" id="btn-transfer-cargo">Cargo</button>
                     <button class="btn-small" id="btn-transfer-fleet">Xfer Fleet</button>
@@ -526,6 +535,44 @@ const FleetPanel = {
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * Imminent battle warning plus the engagement override.
+     *
+     * Combat resolves inside turn generation with no player input
+     * during the fight, so this is the last moment a commander has to
+     * change doctrine. The override applies to this battle only - the
+     * server clears it when the turn generates, whatever happened.
+     */
+    renderImminentBattle(fleet, planNames) {
+        const warning = (GameState.imminentBattles || []).find(
+            b => b.fleet_key === fleet.key);
+        if (!warning || !planNames.length) return '';
+
+        const standing = fleet.battle_plan || 'Default';
+        const chosen = fleet.engagement_plan || '';
+        const options = ['<option value="">Standing plan (' + standing + ')</option>']
+            .concat(planNames.map(name =>
+                `<option value="${name}" ${name === chosen ? 'selected' : ''}>${name}</option>`))
+            .join('');
+        const races = [...new Set(warning.hostiles.map(h => h.race_name))]
+            .join(', ');
+
+        return `
+                <div class="imminent-battle">
+                    <div class="imminent-battle-title">Battle imminent</div>
+                    <div>${warning.arriving ? 'Arriving at' : 'Engaged at'}
+                        ${warning.location} - ${warning.hostile_ships}
+                        hostile ship${warning.hostile_ships === 1 ? '' : 's'}
+                        (${races})</div>
+                    <div class="stat-row">
+                        <span>This battle only:</span>
+                        <select class="form-select" id="fleet-engagement-plan">
+                            ${options}
+                        </select>
+                    </div>
+                </div>`;
     },
 
     /**
@@ -637,21 +684,44 @@ const FleetPanel = {
         if (planSelect) {
             planSelect.addEventListener('change', () => this.setBattlePlan(planSelect.value));
         }
+
+        const editPlansBtn = document.getElementById('btn-edit-battle-plans');
+        if (editPlansBtn) {
+            editPlansBtn.addEventListener('click', () =>
+                Dialogs.showBattlePlans(this.currentFleet
+                    ? this.currentFleet.battle_plan : null));
+        }
+
+        const engagementSelect = document.getElementById('fleet-engagement-plan');
+        if (engagementSelect) {
+            engagementSelect.addEventListener('change', () =>
+                this.setBattlePlan(engagementSelect.value, true));
+        }
     },
 
     /**
      * Assign a battle plan to the current fleet.
+     *
+     * With engagement set the plan applies to the imminent battle only
+     * and the fleet reverts to its standing plan afterwards; an empty
+     * name cancels the override.
      */
-    async setBattlePlan(planName) {
+    async setBattlePlan(planName, engagement = false) {
         if (!this.currentFleet || !GameState.game) return;
 
         try {
             await ApiClient.setFleetBattlePlan(
                 GameState.game.id, this.currentFleet.key,
-                GameState.empireId, planName);
+                GameState.empireId, planName, engagement);
             await GameState.refreshState();
             this.refresh();
-            ApiClient.showStatus(`Battle plan: ${planName}`, 'info');
+            if (engagement) {
+                ApiClient.showStatus(planName
+                    ? `This battle only: ${planName}`
+                    : 'Reverted to the standing plan', 'info');
+            } else {
+                ApiClient.showStatus(`Battle plan: ${planName}`, 'info');
+            }
         } catch (error) {
             ApiClient.showStatus('Failed to set battle plan: ' + error.message, 'error');
             this.refresh();

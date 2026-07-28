@@ -1999,3 +1999,84 @@ class TestBattleLossSummary:
         assert len(data.all_empires[2].battle_reports) == 1
         assert data.all_empires[1].battle_reports[0]["losses"] == {
             "1": 0, "2": 3}
+
+
+# --------------------------------------------------------------------------
+# Repair tender chain (DEF-22)
+# Hull.HealsOthersPercent -> ShipDesign -> make_token -> ShipToken
+# --------------------------------------------------------------------------
+
+class TestRepairTenderChain:
+    """A Super-Fuel Transport in the fleet raises the repair rate.
+
+    The bonus is carried by the hull (components.xml
+    HealsOthersPercent) and has to survive design aggregation and
+    token creation to reach Fleet.heals_others_percent.
+    """
+
+    @pytest.fixture(scope="class")
+    def loader(self):
+        from backend.core.components.component_loader import (
+            get_component_loader, load_components
+        )
+        loader = get_component_loader()
+        if not loader.is_loaded:
+            load_components("backend/data/components.xml")
+        return loader
+
+    def _design(self, loader, hull_name):
+        from backend.core.components.ship_design import ShipDesign
+
+        design = ShipDesign(blueprint=loader.get_component(hull_name))
+        design.name = hull_name
+        design.key = 1
+        design.update()
+        return design
+
+    def _fleet(self, tender_token=None):
+        fleet = Fleet(name="Damaged Fleet", position=NovaPoint(100, 100))
+        fleet.owner = 1
+        fleet.id = 1
+        fleet.tokens[1] = ShipToken(
+            design_key=1, design_name="Warship", quantity=1,
+            mass=10, armor=100, damage_percent=50.0)
+        if tender_token is not None:
+            fleet.tokens[2] = tender_token
+        return fleet
+
+    def _state(self, fleet):
+        data = ServerData()
+        data.all_empires[1] = EmpireData(id=1)
+        data.all_empires[1].owned_fleets[fleet.key] = fleet
+        return data
+
+    def test_tender_hull_reaches_the_token(self, loader):
+        from backend.services.ship_specs import make_token
+
+        design = self._design(loader, "Super-Fuel Transport")
+        assert design.heals_others_percent == 10
+        assert make_token(design).heals_others_percent == 10
+
+    def test_small_tender_hull_reaches_the_token(self, loader):
+        from backend.services.ship_specs import make_token
+
+        design = self._design(loader, "Fuel Transport")
+        assert make_token(design).heals_others_percent == 5
+
+    def test_fleet_with_tender_heals_more(self, loader):
+        from backend.services.ship_specs import make_token
+
+        plain = self._fleet()
+        TurnGenerator(self._state(plain))._regenerate_fleet(plain)
+
+        tender = make_token(self._design(loader, "Super-Fuel Transport"))
+        tender.design_key = 2
+        with_tender = self._fleet(tender_token=tender)
+        TurnGenerator(
+            self._state(with_tender))._regenerate_fleet(with_tender)
+
+        # Stopped in space repairs 2 percent; the tender adds 10
+        assert plain.tokens[1].damage_percent == pytest.approx(48.0)
+        assert with_tender.tokens[1].damage_percent == pytest.approx(38.0)
+        assert (with_tender.tokens[1].damage_percent <
+                plain.tokens[1].damage_percent)

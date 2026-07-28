@@ -21,6 +21,7 @@ from .hull import Hull
 from .hull_module import HullModule
 from .engine import Engine
 from .component import Component, ComponentProperty
+from .ship_role import ShipRole, battle_role_of
 
 
 # Canonical Stars! cloaking curve. The C# reference is a stub: the
@@ -247,6 +248,12 @@ class ShipDesign(Item):
         """Dock capacity (starbases only)."""
         hull = self.hull
         return hull.dock_capacity if hull else 0
+
+    @property
+    def heals_others_percent(self) -> int:
+        """Extra repair percent this hull grants its fleet."""
+        hull = self.hull
+        return hull.heals_others_percent if hull else 0
 
     @property
     def engine(self) -> Optional[Engine]:
@@ -520,6 +527,11 @@ class ShipDesign(Item):
             else:
                 rating += 1.5 * weapon.power
         return int(rating)
+
+    @property
+    def battle_role(self) -> ShipRole:
+        """The single battle role this design falls into."""
+        return battle_role_of(self)
 
     def _ensure_updated(self):
         """Ensure summary is up to date."""
@@ -894,7 +906,8 @@ class ShipDesign(Item):
             "shield": self.shield,
             "fuel_capacity": self.fuel_capacity,
             "cargo_capacity": self.cargo_capacity,
-            "is_starbase": self.is_starbase
+            "is_starbase": self.is_starbase,
+            "battle_role": self.battle_role.value,
         }
 
     @classmethod

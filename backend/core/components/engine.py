@@ -9,6 +9,26 @@ from dataclasses import dataclass, field
 from typing import List
 
 
+# Ram-scoop engines carrying the deliberate web mod in
+# backend/data/components.xml: a NEGATIVE fuel table entry marks a
+# ram-scoop free warp where the C# canon
+# (references/original-game/components.xml) stores 0, so the ship
+# generates fuel there instead of merely not burning any. Any entry
+# <= 0 burns nothing (free_warp_speed below), which makes the negative
+# prefix exactly the free-warp band. Names only - the numbers live in
+# components.xml, the single source for every fuel table.
+WEB_MOD_RAMSCOOP_ENGINES = frozenset({
+    "Settler's Delight",
+    "Fuel Mizer",
+    "Trans-Galactic Fuel Scoop",
+    "Sub-Galactic Fuel Scoop",
+    "Galaxy Scoop",
+    "Trans-Galactic Mizer Scoop",
+    "Radiating Hydro-Ram Scoop",
+    "Trans-Galactic Super Scoop",
+})
+
+
 @dataclass
 class Engine:
     """

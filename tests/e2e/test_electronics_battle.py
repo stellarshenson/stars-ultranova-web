@@ -204,18 +204,25 @@ class TestElectronicsBattle:
 
     def test_capacitor_ship_out_damages_plain_ship(self, harness):
         """Beams are deterministic: every hit on the deflector-fitted
-        target lands power * quantity * (1 + cap/100) * 0.9, so the
-        capacitor ship's first shot is exactly 1.21x the plain ship's
-        and it destroys the target in fewer shots."""
+        target lands power * quantity * (1 + cap/100) * 0.9 * range
+        dissipation, so the capacitor ship's first shot is exactly
+        1.21x the plain ship's and it destroys the target in fewer
+        shots."""
         plain_steps, plain_destroyed = _run_battle(
             harness, "Beam Plain", "Target Defl")
         cap_steps, cap_destroyed = _run_battle(
             harness, "Beam Cap", "Target Defl")
 
+        # Beam range dissipation: the closing move leaves the stacks
+        # 0.8 of the Laser's range apart on the first exchange, so
+        # every hit keeps 100 - 10 * 0.8^2 = 93.6 percent of its power
+        dissipation = 0.936
         # Laser power 10, quantity 1, deflector 10% -> 9.0 per hit;
         # with 2x Energy Capacitor (21% stacked) -> 10.89
-        assert plain_steps[0]["damage"] == pytest.approx(10 * 0.9)
-        assert cap_steps[0]["damage"] == pytest.approx(10 * 1.21 * 0.9)
+        assert plain_steps[0]["damage"] == pytest.approx(
+            10 * 0.9 * dissipation)
+        assert cap_steps[0]["damage"] == pytest.approx(
+            10 * 1.21 * 0.9 * dissipation)
 
         # The boosted beams kill the same target with fewer shots
         assert plain_destroyed and cap_destroyed
