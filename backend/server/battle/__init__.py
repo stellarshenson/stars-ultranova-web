@@ -6,6 +6,7 @@ Combat resolution system ported from C# BattleEngine.cs and RonBattleEngine.cs.
 
 from .battle_step import (
     BattleStep,
+    BattleStepBoard,
     BattleStepMovement,
     BattleStepTarget,
     BattleStepWeapons,
@@ -24,6 +25,7 @@ from .ron_battle_engine import RonBattleEngine
 
 __all__ = [
     'BattleStep',
+    'BattleStepBoard',
     'BattleStepMovement',
     'BattleStepTarget',
     'BattleStepWeapons',

@@ -823,13 +823,20 @@ const Encyclopedia = {
                 <ul>
                     <li><b>The cascade</b> - first match wins, in this
                         order: Starbase (immobile base), Bomber (bomb
-                        racks fitted), Capital Ship (armed, power
-                        rating above 2,000), Escort (armed, power
-                        rating 2,000 or less), Logistics (a fuel
-                        transport), Support Ship (a colonisation
-                        module), Support Ship (a fleet repair hull),
-                        Logistics (a cargo hold), Support Ship
-                        (everything else unarmed).</li>
+                        racks fitted), Boarding Ship (boarding gear
+                        multiplying its party by 3.0 or more), Capital
+                        Ship (armed, power rating above 2,000), Escort
+                        (armed, power rating 2,000 or less), Logistics
+                        (a fuel transport), Support Ship (a
+                        colonisation module), Support Ship (a fleet
+                        repair hull), Logistics (a cargo hold),
+                        Support Ship (everything else unarmed).</li>
+                    <li><b>Boarders are their own class</b> - a ship
+                        that has spent three or more slots on marines
+                        files as a Boarding Ship whatever else it
+                        carries, so an anti-capital order stops
+                        covering it and an order naming Boarding Ship
+                        hunts or screens against it.</li>
                     <li><b>Power rating</b> - the 2,000 threshold that
                         separates a capital ship from an escort is the
                         design's weapon power rating, so a heavier gun
@@ -855,6 +862,192 @@ const Encyclopedia = {
                 is logged as its own event, and every stack in the
                 roster is listed with its role and the plan it fought
                 under.</p>`
+        },
+        {
+            id: 'battle-doctrine',
+            title: 'Battle Doctrine: Plans, Stance, Posture, Withdrawal',
+            html: `
+                <p>There is no separate doctrine setting. A fleet is
+                assigned one battle plan, and the plan carries
+                everything: who it hunts, how it manoeuvres, how
+                aggressively it fights, how it stands, and when it
+                breaks off. Six standard plans written by the
+                admiralty ship with every empire, one of them is your
+                empire default and every fleet your yards launch
+                inherits it, so a commander who never opens the Battle
+                Plans dialog still fights coherently. Design and name
+                your own plans alongside the six; the standard plans
+                cannot be deleted.</p>
+                <ul>
+                    <li><b>Aggressive Assault</b> - hunts capital
+                        ships, Maximise Damage, Aggressive stance,
+                        never withdraws</li>
+                    <li><b>Balanced</b> - the empire default: starbase
+                        first then bombers, Salvo then Close, no
+                        modifiers at all</li>
+                    <li><b>Defensive Hold</b> - armed ships first,
+                        Maximise Damage Ratio, Defensive stance,
+                        braced, withdraws at half armour</li>
+                    <li><b>Commerce Raid</b> - logistics first, Salvo
+                        then Close, scattered, withdraws when
+                        outnumbered</li>
+                    <li><b>Escort Screen</b> - bombers first, Maximise
+                        Damage Ratio, Defensive stance, never
+                        withdraws</li>
+                    <li><b>Fighting Retreat</b> - Minimise Damage to
+                        Self, Defensive stance, scattered, withdraws
+                        on first damage</li>
+                </ul>
+                <p><b>Stance</b> is the one statistical axis. The
+                tactic remains what it always was in Stars! - pure
+                movement, no modifiers - so stance is the only setting
+                that touches numbers, and what it buys is decided by
+                the enemy's build rather than by its own size.
+                Accuracy moves torpedoes only and is worth nothing to
+                a beam fleet; the shield multiplier never touches
+                armour, and shields stop a beam outright while a
+                torpedo splits its damage.</p>
+                <ul>
+                    <li><b>Aggressive</b> - +2 initiative, torpedo
+                        accuracy x1.10, shields x0.80, and it may
+                        never disengage: the plan cannot break off,
+                        whatever its tactic or threshold says</li>
+                    <li><b>Balanced</b> - no modifiers</li>
+                    <li><b>Defensive</b> - -2 initiative, torpedo
+                        accuracy x0.90, shields x1.25, and it leaves
+                        the board after 5 moves instead of 7</li>
+                </ul>
+                <p><b>Posture</b> is the formation, and it stacks with
+                stance.</p>
+                <ul>
+                    <li><b>Standard</b> - no modifiers</li>
+                    <li><b>Brace</b> - shields x1.30 and +1 square of
+                        weapon range, the bonus a starbase gets for
+                        fighting from a fixed emplacement. It is paid
+                        for twice. The armed stacks never move: they
+                        never close, so a braced beam line facing a
+                        stand-off enemy never fires a shot, and they
+                        can never accumulate the moves a withdrawal
+                        needs. And a hunkered fleet fires
+                        deliberately rather than pressing the attack,
+                        so its own damage is x0.80. Unarmed hulls are
+                        not braced - they have no firing position to
+                        hold and keep running from the guns, so
+                        bracing the battle line does not park the
+                        freighters in the open</li>
+                    <li><b>Scatter</b> - torpedoes fired at it are
+                        x0.85 accurate, splash from a missile that
+                        misses is halved, and it needs 2 fewer board
+                        moves to break off (never fewer than 3). It
+                        pays with concentration: its own damage is
+                        x0.85. The evasion does nothing against
+                        beams</li>
+                </ul>
+                <p><b>Withdrawal</b> states when the fleet runs, and
+                running costs. A withdrawing stack still needs 7 board
+                moves to leave (5 Defensive, 2 fewer scattered, never
+                below 3) and can be shot the whole way.</p>
+                <ul>
+                    <li><b>Never</b> / <b>On Damage</b> / <b>Half
+                        Armour</b> / <b>Outnumbered</b> - the last
+                        fires when the hostile side brings twice your
+                        side's armed ships or more</li>
+                    <li><b>The bill</b> - every surviving ship in a
+                        fleet that broke off carries 15% damage away
+                        and the fleet's remaining waypoints are
+                        cancelled, so it does not sail straight back
+                        into the engagement it just fled. The year of
+                        the withdrawal is recorded on the fleet</li>
+                </ul>
+                <p><b>Damage is permanent.</b> Armour a ship loses in
+                a battle is carried out of it and stays until the
+                repair step heals it. This is what makes an order to
+                take less damage worth giving - a fleet that wins
+                every fight while being shot to pieces still spends
+                the next several years unfit.</p>`
+        },
+        {
+            id: 'boarding',
+            title: 'Boarding and Capture',
+            html: `
+                <p>Ships can be taken instead of destroyed. Every ship
+                in the game already carries a boarding party - it is
+                simply its crew - so no special fitting is needed to
+                try. What a fitting buys is better odds, and what an
+                order buys is the willingness to gamble a crew on
+                them. Boarding is not in the original Stars!; it is an
+                addition to this game.</p>
+                <p><b>Boarding strength</b> is worked out from the
+                hull, never from a table:</p>
+                <ul>
+                    <li><b>10 crew per hull slot</b> - a Scout musters
+                        30, a Frigate 40, a Destroyer or Cruiser 70, a
+                        Battleship 110, a Dreadnought or Nubian
+                        130</li>
+                    <li><b>30 more per troop bay</b> - a Boarding-only
+                        slot berths marines whether or not gear is
+                        fitted in it. Only the Assault Transport has
+                        them, and its six bays plus eleven slots give
+                        it a base party of 290</li>
+                    <li><b>Components multiply it</b> - Breaching Gear
+                        x1.25 (Weapons 2, Construction 3, 10kT),
+                        Assault Pod x1.4 (Weapons 6, Construction 7,
+                        20kT), Marine Barracks x1.6 (Construction 12,
+                        Biotechnology 8, 35kT). They multiply together
+                        and with themselves, so three barracks is
+                        x4.10, and the total is capped at x6.00</li>
+                    <li><b>The trade</b> - boarding gear mounts in a
+                        general purpose slot, so every piece is a
+                        weapon or an armour plate you did not fit. A
+                        boarder buys capture capability with combat
+                        capability</li>
+                </ul>
+                <p><b>The Assault Transport</b> is the dedicated
+                boarding hull (Construction 9, Biotechnology 3):
+                eleven slots, six of them Boarding-only troop bays,
+                400 armour, 900 fuel, 200 cargo - and exactly ONE
+                general purpose mount, which is the whole of its
+                armament. Fully fitted it musters 1,740 against a
+                Dreadnought's 130. It takes ships; it does not kill
+                them.</p>
+                <p><b>The order.</b> Set "Board Enemy Ships" on a
+                battle plan to "When Able". The default is Never, and
+                Never is exactly the old behaviour - a commander who
+                never opens the Battle Plans dialog never gambles a
+                crew.</p>
+                <p><b>The odds</b> are a straight strength ratio: your
+                party times your ships, against theirs times theirs.
+                Like for like it is a coin flip, because the crew that
+                repels boarders is the same crew that makes them. The
+                result is clamped to 5% at worst and 85% at best -
+                overwhelming marines still lose one attempt in
+                seven.</p>
+                <p><b>The gates.</b> An attempt needs all of these,
+                and they are why boarding rides on top of a fleet's
+                firepower rather than replacing it:</p>
+                <ul>
+                    <li>the prize must be in your own square - you
+                        close to zero range through everything it
+                        has</li>
+                    <li>its shields must be at zero - you shoot them
+                        down first</li>
+                    <li>one attempt per stack per battle - the party
+                        crosses once, so ten boarders take one prize,
+                        not ten</li>
+                    <li>starbases neither board nor are boarded</li>
+                </ul>
+                <p><b>Success</b> transfers one ship to you as its own
+                new fleet at the battle site, carrying 50% damage and
+                a prize crew. Its design joins your list, marked
+                obsolete - you can fly the ship you took, not build
+                copies of it - and the full design is revealed to you
+                as intel.</p>
+                <p><b>Failure</b> is severe by design. The boarding
+                party is destroyed to a man and the boarder takes 50%
+                of the armour it entered the battle with, at once, and
+                that can kill it outright. The damage is carried out
+                of the battle like any other. A boarding order is a
+                real gamble, not a free action.</p>`
         }
     ],
 

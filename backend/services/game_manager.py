@@ -1210,7 +1210,8 @@ class GameManager:
         """
         from ..server.battle.battle_plan import (
             BattlePlan, Victims, TACTICS, ATTACK_OPTIONS, MAX_BATTLE_PLANS,
-            STANCES, POSTURES, WITHDRAW_OPTIONS, ADMIRALTY_PLANS)
+            STANCES, POSTURES, WITHDRAW_OPTIONS, BOARDING_ORDERS,
+            ADMIRALTY_PLANS)
 
         mode = (data.get("mode") or "").strip().lower()
         if mode == "set":
@@ -1228,7 +1229,8 @@ class GameManager:
             # one takes the no-modifier default in BattlePlan.from_dict
             for field_name, options in (("stance", STANCES),
                                         ("posture", POSTURES),
-                                        ("withdraw", WITHDRAW_OPTIONS)):
+                                        ("withdraw", WITHDRAW_OPTIONS),
+                                        ("board", BOARDING_ORDERS)):
                 if field_name not in plan_data:
                     continue
                 if plan_data[field_name] not in options:
@@ -2569,7 +2571,7 @@ class GameManager:
                 for k, v in empire_dict.get("empire_reports", {}).items()
             }
             from ..server.battle.battle_plan import (
-                BattlePlan, seed_admiralty_plans)
+                BattlePlan, DEFAULT_EMPIRE_PLAN, seed_admiralty_plans)
             empire.battle_plans = {
                 name: BattlePlan.from_dict(plan)
                 for name, plan in empire_dict.get("battle_plans", {}).items()
@@ -2579,14 +2581,21 @@ class GameManager:
                 # pre-relations saves lack relation keys, which default
                 # to Enemy - identical net behavior
                 empire.battle_plans["Default"] = BattlePlan(attack="Enemies")
-            # Migration: the six admiralty standard plans ship in every
-            # empire's list, so a save written before doctrine existed
-            # gains the ones it lacks and keeps every plan it had. Its
-            # empire default stays "Default" unless the save names one,
-            # so existing fleets and production are unaffected
+            # Migration (DEF-36): the six admiralty standard plans
+            # ship in every empire's list, so a save written before
+            # doctrine existed gains the ones it lacks and keeps every
+            # plan it had - seeding never overwrites, so a commander's
+            # edit under a standard name survives. The empire default
+            # "Default" (tactic Maximise Damage - always closes to
+            # contact) bypassed the doctrine for every fleet in a
+            # loaded game; it remaps to the admiralty default, while a
+            # save that names any other plan keeps it
             seed_admiralty_plans(empire.battle_plans)
-            empire.default_battle_plan = empire_dict.get(
+            default_plan = empire_dict.get(
                 "default_battle_plan", "Default")
+            if default_plan == "Default":
+                default_plan = DEFAULT_EMPIRE_PLAN
+            empire.default_battle_plan = default_plan
 
             empire.battle_reports = list(
                 empire_dict.get("battle_reports", []))

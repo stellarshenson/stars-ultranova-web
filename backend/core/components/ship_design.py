@@ -17,6 +17,10 @@ from ..globals import (
 if TYPE_CHECKING:
     from ..race.race import Race
 
+from .boarding import (
+    BOARDING_MULTIPLIER_MAXIMUM, base_boarding_strength,
+    is_boarding_specialist, troop_bay_count,
+)
 from .hull import Hull
 from .hull_module import HullModule
 from .engine import Engine
@@ -529,6 +533,41 @@ class ShipDesign(Item):
         return int(rating)
 
     @property
+    def base_boarding_strength(self) -> int:
+        """
+        The boarding party this hull musters with no gear fitted.
+
+        Web-only extension (boarding.py): derived from the hull's slot
+        count and its dedicated troop bays, never from a per-hull
+        table, so EVERY design has a party and a Dreadnought's crew
+        outmuscles a Scout's.
+        """
+        hull = self.hull
+        if hull is None:
+            return 0
+        return base_boarding_strength(
+            len(hull.modules), troop_bay_count(hull.modules))
+
+    @property
+    def boarding_multiplier(self) -> float:
+        """Multiplier fitted boarding components apply to the party."""
+        self._ensure_updated()
+        prop = self._summary_properties.get("Boarding")
+        if prop is None:
+            return 1.0
+        return float(prop.get("Value", 1.0))
+
+    @property
+    def boarding_strength(self) -> float:
+        """Boarding strength of ONE ship of this design."""
+        return self.base_boarding_strength * self.boarding_multiplier
+
+    @property
+    def is_boarder(self) -> bool:
+        """Whether fitted gear makes this a dedicated boarding ship."""
+        return is_boarding_specialist(self.boarding_multiplier)
+
+    @property
     def battle_role(self) -> ShipRole:
         """The single battle role this design falls into."""
         return battle_role_of(self)
@@ -690,6 +729,21 @@ class ShipDesign(Item):
                 scaled = min((100.0 + old) * (100.0 + scaled) / 100.0 - 100.0,
                              CAPACITOR_MAXIMUM)
             self._summary_properties["Capacitor"] = {"Value": scaled}
+
+        elif prop_type == "Boarding":
+            # Web-only extension (no C# equivalent - Nova has no
+            # boarding). Boarding gear multiplies the ship's own party
+            # geometrically, per slot and across slots, exactly as
+            # capacitors multiply beam damage, and every step clamps at
+            # BOARDING_MULTIPLIER_MAXIMUM so free slots cannot buy an
+            # unlosable boarding fight (boarding.py).
+            value = float(values.get("Value", 1.0))
+            scaled = min(value ** count, BOARDING_MULTIPLIER_MAXIMUM)
+            if "Boarding" in self._summary_properties:
+                scaled = min(
+                    self._summary_properties["Boarding"]["Value"] * scaled,
+                    BOARDING_MULTIPLIER_MAXIMUM)
+            self._summary_properties["Boarding"] = {"Value": scaled}
 
         elif prop_type == "Beam Deflector":
             # Probability stacking like Jammer. DEVIATION from C#:

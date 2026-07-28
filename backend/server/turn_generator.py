@@ -1807,7 +1807,19 @@ class TurnGenerator:
                 # _position_stacks, so .get only covers malformed
                 # reports.
                 losses = battle.losses.get(empire_id, 0)
-                if losses == 0:
+                # The outcome ledger (per-ship attrition, DEF-35)
+                # names every design's fate; a report without one
+                # (standard engine) falls back to the bare count
+                outcomes = [o for o in getattr(battle, 'outcomes', [])
+                            if o.get("owner") == empire_id]
+                if outcomes:
+                    loss_text = "; ".join(
+                        f"{o['initial']} x {o['design_name']} -> "
+                        f"{o['destroyed']} destroyed, {o['survived']} "
+                        f"survived at "
+                        f"{int(round(o['damage_percent']))}% damage"
+                        for o in outcomes) + "."
+                elif losses == 0:
                     loss_text = "None of your ships were destroyed."
                 else:
                     loss_text = f"{losses} of your ships were destroyed."

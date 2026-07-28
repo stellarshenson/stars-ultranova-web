@@ -286,17 +286,25 @@ class TestWave4Integration:
 
         # Electronics: the first raider beam hit lands exactly
         # power(10) x quantity(2) x 1.21 (2x Energy Capacitor stacked)
-        # x 0.9 (Beam Deflector) on the escort x 0.9 (beam range
-        # dissipation - the first exchange happens at the weapon's
-        # maximum range, where a beam keeps 90 percent of its power)
+        # x 0.9 (Beam Deflector) on the escort x 0.99216 (beam range
+        # dissipation - the first exchange happens 0.28 of the way out
+        # to the weapon's maximum range, where a beam keeps
+        # 100 - 10 * 0.28^2 percent of its power)
         # - beams have no accuracy roll, so the value is deterministic
+        # once the approach is. That approach used to end at maximum
+        # range for this seed; it ends closer in now that movement
+        # resolves heaviest-first with a 15 percent juggle instead of
+        # in the order empires occupy in the stack list
+        # (RonBattleEngine._move_order, BattleEngine.cs:524). The
+        # electronics arithmetic this row is asserting - capacitor
+        # x deflector - is unchanged; only the range they met at moved
         raider_fire = [s for s in steps
                        if s["type"] == "Weapons"
                        and (s["weapon_target"]["stack_key"] >> 32) == 1
                        and (s["weapon_target"]["target_key"] >> 32) == 2]
         assert raider_fire, "raiders never fired"
         assert raider_fire[0]["damage"] == pytest.approx(
-            10 * 2 * 1.21 * 0.9 * 0.9)
+            10 * 2 * 1.21 * 0.9 * 0.99216)
 
         # Battle plans: the Escort tier outranks the freighter's Any
         # Ship tier in the Default plan, so every raider volley up to

@@ -27,6 +27,10 @@ class Victims(IntEnum):
     # indistinguishable from every other unarmed ship under
     # SUPPORT_SHIP (see backend/core/components/ship_role.py)
     LOGISTICS = 7
+    # Web-only tier: a boarding ship is armed but is not the escort or
+    # capital its power rating would otherwise file it as, so an order
+    # can hunt boarders or screen a prize crew off a convoy
+    BOARDER = 8
 
 
 # Tactic strings, exactly as in the C# BattlePlans dialog
@@ -40,7 +44,22 @@ TACTICS = [
     "Maximise Damage Ratio",
     "Maximise Net Damage",
     "Minimise Damage to Self",
+    # Web-only tactic (user requirement "long distance + closeup
+    # finishoff"; docs/research-engagement-range.md section 3): hold
+    # at longest range like Maximise Damage Ratio, then close like
+    # Maximise Damage once the close-for-the-kill trigger fires -
+    # the one genuinely new mechanic of the engagement-range decision
+    "Salvo then Close",
 ]
+
+# "Salvo then Close" commits to the run-in when its target's armour
+# falls to or below this percent of what it entered the battle with,
+# or when the target begins disengaging. Deliberately a module
+# constant rather than a per-plan dial: a threshold the commander
+# must tune is a dial on the primary path, which the governing
+# cognitive-load principle rules out
+# (docs/research-engagement-range.md:57)
+CLOSE_FOR_KILL_ARMOUR_PERCENT = 50.0
 
 # Attack-who strings, exactly as in the C# dialog
 # (BattlePlans.Designer.cs:147-150). "Enemies and Neutrals" exists in
@@ -67,6 +86,7 @@ VICTIMS_LABELS = {
     Victims.ANY_SHIP: "Any Ship",
     Victims.SUPPORT_SHIP: "Support Ship",
     Victims.LOGISTICS: "Logistics",
+    Victims.BOARDER: "Boarding Ship",
 }
 
 # Tier numbers returned by RonBattleEngine._get_priority, carried into
@@ -145,21 +165,48 @@ class PostureModifiers:
     shields - multiplier on the shield pool, stacking with stance
     splash_taken - multiplier on missile MISS damage (the engine's
         area effect, RonBattleEngine._fire_missile)
+    incoming_missile_accuracy - multiplier on the accuracy of MISSILES
+        fired at this stack; a spread-out formation is harder to guide
+        a torpedo into and beams are unaffected, so what this buys is
+        decided by the enemy's weapon class, not by its size
     damage_dealt - multiplier on this stack's own hit power
+    weapon_range_bonus - squares added to every weapon's reach, the
+        bonus canonical Stars! gives a starbase for fighting from a
+        fixed emplacement, which is what a braced stack is
     disengage_moves_delta - change to the moves a disengage needs
     """
     holds_position: bool = False
     shields: float = 1.0
     splash_taken: float = 1.0
+    incoming_missile_accuracy: float = 1.0
     damage_dealt: float = 1.0
+    weapon_range_bonus: int = 0
     disengage_moves_delta: int = 0
 
 
 POSTURE_MODIFIERS: Dict[str, PostureModifiers] = {
     "Standard": PostureModifiers(),
-    "Brace": PostureModifiers(holds_position=True, shields=1.15),
+    # Brace fights as an emplacement: a bigger shield pool and the
+    # starbase range bonus, paid for by never closing - a braced beam
+    # line facing a stand-off enemy never fires a shot - and by firing
+    # deliberately rather than pressing the attack. The gunnery price
+    # is not decoration: never closing turned out to cost almost
+    # nothing once the engine stopped overshooting its targets
+    # (DEF-30), because an emplaced line fights concentrated in one
+    # square while a manoeuvring force disperses and arrives
+    # piecemeal. Without it Brace won every matchup in the
+    # anti-degeneracy round-robin (tests/unit/test_battle_degeneracy)
+    "Brace": PostureModifiers(
+        holds_position=True, shields=1.30, weapon_range_bonus=1,
+        damage_dealt=0.80),
+    # Scatter is spread out: harder to guide a torpedo into, half the
+    # splash from a missile that misses, and two fewer board moves to
+    # break off - paid for with concentration of fire. The evasion is
+    # worth nothing against beams, so the enemy's weapon class decides
+    # what the posture buys
     "Scatter": PostureModifiers(
-        splash_taken=0.5, damage_dealt=0.75, disengage_moves_delta=-2),
+        splash_taken=0.5, incoming_missile_accuracy=0.85,
+        damage_dealt=0.85, disengage_moves_delta=-2),
 }
 
 # Never fewer than this many board moves to leave a battle, however
@@ -186,6 +233,33 @@ WITHDRAWAL_DAMAGE_PERCENT = 15.0
 # "Outnumbered" fires when the hostile side fields at least this
 # multiple of the stack's own side in armed ships
 OUTNUMBERED_RATIO = 2.0
+
+
+# Boarding order - whether the fleet will try to take a prize instead
+# of only shooting at one. Web-only extension (user directive, "add
+# boarding ships and boarding battle plans - to take over ships - but
+# at great risk to self"; the C# reference has no boarding). "Never" is
+# the default and the whole of the old behaviour, so a plan written
+# before boarding existed, and a commander who never opens the battle
+# screen, never gambles a crew.
+BOARDING_ORDERS = [
+    "Never",
+    "When Able",
+]
+
+# Boarding is not a free action, and these three numbers are what stop
+# it becoming one:
+#
+# - the odds are a strength ratio, so a like-for-like attempt is a coin
+#   flip, and they are clamped at both ends: overwhelming marines still
+#   lose one attempt in seven, and a hopeless one still gets a chance
+# - a failed attempt costs the boarder half the armour it entered the
+#   battle with, applied at once and able to kill it outright
+# - the prize is taken battered, not intact
+BOARDING_MIN_CHANCE = 0.05
+BOARDING_MAX_CHANCE = 0.85
+BOARDING_FAILURE_ARMOR_PERCENT = 50.0
+BOARDING_PRIZE_DAMAGE_PERCENT = 50.0
 
 
 # Battle plan cap: the canonical Stars! allowance of 14 player plans
@@ -218,6 +292,7 @@ class BattlePlan:
     stance: str = "Balanced"
     posture: str = "Standard"
     withdraw: str = "Never"
+    board: str = "Never"
 
     @property
     def stance_modifiers(self) -> StanceModifiers:
@@ -244,6 +319,7 @@ class BattlePlan:
             "stance": self.stance,
             "posture": self.posture,
             "withdraw": self.withdraw,
+            "board": self.board,
         }
 
     @classmethod
@@ -264,12 +340,21 @@ class BattlePlan:
             stance=data.get("stance", "Balanced"),
             posture=data.get("posture", "Standard"),
             withdraw=data.get("withdraw", "Never"),
+            board=data.get("board", "Never"),
         )
 
 
 # The six admiralty standard plans. These ARE the doctrine - there is
 # no separate doctrine object; every empire's plan list is seeded with
 # them and a commander designs further plans alongside them.
+#
+# The tactic column IS each plan's engagement-range order - the panel
+# review of docs/research-engagement-range.md rejected a separate
+# axis field as a second movement authority (its O1/D1) and put the
+# doctrine on the tactic the engine already obeys: Maximise Damage
+# closes to contact, Maximise Damage Ratio stands off at longest
+# range, Minimise Damage to Self stands off and falls back
+# shieldless, Salvo then Close opens at range then commits.
 #
 # Tiers below the last meaningful one repeat it: the Victims enum has
 # no "None" value, so repeating is how a plan says "nothing further".
@@ -286,9 +371,11 @@ ADMIRALTY_PLANS = {
         posture="Standard",
         withdraw="Never",
     ),
-    # Balanced carries the same tiers, tactic and attack as the legacy
-    # "Default" plan and no modifiers at all, so an empire whose
-    # default moves from Default to Balanced fights identically
+    # Balanced keeps the legacy "Default" plan's tiers, attack and
+    # no-modifier axes, so a remapped empire hunts the same things.
+    # Its TACTIC deliberately differs: Salvo then Close is the
+    # engagement-range doctrine - free opening shots, then the kill -
+    # where legacy Default always closed to contact
     "Balanced": BattlePlan(
         name="Balanced",
         primary_target=int(Victims.STARBASE),
@@ -296,7 +383,7 @@ ADMIRALTY_PLANS = {
         tertiary_target=int(Victims.ESCORT),
         quaternary_target=int(Victims.ANY_SHIP),
         quinary_target=int(Victims.SUPPORT_SHIP),
-        tactic="Maximise Damage",
+        tactic="Salvo then Close",
         stance="Balanced",
         posture="Standard",
         withdraw="Never",
@@ -308,7 +395,7 @@ ADMIRALTY_PLANS = {
         tertiary_target=int(Victims.ANY_SHIP),
         quaternary_target=int(Victims.ANY_SHIP),
         quinary_target=int(Victims.ANY_SHIP),
-        tactic="Minimise Damage to Self",
+        tactic="Maximise Damage Ratio",
         stance="Defensive",
         posture="Brace",
         withdraw="Half Armour",
@@ -320,7 +407,7 @@ ADMIRALTY_PLANS = {
         tertiary_target=int(Victims.BOMBER),
         quaternary_target=int(Victims.ESCORT),
         quinary_target=int(Victims.ESCORT),
-        tactic="Maximise Damage Ratio",
+        tactic="Salvo then Close",
         stance="Balanced",
         posture="Scatter",
         withdraw="Outnumbered",
@@ -332,7 +419,7 @@ ADMIRALTY_PLANS = {
         tertiary_target=int(Victims.ARMED_SHIP),
         quaternary_target=int(Victims.CAPITAL_SHIP),
         quinary_target=int(Victims.ANY_SHIP),
-        tactic="Maximise Net Damage",
+        tactic="Maximise Damage Ratio",
         stance="Defensive",
         posture="Standard",
         withdraw="Never",
@@ -344,7 +431,7 @@ ADMIRALTY_PLANS = {
         tertiary_target=int(Victims.ANY_SHIP),
         quaternary_target=int(Victims.ANY_SHIP),
         quinary_target=int(Victims.ANY_SHIP),
-        tactic="Maximise Damage Ratio",
+        tactic="Minimise Damage to Self",
         stance="Defensive",
         posture="Scatter",
         withdraw="On Damage",

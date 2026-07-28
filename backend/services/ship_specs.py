@@ -17,6 +17,8 @@ from typing import List
 
 from ..core.data_structures.resources import Resources
 from ..core.game_objects.fleet import ShipToken
+from ..core.components.boarding import (
+    base_boarding_strength, is_boarding_specialist)
 from ..core.components.engine import Engine
 from ..core.components.ship_design import Weapon
 from ..core.components.ship_role import ShipRole, battle_role_of
@@ -57,6 +59,42 @@ def engine_fuel_table(engine_name: str) -> List[int]:
         cached = list(prop.values["fuel_consumption"]) if prop else [0] * 10
         _FUEL_TABLE_CACHE[engine_name] = cached
     return list(cached)
+
+
+_HULL_SLOT_CACHE: dict = {}
+
+
+def hull_slot_counts(hull_name: str) -> tuple:
+    """
+    Resolve (module slots, Boarding-only troop bays) for a hull.
+
+    Reads the component catalog so a SimpleDesign's boarding party is
+    derived from the same hull data a full ShipDesign reads, with no
+    duplicated per-hull table and nothing extra to persist.
+
+    Args:
+        hull_name: Hull component name, "" for an unknown hull.
+
+    Returns:
+        (total slots, troop bays); (0, 0) for an unknown hull.
+    """
+    if not hull_name:
+        return (0, 0)
+    cached = _HULL_SLOT_CACHE.get(hull_name)
+    if cached is None:
+        from ..core.components.boarding import TROOP_BAY_SLOT
+        from .design_builder import ensure_components_loaded
+        loader = ensure_components_loaded()
+        component = loader.get_component(hull_name)
+        prop = component.get_property("Hull") if component else None
+        modules = prop.values.get("modules", []) if prop else []
+        cached = (
+            len(modules),
+            sum(1 for m in modules
+                if (m.get("component_type") or "").strip() == TROOP_BAY_SLOT),
+        )
+        _HULL_SLOT_CACHE[hull_name] = cached
+    return cached
 
 
 def _free_warp_from_table(fuel_table: List[int]) -> int:
@@ -127,6 +165,10 @@ class SimpleDesign:
     # (starbase)
     engine_name: str = ""
     fuel_table: List[int] = field(default_factory=lambda: [0] * 10)
+    # Multiplier fitted boarding gear applies to this ship's own
+    # boarding party (web-only extension; full ShipDesign aggregates
+    # the Boarding component property). 1.0 = no gear fitted
+    boarding_multiplier: float = 1.0
 
     @property
     def power_rating(self) -> int:
@@ -138,6 +180,28 @@ class SimpleDesign:
     def shield(self) -> int:
         """Alias used by battle code (ShipDesign uses 'shield')."""
         return self.shields
+
+    @property
+    def base_boarding_strength(self) -> int:
+        """
+        The boarding party this hull musters with no gear fitted.
+
+        Derived from the catalog hull the design names, so the value
+        matches a full ShipDesign on the same hull and nothing has to
+        be persisted or migrated (boarding.py).
+        """
+        slots, bays = hull_slot_counts(self.hull_name)
+        return base_boarding_strength(slots, bays)
+
+    @property
+    def boarding_strength(self) -> float:
+        """Boarding strength of ONE ship of this design."""
+        return self.base_boarding_strength * self.boarding_multiplier
+
+    @property
+    def is_boarder(self) -> bool:
+        """Whether fitted gear makes this a dedicated boarding ship."""
+        return is_boarding_specialist(self.boarding_multiplier)
 
     @property
     def battle_role(self) -> ShipRole:
@@ -188,6 +252,7 @@ class SimpleDesign:
             "mass_driver": self.mass_driver,
             "engine_name": self.engine_name,
             "fuel_table": list(self.fuel_table),
+            "boarding_multiplier": self.boarding_multiplier,
             "weapons": [
                 {"power": w.power, "range": w.range, "initiative": w.initiative,
                  "accuracy": w.accuracy, "group": w.group}
@@ -234,6 +299,10 @@ class SimpleDesign:
         design.mass_driver = data.get("mass_driver", 0)
         design.engine_name = data.get("engine_name", "")
         design.fuel_table = list(data.get("fuel_table", [0] * 10))
+        # Saves written before boarding existed carry no gear, so the
+        # no-gear multiplier is the right default; the hull half of the
+        # party is re-derived from hull_name and never persisted
+        design.boarding_multiplier = data.get("boarding_multiplier", 1.0)
         design.weapons = [
             Weapon(power=w.get("power", 0), range=w.get("range", 0),
                    initiative=w.get("initiative", 0), accuracy=w.get("accuracy", 75),
@@ -579,6 +648,12 @@ def make_token(design, quantity: int = 1) -> ShipToken:
     # properties, SimpleDesign caches the same fields)
     token.cloak_units = getattr(design, 'cloak_units', 0)
     token.tachyon_detectors = getattr(design, 'tachyon_detectors', 0)
+
+    # Boarding strength of one ship (web-only extension; hull-derived
+    # party times fitted gear, backend/core/components/boarding.py).
+    # Cached like the fields above so the battle engine can read it
+    # from a token whose design object is missing
+    token.boarding_strength = float(getattr(design, 'boarding_strength', 0.0))
 
     # Storm protection sources (web-only extension; ShipDesign
     # aggregates Storm Shield / Armor component properties)

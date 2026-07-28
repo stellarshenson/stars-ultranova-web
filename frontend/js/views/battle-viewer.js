@@ -11,6 +11,7 @@
  *              target_role }
  *   Weapons  { weapon_target:{stack_key, target_key}, damage, targeting }
  *   Withdraw { stack_key }
+ *   Board    { stack_key, target_key, chance, success, design_name }
  *   Destroy  { stack_key }
  */
 
@@ -611,6 +612,18 @@ const BattleViewer = {
             }
             case 'Withdraw':
                 return `${this.stackName(step.stack_key)} withdraws from the battle`;
+            case 'Board': {
+                // A boarding gamble, with the odds it was taken at, so
+                // a lost prize reads as a lost bet rather than a bug
+                const odds = `${Math.round((step.chance || 0) * 100)}%`;
+                const prize = step.design_name || this.stackName(step.target_key);
+                return step.success
+                    ? `${this.stackName(step.stack_key)} boards and CAPTURES `
+                        + `${prize} (${odds} odds)`
+                    : `${this.stackName(step.stack_key)} boards ${prize} and is `
+                        + `REPELLED (${odds} odds) - boarding party lost, `
+                        + `boarder crippled`;
+            }
             case 'Destroy':
                 return `${this.stackName(step.stack_key)} destroyed`;
             default:

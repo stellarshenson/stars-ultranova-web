@@ -35,8 +35,16 @@ RESEARCH_FIELDS = ("Biotechnology", "Electronics", "Energy",
 DESIGNS = {
     1: [
         ("Torp Comp", [  # 2x Battle Computer -> 36% stacked accuracy
-            {"cell_number": 2, "component": "Beta Torpedo", "count": 1},
-            {"cell_number": 22, "component": "Beta Torpedo", "count": 1},
+            # One Alpha Torpedo (power 5, accuracy 35), not the two
+            # Beta tubes this design shipped with: torpedo hit power
+            # lost its /10 divisor (DEF-33, canon applies hit power
+            # directly at BattleEngine.cs:794-808), and the jam-ratio
+            # test needs the target to survive the whole battle in
+            # both runs. One Alpha throws 5 x 0.584 boosted = 2.9
+            # expected per round, 175 over 60 rounds against the
+            # target's 350 armour; the old pair of Betas would now
+            # chew 930 and sink it mid-comparison
+            {"cell_number": 2, "component": "Alpha Torpedo", "count": 1},
             {"cell_number": 10, "component": "Alpha Drive 8", "count": 1},
             {"cell_number": 16, "component": "Battle Computer", "count": 1},
             {"cell_number": 12, "component": "Battle Computer", "count": 1},
@@ -185,14 +193,14 @@ class TestElectronicsBattle:
         0.64x the torpedo damage of the plain target (each Ron-engine
         shot lands hit_power * percent_hit on armor, and percent_hit
         scales linearly with the jam factor - no clamping because the
-        computer-boosted base of 64.8% caps at 81% on the widest
+        computer-boosted base of 58.4% caps at 73% on the widest
         roll)."""
         plain_steps, plain_destroyed = _run_battle(
             harness, "Torp Comp", "Target Plain")
         jam_steps, jam_destroyed = _run_battle(
             harness, "Torp Comp", "Target Jam")
 
-        # Beta Torpedoes cannot chew 350 armor within one battle:
+        # One Alpha Torpedo cannot chew 350 armor within one battle:
         # the totals compare complete, equal-length engagements
         assert not plain_destroyed and not jam_destroyed
 
@@ -214,9 +222,17 @@ class TestElectronicsBattle:
             harness, "Beam Cap", "Target Defl")
 
         # Beam range dissipation: the closing move leaves the stacks
-        # 0.8 of the Laser's range apart on the first exchange, so
-        # every hit keeps 100 - 10 * 0.8^2 = 93.6 percent of its power
-        dissipation = 0.936
+        # 0.82 of the Laser's range apart on the first exchange, so
+        # every hit keeps 100 - 10 * 0.82^2 = 93.276 percent of its
+        # power. The 0.82 is where the approach stops, and it moved
+        # from 0.80 when movement stopped being resolved in the order
+        # empires occupy in the stack list and started being resolved
+        # heaviest-first with a 15 percent juggle
+        # (RonBattleEngine._move_order, BattleEngine.cs:524). Both
+        # battles close to the same 0.82, so the claim this row is
+        # really making - that the capacitor multiplies every hit by
+        # exactly 1.21 - is untouched by the move
+        dissipation = 0.93276
         # Laser power 10, quantity 1, deflector 10% -> 9.0 per hit;
         # with 2x Energy Capacitor (21% stacked) -> 10.89
         assert plain_steps[0]["damage"] == pytest.approx(

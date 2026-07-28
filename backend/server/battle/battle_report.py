@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 
 from .battle_step import (
     BattleStep,
+    BattleStepBoard,
     BattleStepMovement,
     BattleStepTarget,
     BattleStepWeapons,
@@ -35,6 +36,11 @@ class BattleReport:
     steps: List[BattleStep] = field(default_factory=list)
     stacks: Dict[int, 'Stack'] = field(default_factory=dict)
     losses: Dict[int, int] = field(default_factory=dict)  # empire_id -> loss_count
+    # Per-design outcome ledger, one entry per stack: owner,
+    # design_name, initial, destroyed, survived, damage_percent.
+    # Filled by the engine once the battle is over so the report can
+    # read "N x Design -> K destroyed, M survived at X% damage"
+    outcomes: List[dict] = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -63,6 +69,7 @@ class BattleReport:
             "steps": steps_data,
             "stacks": stacks_data,
             "losses": {str(k): v for k, v in self.losses.items()},
+            "outcomes": list(self.outcomes),
         }
 
     @classmethod
@@ -87,11 +94,14 @@ class BattleReport:
                 report.steps.append(BattleStepDestroy.from_dict(step_data))
             elif step_type == "Withdraw":
                 report.steps.append(BattleStepWithdraw.from_dict(step_data))
+            elif step_type == "Board":
+                report.steps.append(BattleStepBoard.from_dict(step_data))
             else:
                 report.steps.append(BattleStep.from_dict(step_data))
 
         # Stacks will need to be deserialized separately with proper Stack class
         # For now store raw data
         report.losses = {int(k): v for k, v in data.get("losses", {}).items()}
+        report.outcomes = list(data.get("outcomes", []))
 
         return report

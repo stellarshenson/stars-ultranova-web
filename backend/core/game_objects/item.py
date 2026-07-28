@@ -39,6 +39,10 @@ class ItemType(IntEnum):
     STAR_INTEL = 23
     FLEET_INTEL = 24
     SALVAGE = 25
+    # Web-only (C# ItemType.cs has no boarding): assault pods, marine
+    # barracks and breaching gear, the components that multiply a
+    # ship's boarding party (backend/core/components/boarding.py)
+    BOARDING = 26
 
     def to_description(self) -> str:
         """Return human-readable description."""

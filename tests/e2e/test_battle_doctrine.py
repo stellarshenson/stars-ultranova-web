@@ -138,7 +138,7 @@ class TestWithdrawalConsequences:
         assert convoy is not None, "the freighter should have escaped"
         # Charged in hull damage and in strategic position: the parking
         # waypoint stack is cut back to waypoint zero
-        assert convoy["withdrawn_year"] == harness.state(2)["year"] - 1
+        assert convoy["withdrawn_year"] == harness.state(2)["turn_year"] - 1
         assert len(convoy["waypoints"]) == 1
         assert any(t["damage_percent"] >= 15.0
                    for t in convoy["tokens"])

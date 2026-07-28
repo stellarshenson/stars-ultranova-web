@@ -927,14 +927,16 @@ const Dialogs = {
     },
 
     // Battle plan option lists. Tactic and attack strings match the
-    // C# dialog exactly (BattlePlans.Designer.cs:168-174, 147-150);
-    // the five target tiers use the stars-nova trunk Victims model
-    // consumed by the Ron engine (backend battle_plan.Victims), not
-    // the C# 2-tier string list.
+    // C# dialog exactly (BattlePlans.Designer.cs:168-174, 147-150)
+    // plus the web-only Salvo then Close tactic (backend
+    // battle_plan.TACTICS - hold at range, close once the target is
+    // broken); the five target tiers use the stars-nova trunk Victims
+    // model consumed by the Ron engine (backend battle_plan.Victims),
+    // not the C# 2-tier string list.
     BATTLE_PLAN_TACTICS: [
         'Disengage', 'Disengage if Challenged', 'Maximise Damage',
         'Maximise Damage Ratio', 'Maximise Net Damage',
-        'Minimise Damage to Self'
+        'Minimise Damage to Self', 'Salvo then Close'
     ],
     BATTLE_PLAN_ATTACK: ['Enemies', 'Enemies and Neutrals', 'Everyone'],
     BATTLE_PLAN_TARGETS: [
@@ -945,7 +947,8 @@ const Dialogs = {
         { value: 4, label: 'Armed Ship' },
         { value: 5, label: 'Any Ship' },
         { value: 6, label: 'Support Ship' },
-        { value: 7, label: 'Logistics' }
+        { value: 7, label: 'Logistics' },
+        { value: 8, label: 'Boarding Ship' }
     ],
     // Doctrine axes (backend battle_plan.STANCES / POSTURES /
     // WITHDRAW_OPTIONS). They sit behind a disclosure: picking a named
@@ -954,6 +957,9 @@ const Dialogs = {
     BATTLE_PLAN_POSTURES: ['Standard', 'Brace', 'Scatter'],
     BATTLE_PLAN_WITHDRAW: ['Never', 'On Damage', 'Half Armour',
                            'Outnumbered'],
+    // Boarding order (backend battle_plan.BOARDING_ORDERS). Default
+    // Never: capturing a ship is a gamble a commander opts into
+    BATTLE_PLAN_BOARD: ['Never', 'When Able'],
 
     /**
      * Battle Plans dialog - two-pane layout after the C# BattlePlans
@@ -1042,6 +1048,12 @@ const Dialogs = {
                                 </select>
                             </div>
                             <div class="form-group">
+                                <label for="battle-plan-board">Board Enemy Ships</label>
+                                <select id="battle-plan-board" class="form-select">
+                                    ${axisOptions(this.BATTLE_PLAN_BOARD, plan.board || 'Never')}
+                                </select>
+                            </div>
+                            <div class="form-group">
                                 <label for="battle-plan-tactic">Tactic</label>
                                 <select id="battle-plan-tactic" class="form-select">
                                     ${axisOptions(this.BATTLE_PLAN_TACTICS, plan.tactic)}
@@ -1095,7 +1107,8 @@ const Dialogs = {
                 attack: document.getElementById('battle-plan-attack')?.value,
                 stance: document.getElementById('battle-plan-stance')?.value,
                 posture: document.getElementById('battle-plan-posture')?.value,
-                withdraw: document.getElementById('battle-plan-withdraw')?.value
+                withdraw: document.getElementById('battle-plan-withdraw')?.value,
+                board: document.getElementById('battle-plan-board')?.value
             };
             for (const [key] of tiers) {
                 payload[key] = parseInt(document.getElementById(`battle-plan-${key}`)?.value) || 0;

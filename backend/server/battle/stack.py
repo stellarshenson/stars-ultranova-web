@@ -6,7 +6,7 @@ Battle stack - a specialized fleet containing a single ship token for combat.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from ...core.data_structures import NovaPoint, Resources, Cargo
 from ...core.components.ship_role import ShipRole, infer_battle_role
@@ -34,6 +34,10 @@ class StackToken:
     # Armour the stack entered the battle with, so the "Half Armour"
     # withdrawal threshold has a baseline to compare against
     initial_armor: float = 0.0
+    # Ships the stack entered the battle with: initial_armor divided
+    # by this is the per-ship armour that per-ship attrition (DEF-35)
+    # measures kills against
+    initial_quantity: int = 0
 
     # Cached design values
     mass: int = 0
@@ -44,6 +48,8 @@ class StackToken:
     # Battle role of the design (ship_role.py cascade); cached so a
     # deserialized report stack still names its class
     battle_role: str = ""
+    # Boarding party ONE ship of this design musters (boarding.py)
+    boarding_strength: float = 0.0
 
     # Design reference (optional - for weapon access)
     design: Optional['ShipDesign'] = None
@@ -57,16 +63,31 @@ class StackToken:
         st.design_name = token.design_name
         st.quantity = token.quantity
         st.shields = float(token.shields * token.quantity)  # Total shields
-        st.armor = float(token.armor * token.quantity)  # Total armor
+        # Armour the token actually has, not the design value: damage
+        # carried on the fleet token (damage_percent, written by
+        # _write_back_damage, withdrawal and storms) survives the
+        # battle boundary. Canon gets this for free by holding the
+        # fleet's own token by reference (Stack.cs:125 "note this is a
+        # reference to the actual token in the fleet"); the web port
+        # copies, so the copy must read the damage back (DEF-34)
+        st.armor = float(token.armor * token.quantity) \
+            * (1.0 - token.damage_percent / 100.0)
         st.initial_armor = st.armor
+        st.initial_quantity = token.quantity
         st.mass = token.mass
         st.has_weapons = token.has_weapons
         st.is_starbase = token.is_starbase
         st.is_bomber = token.is_bomber
         st.design = design
+        # The design is the authority on the boarding party (it derives
+        # it from the hull); the fleet token's cached value is the
+        # fallback for a stack built without one
+        st.boarding_strength = float(getattr(token, 'boarding_strength', 0.0))
         if design:
             st.battle_speed = design.battle_speed
             st.battle_role = getattr(design, 'battle_role', "")
+            st.boarding_strength = float(
+                getattr(design, 'boarding_strength', st.boarding_strength))
         return st
 
     def to_dict(self) -> dict:
@@ -79,6 +100,7 @@ class StackToken:
             "armor": self.armor,
             "mass": self.mass,
             "battle_role": str(self.battle_role),
+            "boarding_strength": self.boarding_strength,
         }
 
 
@@ -125,6 +147,15 @@ class Stack:
     # armed ships at the start of the battle, which is what the
     # "Outnumbered" withdrawal threshold tests
     outnumbered: bool = False
+    # A boarding party crosses once per battle: whether it takes the
+    # prize or dies in the airlock, the stack has no second party
+    boarding_spent: bool = False
+    # Targets a "Salvo then Close" stack has committed to finish
+    # (stack keys). The commitment is one-way and lasts the rest of
+    # the battle, per target: a fresh target is opened at range again
+    # (docs/research-engagement-range.md section 3; the armour trigger
+    # is monotonic, so it fires once and never un-fires)
+    salvo_committed: Set[int] = field(default_factory=set)
 
     # Cargo
     cargo: Cargo = field(default_factory=Cargo)
@@ -186,6 +217,8 @@ class Stack:
         stack.flee_rounds = other.flee_rounds
         stack.disengaged = other.disengaged
         stack.outnumbered = other.outnumbered
+        stack.boarding_spent = other.boarding_spent
+        stack.salvo_committed = set(other.salvo_committed)
         if other.velocity_vector:
             stack.velocity_vector = NovaPoint(
                 other.velocity_vector.x, other.velocity_vector.y
@@ -200,12 +233,14 @@ class Stack:
             stack.token.shields = other.token.shields
             stack.token.armor = other.token.armor
             stack.token.initial_armor = other.token.initial_armor
+            stack.token.initial_quantity = other.token.initial_quantity
             stack.token.mass = other.token.mass
             stack.token.has_weapons = other.token.has_weapons
             stack.token.is_starbase = other.token.is_starbase
             stack.token.is_bomber = other.token.is_bomber
             stack.token.battle_speed = other.token.battle_speed
             stack.token.battle_role = other.token.battle_role
+            stack.token.boarding_strength = other.token.boarding_strength
             stack.token.design = other.token.design
         stack.cargo = Cargo(
             ironium=other.cargo.ironium,
@@ -277,6 +312,21 @@ class Stack:
                 getattr(design, 'heals_others_percent', 0) or 0),
             cargo_capacity=int(getattr(design, 'cargo_capacity', 0) or 0),
         )
+
+    @property
+    def boarding_strength(self) -> float:
+        """
+        Boarding party ONE ship in this stack musters (boarding.py).
+
+        Prefers the value cached when the stack was built; a stack
+        rebuilt from an older save has none, so the design is read
+        directly - it derives the party from the hull either way.
+        """
+        if self.token is None:
+            return 0.0
+        if self.token.boarding_strength:
+            return self.token.boarding_strength
+        return float(getattr(self.token.design, 'boarding_strength', 0.0))
 
     @property
     def has_bombers(self) -> bool:
@@ -369,6 +419,7 @@ class Stack:
             st.armor = token_data.get("armor", 0.0)
             st.mass = token_data.get("mass", 0)
             st.battle_role = token_data.get("battle_role", "")
+            st.boarding_strength = token_data.get("boarding_strength", 0.0)
             stack.token = st
 
         cargo_data = data.get("cargo", {})

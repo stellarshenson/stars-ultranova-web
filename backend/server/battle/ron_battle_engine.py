@@ -22,6 +22,7 @@ from ...core.game_objects import Fleet, ShipToken
 from ...core.globals import MAX_WEAPON_RANGE
 
 from .battle_step import (
+    BattleStepBoard,
     BattleStepMovement,
     BattleStepTarget,
     BattleStepWeapons,
@@ -34,6 +35,11 @@ from .battle_report import BattleReport
 from .battle_plan import (
     BattlePlan,
     Victims,
+    CLOSE_FOR_KILL_ARMOUR_PERCENT,
+    BOARDING_FAILURE_ARMOR_PERCENT,
+    BOARDING_MAX_CHANCE,
+    BOARDING_MIN_CHANCE,
+    BOARDING_PRIZE_DAMAGE_PERCENT,
     MIN_DISENGAGE_MOVES,
     OUTNUMBERED_RATIO,
     WITHDRAWAL_DAMAGE_PERCENT,
@@ -72,6 +78,15 @@ class RonBattleEngine:
     # board movement to leave the battle (C# absent - BattleEngine.cs
     # line 603 TODO admits fleeing is unimplemented)
     DISENGAGE_MOVES = 7
+    # Stand-off band: a stack holds while its target sits between
+    # DEADBAND * R and R of its hold range R, closes beyond it and
+    # gives ground inside it. A single value oscillates - one unit
+    # inside steps out, overshoots, steps back, and the stack spends
+    # the battle in transit firing from neither position
+    # (docs/research-engagement-range.md:37; the Stellaris 70-90
+    # percent formation band is the precedent,
+    # docs/research-battle-doctrine.md:96)
+    HOLD_RANGE_DEADBAND = 0.9
 
     def __init__(self, server_state: 'ServerData', battle_reports: List[BattleReport]):
         """
@@ -152,6 +167,7 @@ class RonBattleEngine:
 
                 self._do_battle(battling_stacks, battle)
                 self._apply_withdrawal_consequences(battling_stacks, battle)
+                self._summarize_outcomes(battling_stacks, battle)
                 self._report_battle(battle)
 
     def _determine_weapon_range_fleets(self) -> List[List[Fleet]]:
@@ -395,6 +411,336 @@ class RonBattleEngine:
             for attack in all_attacks:
                 self._process_attack(attack, battle)
 
+            # Boarding resolves after the round's fire, because the
+            # airlock only opens once the shields are down
+            self._resolve_boarding(battling_stacks, battle)
+
+        self._write_back_damage(battling_stacks)
+
+    def _write_back_damage(self, battling_stacks: List[Stack]) -> None:
+        """
+        Carry the armour a survivor lost out of the battle.
+
+        C# Nova hands the fleet's own ShipToken to the stack by
+        reference (BattleEngine.cs:264, `new Stack(fleet, stackId,
+        token)`), so armour lost in a battle stays lost on the fleet
+        and ShipToken.Damage reads it straight back as a percentage
+        (ShipToken.cs:70-75). The web port builds StackToken copies,
+        so every survivor walked out of a battle untouched - a fleet
+        could be shot to one armour point and be whole again next
+        turn, which made every "take less damage" order worthless.
+
+        Damage compounds with what the token already carried, and the
+        repair step heals it exactly as it heals withdrawal damage.
+
+        Per-ship attrition (DEF-35) makes ships-lost part of the same
+        write-back: the surviving quantity lands on the fleet token the
+        way mine and storm kills already do (turn_generator.py:1540,
+        :1348), and damage_percent is recomputed against the SURVIVORS'
+        full armour - the dead took their share of the pool with them.
+        """
+        for stack in battling_stacks:
+            if stack.token is None or stack.token.initial_armor <= 0:
+                continue
+
+            survivors = stack.token.quantity
+            if survivors <= 0:
+                # Annihilated whole - _destroy_stack already removed
+                # the fleet token
+                continue
+            if (stack.token.armor >= stack.token.initial_armor
+                    and survivors >= stack.token.initial_quantity):
+                continue
+
+            empire = self.server_state.all_empires.get(stack.owner)
+            if empire is None:
+                continue
+            fleet = empire.owned_fleets.get(stack.parent_key)
+            if fleet is None:
+                continue
+            token = fleet.tokens.get(stack.token.design_key)
+            if token is None:
+                continue
+
+            token.quantity = survivors
+
+            # Share of a survivor's entry armour it still carries. With
+            # no ships lost this is the old armor / initial_armor ratio;
+            # attrition shrinks the denominator with the dead, who took
+            # their share of the pool with them. Compounds with the
+            # damage the token entered carrying, exactly as before
+            initial_quantity = stack.token.initial_quantity or survivors
+            per_ship_entry = stack.token.initial_armor / initial_quantity
+            remaining = max(0.0, stack.token.armor) \
+                / (survivors * per_ship_entry)
+            undamaged = (1.0 - token.damage_percent / 100.0) * remaining
+            token.damage_percent = min(
+                99.0, max(0.0, 100.0 * (1.0 - undamaged)))
+
+    def _summarize_outcomes(
+        self, battling_stacks: List[Stack], battle: BattleReport
+    ) -> None:
+        """
+        Write the per-design outcome ledger onto the report.
+
+        One entry per stack, comparing what it entered with (the
+        pre-battle snapshot in battle.stacks) against what walked out,
+        so the battle message can read "N x Design -> K destroyed,
+        M survived at X% damage" instead of a bare loss count.
+        Runs after the damage write-back and withdrawal consequences,
+        so damage_percent is read from the fleet token they landed on.
+        """
+        for stack in battling_stacks:
+            snapshot = battle.stacks.get(stack.key)
+            if snapshot is None or snapshot.token is None:
+                continue
+            initial = snapshot.token.quantity
+
+            survived = 0
+            damage_percent = 0.0
+            if stack.token is not None and stack.token.quantity > 0:
+                survived = stack.token.quantity
+                empire = self.server_state.all_empires.get(stack.owner)
+                fleet = (empire.owned_fleets.get(stack.parent_key)
+                         if empire else None)
+                token = (fleet.tokens.get(stack.token.design_key)
+                         if fleet else None)
+                if token is not None:
+                    damage_percent = token.damage_percent
+
+            battle.outcomes.append({
+                "owner": stack.owner,
+                "design_name": snapshot.token.design_name,
+                "initial": initial,
+                "destroyed": max(0, initial - survived),
+                "survived": survived,
+                "damage_percent": damage_percent,
+            })
+
+    def _resolve_boarding(
+        self, battling_stacks: List[Stack], battle: BattleReport
+    ) -> None:
+        """
+        Let every stack under a boarding order try for a prize.
+
+        Web-only extension (user directive - "add boarding ships and
+        boarding battle plans - to take over ships - but at great risk
+        to self"; the C# reference has no boarding of any kind).
+
+        Four gates keep boarding a gamble rather than a free action,
+        and together they are why mass boarding is not a dominant
+        strategy:
+
+        1. the plan has to ask for it - "Never" is the default, so a
+           commander who never opens the battle screen never risks a
+           crew
+        2. the prize must be in the boarder's own square, which means
+           closing to zero range through everything the enemy has
+        3. its SHIELDS must be down, so boarding rides on top of a
+           fleet's firepower and can never replace it
+        4. one attempt per stack per battle - the party crosses once,
+           so a stack of ten boarders takes one prize, not ten, while
+           all ten pay the failure
+
+        A starbase neither boards nor is boarded: it cannot close, and
+        a captured emplacement belongs to the star, not to a fleet.
+        """
+        for stack in battling_stacks:
+            if stack.boarding_spent or stack.disengaged or stack.is_destroyed:
+                continue
+            if stack.is_starbase:
+                continue
+            if self._plan_of(stack).board != "When Able":
+                continue
+
+            prize = self._boarding_target(stack)
+            if prize is not None:
+                self._attempt_boarding(stack, prize, battle)
+
+    def _boarding_target(self, stack: Stack) -> Optional[Stack]:
+        """
+        The best prize this stack can reach, or None.
+
+        The candidates are the stack's own target list, so the plan's
+        target tiers choose the prize exactly as they choose what to
+        shoot at - an order to hunt capital ships boards capital ships.
+        """
+        for candidate in stack.target_list:
+            if candidate.is_destroyed or candidate.disengaged:
+                continue
+            if candidate.is_starbase or candidate.token is None:
+                continue
+            if candidate.token.shields > 0:
+                continue
+            dist_sq = stack.position.distance_to_squared(candidate.position)
+            if dist_sq <= self.GRID_SCALE_SQUARED:
+                return candidate
+        return None
+
+    def _boarding_chance(self, attacker: Stack, defender: Stack) -> float:
+        """
+        Odds one boarding attempt succeeds.
+
+        A strength ratio: each side's per-ship party (hull-derived and
+        multiplied by fitted gear, boarding.py) times how many ships it
+        has, so a like-for-like attempt is a coin flip and the fight is
+        symmetric - the crew that repels boarders is the crew that
+        makes them. Clamped at both ends: overwhelming marines still
+        lose one attempt in seven.
+        """
+        ours = attacker.boarding_strength * attacker.token.quantity
+        theirs = defender.boarding_strength * defender.token.quantity
+        total = ours + theirs
+        if total <= 0:
+            return BOARDING_MIN_CHANCE
+        return max(BOARDING_MIN_CHANCE,
+                   min(BOARDING_MAX_CHANCE, ours / total))
+
+    def _attempt_boarding(
+        self, attacker: Stack, prize: Stack, battle: BattleReport
+    ) -> None:
+        """Roll one boarding attempt and pay for the outcome."""
+        chance = self._boarding_chance(attacker, prize)
+        # The party crosses once whichever way the roll goes
+        attacker.boarding_spent = True
+        success = self._random.random() < chance
+
+        step = BattleStepBoard()
+        step.stack_key = attacker.key
+        step.target_key = prize.key
+        step.chance = chance
+        step.success = success
+        step.design_name = prize.token.design_name
+        battle.steps.append(step)
+
+        if success:
+            self._capture_ship(attacker, prize, battle)
+            return
+
+        # Failure destroys the boarding party and heavily damages the
+        # boarder: half the armour it entered the battle with, applied
+        # at once and able to kill it outright. The severity is the
+        # point - a boarding order has to be a real gamble
+        damage = (attacker.token.initial_armor
+                  * BOARDING_FAILURE_ARMOR_PERCENT / 100.0)
+        self._damage_armor(prize, attacker, damage, battle)
+        if attacker.token.armor <= 0:
+            self._destroy_stack(prize, attacker, battle)
+
+        self._message_boarding(attacker, prize, battle, taken=False)
+
+    def _capture_ship(
+        self, captor: Stack, prize: Stack, battle: BattleReport
+    ) -> None:
+        """
+        Transfer ONE ship of the prize token to the captor.
+
+        The prize crosses as a new single-ship fleet at the battle
+        location with a prize crew aboard - it takes no further part in
+        the battle. Its design is copied into the captor's design list
+        so the ship can be flown; the copy is marked obsolete because
+        BUILDING a captured design is tech transfer, a separate
+        criterion. The design itself is already revealed to every
+        participant by _update_intel_designs at battle start.
+        """
+        quantity = prize.token.quantity
+        design = prize.token.design
+        captor_empire = self.server_state.all_empires.get(captor.owner)
+        if quantity <= 0 or design is None or captor_empire is None:
+            return
+
+        # Take the prize's share of the stack's pools with it, so the
+        # rest of the battle and the damage write-back stay consistent
+        prize.token.armor -= prize.token.armor / quantity
+        prize.token.initial_armor -= prize.token.initial_armor / quantity
+        prize.token.quantity -= 1
+        self._remove_captured_ship(prize)
+
+        captured = self._register_captured_design(captor_empire, design)
+        from ...services.ship_specs import make_token
+        token = make_token(captured, quantity=1)
+        # The prize is taken battered, not intact
+        token.damage_percent = BOARDING_PRIZE_DAMAGE_PERCENT
+
+        fleet = Fleet()
+        fleet.key = captor_empire.get_next_fleet_key()
+        fleet.owner = captor.owner
+        fleet.position = NovaPoint(prize.position.x, prize.position.y)
+        fleet.name = f"Prize {captured.name}"
+        fleet.turn_year = self.server_state.turn_year
+        fleet.battle_plan = getattr(
+            captor_empire, 'default_battle_plan', 'Default')
+        fleet.tokens[token.design_key] = token
+        captor_empire.add_or_update_fleet(fleet)
+
+        self._message_boarding(captor, prize, battle, taken=True)
+
+    def _remove_captured_ship(self, prize: Stack) -> None:
+        """Take the captured ship off its owner's fleet."""
+        empire = self.server_state.all_empires.get(prize.owner)
+        if empire is None:
+            return
+        fleet = empire.owned_fleets.get(prize.parent_key)
+        if fleet is None:
+            return
+        token = fleet.tokens.get(prize.token.design_key)
+        if token is None:
+            return
+        token.quantity -= 1
+        if token.quantity <= 0:
+            del fleet.tokens[prize.token.design_key]
+            if not fleet.tokens:
+                del empire.owned_fleets[prize.parent_key]
+
+    def _register_captured_design(self, empire, design):
+        """
+        Give the captor a design record for the prize it just took.
+
+        One record per captured design, reused by later captures of the
+        same class, so a running war does not fill the design list.
+        """
+        import copy
+
+        name = f"{getattr(design, 'name', 'Unknown')} (captured)"
+        for existing in empire.designs.values():
+            if existing.name == name:
+                return existing
+
+        captured = copy.deepcopy(design)
+        captured.key = empire.get_next_design_key()
+        captured.name = name
+        captured.obsolete = True
+        empire.designs[captured.key] = captured
+        return captured
+
+    def _message_boarding(
+        self, boarder: Stack, prize: Stack, battle: BattleReport,
+        taken: bool
+    ) -> None:
+        """Tell both sides how the boarding action went."""
+        design = prize.token.design_name if prize.token else "a ship"
+        if taken:
+            captor_text = (f"Boarders from {boarder.name} took {design} "
+                           f"at {battle.location}.")
+            victim_text = (f"{design} was boarded and captured at "
+                           f"{battle.location}.")
+        else:
+            captor_text = (f"The boarding party from {boarder.name} was "
+                           f"destroyed attacking {design} at "
+                           f"{battle.location}, and the boarder was "
+                           f"crippled breaking off.")
+            victim_text = (f"{design} repelled boarders at "
+                           f"{battle.location}.")
+
+        for audience, text in ((boarder.owner, captor_text),
+                               (prize.owner, victim_text)):
+            self.server_state.all_messages.append(Message(
+                audience=audience,
+                text=text,
+                message_type="Battle",
+                star_name=battle.location
+            ))
+
     def _select_targets(self, battling_stacks: List[Stack]) -> int:
         """Select targets using priority-based system."""
         number_of_targets = 0
@@ -520,6 +866,8 @@ class RonBattleEngine:
             return role == ShipRole.ESCORT
         if priority == Victims.LOGISTICS:
             return role == ShipRole.LOGISTICS
+        if priority == Victims.BOARDER:
+            return role == ShipRole.BOARDER
         if priority == Victims.SUPPORT_SHIP:
             return role == ShipRole.SUPPORT
         if priority == Victims.ARMED_SHIP:
@@ -581,20 +929,64 @@ class RonBattleEngine:
         battle_round: int,
         battle: BattleReport
     ) -> None:
-        """Move stacks using Ron's improved movement system."""
-        for stack in battling_stacks:
+        """Move stacks using Ron's improved movement system.
+
+        Stacks are walked in _move_order, not in the order
+        battling_stacks was built. This loop mutates Stack.Position as
+        it goes, exactly as the C# does (BattleEngine.cs:501-600), so
+        a stack reads its target where the target ALREADY MOVED this
+        round whenever the target came earlier in the walk. Moving
+        last is therefore an advantage: the last mover closes on where
+        its enemy actually ended up, while the first mover commits to
+        where the enemy no longer is. _generate_stacks builds the list
+        by walking colocated_fleets, which is one empire's fleets then
+        the other's, so that advantage went to the same empire every
+        round of every battle. In the C# it is a 1-square error on a
+        10-square board; the Ron engine moves a whole battle speed per
+        round, which turned it into a systematic side bias (measured
+        at +1.02 summed mean mirror margin over 32 seeds).
+
+        The fix is canon's own, the one line the C# left undone at
+        BattleEngine.cs:524 - "TODO (priority 5) - Move in order of
+        ship mass, juggle by 15%". Order by a ship property with a
+        random tiebreak and the last-mover advantage still exists but
+        is dealt out by mass and chance instead of being handed to
+        whoever the list happened to start with.
+
+        Resolving every heading against a round-start snapshot instead
+        was tried and rejected. It removes the ordering effect outright
+        but it also removes convergence: two stacks closing head-on
+        each step onto the square the other just left, so they swap
+        places and keep swapping, never co-locating. Canonical
+        movement converges precisely BECAUSE it is sequential -
+        PointUtilities.BattleMoveTo:224-247 steps an axis only while it
+        is strictly farther away, so the second mover of a closing pair
+        sees the first has arrived and stops. Measured cost of the
+        snapshot: boarding captured nothing in any run of
+        test_a_boarding_heavy_force_does_not_beat_a_balanced_one,
+        because no two stacks ever shared a square.
+        """
+        for stack in self._move_order(battling_stacks):
             if stack is None or stack.token is None or stack.token.quantity <= 0:
                 continue
 
             if stack.target is None or stack.is_starbase:
                 continue
 
-            # Brace posture: the stack holds its position for the whole
-            # battle. It never closes, so a short-ranged design braced
-            # against a longer-ranged enemy never gets to fire - the
-            # positional commitment the posture is paying for - and it
-            # can never accumulate the moves a disengagement needs
-            if self._plan_of(stack).posture_modifiers.holds_position:
+            # Brace posture: an ARMED stack holds its position for the
+            # whole battle. It never closes, so a short-ranged design
+            # braced against a longer-ranged enemy never gets to fire -
+            # the positional commitment the posture is paying for - and
+            # it can never accumulate the moves a disengagement needs.
+            # What the posture fixes is a FIRING position, so it has
+            # nothing to say to an unarmed hull, which keeps the
+            # canonical behaviour of staying out of weapon range
+            # (BATTLE.TXT gives new unarmed fleets Default-Defense,
+            # whose "initial behavior is to try to avoid combat
+            # entirely"). Bracing them too parked a third of every task
+            # force in the open (DEF-31)
+            if stack.is_armed and \
+                    self._plan_of(stack).posture_modifiers.holds_position:
                 continue
 
             vector_to_target = NovaPoint(
@@ -603,10 +995,15 @@ class RonBattleEngine:
             )
 
             # Calculate heading
-            new_heading = self._battle_speed_vector(
-                vector_to_target,
-                stack.battle_speed * self.GRID_SCALE
-            )
+            speed = stack.battle_speed * self.GRID_SCALE
+            new_heading = self._battle_speed_vector(vector_to_target, speed)
+
+            # Why this stack moved the way it did, when there is a
+            # reason worth reporting (the Salvo then Close commitment)
+            motive = ""
+            # A give-ground step keeps a stand-off band; it is clamped
+            # to the board and never counts as fleeing
+            gives_ground = False
 
             # Plan tactic for this round (canonical Stars! rules; the
             # C# reference never consumed Tactic - BattleEngine.cs:603
@@ -620,41 +1017,100 @@ class RonBattleEngine:
                     # Random movement early in battle
                     choice = self._random.randint(1, 3)
                     if choice == 2:
-                        new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                        new_heading = self._break_off_heading(
+                            new_heading, speed)
                 elif tactic == "Disengage":
                     # Unarmed disengaging stack flees the board instead
                     # of merely keeping out of weapon range
-                    new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                    new_heading = self._break_off_heading(new_heading, speed)
                     self._count_flee_move(stack, battle)
                 elif stack.distance_to(stack.target) / self.GRID_SCALE < MAX_WEAPON_RANGE:
                     # Run away from armed enemy
-                    new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                    new_heading = self._break_off_heading(new_heading, speed)
                 else:
                     new_heading = NovaPoint(0, 0)
             elif tactic == "Disengage":
                 # Armed disengaging stack flees its target
-                new_heading = NovaPoint(-new_heading.x, -new_heading.y)
+                new_heading = self._break_off_heading(new_heading, speed)
                 self._count_flee_move(stack, battle)
             elif tactic in ("Minimise Damage to Self", "Maximise Damage Ratio",
-                            "Maximise Net Damage"):
-                # Stand-off tactics: close only until the target is
-                # inside our own longest weapon range, then hold;
+                            "Maximise Net Damage", "Salvo then Close"):
+                # Stand-off tactics maintain their range band BOTH
+                # ways: close while the target is beyond the hold
+                # range, give ground when it presses inside the band
+                # (canon, docs/research-battle-doctrine.md:39 - "if
+                # your weapons are longer range then try to stay at
+                # maximum range"; the old approach-and-halt shape was
+                # the one-way ratchet measured in
+                # docs/research-engagement-range.md:19).
                 # "Minimise Damage to Self" additionally falls back
-                # while its shields are down. Canonical-approx
-                # heuristics - the exact Stars! math is unpublished and
-                # the C# reference has no implementation.
-                weapon_range = 0
-                if stack.token.design is not None:
-                    weapon_range = max(
-                        (w.range for w in stack.token.design.weapons),
-                        default=0)
-                if (tactic == "Minimise Damage to Self"
-                        and stack.token.shields <= 0):
-                    new_heading = NovaPoint(-new_heading.x, -new_heading.y)
-                elif (stack.distance_to(stack.target)
-                        <= weapon_range * self.GRID_SCALE):
-                    new_heading = NovaPoint(0, 0)
+                # while its shields are down. "Salvo then Close" opens
+                # like Maximise Damage Ratio and commits to the run-in
+                # per target. Canonical-approx heuristics - the exact
+                # Stars! math is unpublished and the C# reference has
+                # no implementation.
+                if (tactic == "Salvo then Close"
+                        and stack.target.key not in stack.salvo_committed):
+                    motive = self._close_for_kill_reason(stack.target)
+                    if motive:
+                        stack.salvo_committed.add(stack.target.key)
+                if (tactic == "Salvo then Close"
+                        and stack.target.key in stack.salvo_committed):
+                    # Committed: close like Maximise Damage against
+                    # this target for the rest of the battle - keep
+                    # the closing heading
+                    pass
+                else:
+                    hold_range = self._hold_range(stack, tactic)
+                    band_floor = self.HOLD_RANGE_DEADBAND * hold_range
+                    distance = stack.distance_to(stack.target)
+                    if (tactic == "Minimise Damage to Self"
+                            and stack.token.shields <= 0):
+                        new_heading = self._break_off_heading(
+                            new_heading, speed)
+                        gives_ground = True
+                    elif distance > hold_range:
+                        # Keep the closing heading, but stop ON the
+                        # band instead of a full battle speed past it:
+                        # uncapped, a 100+ unit step leapfrogs the
+                        # 30-unit deadband entirely and two stand-off
+                        # stacks bounce in and out of each other's
+                        # range forever, firing almost never. Canon
+                        # holds AT maximum range
+                        # (docs/research-battle-doctrine.md:39)
+                        new_heading = self._cap_step(
+                            new_heading, distance - band_floor)
+                    elif distance < band_floor:
+                        # Give ground: step away along the closing
+                        # vector. NOT a flee move - fleeing is a
+                        # declared act; a stack keeping its band must
+                        # never touch _count_flee_move or it silently
+                        # becomes a withdrawal
+                        # (docs/research-engagement-range.md:44)
+                        new_heading = self._cap_step(
+                            self._break_off_heading(new_heading, speed),
+                            hold_range - distance)
+                        gives_ground = True
+                    else:
+                        new_heading = NovaPoint(0, 0)
             # "Maximise Damage" (default) keeps the closing heading
+
+            if gives_ground:
+                new_heading = self._clamp_to_board(
+                    stack.position, new_heading)
+
+            # A closing step lands ON the target and never carries the
+            # stack past it, which is what canonical movement does:
+            # PointUtilities.BattleMoveTo:224-247 steps an axis only
+            # while it is strictly farther away, so a stack converges
+            # on its target and stops there. Uncapped, two stacks
+            # closing on each other jump past one another every round
+            # and the engaged pair then travels a full battle speed
+            # per round in the direction the first mover was heading,
+            # carrying the battle away from every stack that has not
+            # caught up yet - which is DEF-30, the systematic side
+            # advantage the balance matrices were measuring
+            new_heading = self._cap_at_target(new_heading, vector_to_target)
 
             # Initialize velocity if needed
             if stack.velocity_vector is None:
@@ -666,12 +1122,40 @@ class RonBattleEngine:
                 stack.position.y + new_heading.y
             )
 
-            # Record movement if significant
-            if new_heading.x != 0 or new_heading.y != 0 or battle_round < 5:
+            # Record movement if significant; a motive is always
+            # recorded, so the Salvo then Close commitment shows in
+            # the report even when the committing stack is already on
+            # top of its target
+            if new_heading.x != 0 or new_heading.y != 0 \
+                    or battle_round < 5 or motive:
                 report = BattleStepMovement()
                 report.stack_key = stack.key
                 report.position = NovaPoint(stack.position.x, stack.position.y)
+                report.motive = motive
                 battle.steps.append(report)
+
+    def _move_order(self, battling_stacks: List[Stack]) -> List[Stack]:
+        """
+        The order stacks are walked in for movement.
+
+        Canon: BattleEngine.cs:524 "TODO (priority 5) - Move in order
+        of ship mass, juggle by 15%" - never implemented in the C#,
+        which walks the list as built. docs/research-battle-doctrine.md:47
+        records the rule it stands for: movement resolves heaviest
+        first with "a random fudge factor" (under a 15 percent weight
+        difference the lighter token may go first, more likely the
+        closer the weights). Perturbing each mass by up to 15 percent
+        before sorting reproduces exactly that: stacks more than 30
+        percent apart never swap, closer ones swap with a probability
+        that rises as the gap closes, and equal masses - a mirror
+        match, where the empire's position in the list would otherwise
+        decide everything - come out in random order.
+        """
+        juggled = [(stack.mass * self._random.uniform(0.85, 1.15), index,
+                    stack)
+                   for index, stack in enumerate(battling_stacks)]
+        juggled.sort(key=lambda row: (-row[0], row[1]))
+        return [row[2] for row in juggled]
 
     def _effective_tactic(self, stack: Stack) -> str:
         """
@@ -728,6 +1212,141 @@ class RonBattleEngine:
             withdraw.stack_key = stack.key
             battle.steps.append(withdraw)
 
+    def _cap_at_target(
+        self, heading: NovaPoint, to_target: NovaPoint
+    ) -> NovaPoint:
+        """
+        Shorten a closing step so the stack stops on its target.
+
+        Canonical Stars! movement steps one square at a time and only
+        while the square is strictly farther away
+        (PointUtilities.BattleMoveTo:224-247), so a closing stack can
+        never end a move past the thing it is closing on. The Ron
+        engine moves a fixed-length vector instead and needs the cap
+        applied explicitly.
+
+        Only a step that points at the target can overshoot it, so a
+        stack breaking off is left alone.
+        """
+        span = math.hypot(to_target.x, to_target.y)
+        step = math.hypot(heading.x, heading.y)
+        if step == 0 or step <= span:
+            return heading
+        if heading.x * to_target.x + heading.y * to_target.y <= 0:
+            return heading
+
+        scale = span / step
+        return NovaPoint(int(heading.x * scale), int(heading.y * scale))
+
+    def _cap_step(self, heading: NovaPoint, max_step: float) -> NovaPoint:
+        """
+        Shorten a stand-off step to a Manhattan length, keeping its
+        direction.
+
+        Battle distances are Manhattan (NovaPoint.distance_to:255-258),
+        so the cap is applied to the heading's Manhattan length: a
+        closing step capped at (distance - band floor) lands inside
+        the [0.9R, R] hold band, and a give-ground step capped at
+        (R - distance) backs off to the band's outer edge and no
+        further - "try to stay at maximum range"
+        (docs/research-battle-doctrine.md:39). Truncation loses at
+        most 2 units, well inside the band's 0.1R width, and both
+        caps are at least 0.1R when they engage, so a capped step is
+        never rounded to a standstill.
+        """
+        step = abs(heading.x) + abs(heading.y)
+        if step == 0 or step <= max_step:
+            return heading
+        scale = max_step / step
+        return NovaPoint(int(heading.x * scale), int(heading.y * scale))
+
+    def _break_off_heading(
+        self, heading: NovaPoint, speed: float
+    ) -> NovaPoint:
+        """
+        Heading for a stack moving away from its target.
+
+        Straight back down the closing heading, except when the two
+        share a square and there is no "away" to point at. Canonical
+        Stars! covers that case explicitly - a disengaging token that
+        can neither open the range nor hold it "move[s] to a random
+        square" (Guts of the Battle Engine, disengage rules) - and it
+        arises here because a capped closing step lands on the target.
+        """
+        if heading.x or heading.y:
+            return NovaPoint(-heading.x, -heading.y)
+
+        bearing = self._random.uniform(0.0, 2.0 * math.pi)
+        return NovaPoint(int(speed * math.cos(bearing)),
+                         int(speed * math.sin(bearing)))
+
+    def _hold_range(self, stack: Stack, tactic: str) -> float:
+        """
+        The stand-off hold distance for a tactic, in grid units.
+
+        "Maximise Net Damage" holds at the range where ALL its
+        weapons bear - the SHORTEST mounted range (canon: "If in
+        range with all weapons them move as to maximise
+        damage_done/damage_taken", docs/research-battle-doctrine.md:39).
+        Every other stand-off tactic holds at the LONGEST ("as
+        Maximise Net Damage but only considers the longest range
+        weapon", docs/research-engagement-range.md:17). Using max()
+        for all three made Maximise Net Damage behave as Maximise
+        Damage Ratio, so a mixed beam-plus-torpedo design never
+        closed far enough to bring its beams up
+        (docs/research-engagement-range.md:19).
+        """
+        if stack.token is None or stack.token.design is None:
+            return 0.0
+        ranges = [w.range for w in stack.token.design.weapons]
+        if not ranges:
+            return 0.0
+        if tactic == "Maximise Net Damage":
+            return min(ranges) * self.GRID_SCALE
+        return max(ranges) * self.GRID_SCALE
+
+    def _close_for_kill_reason(self, target: Stack) -> str:
+        """
+        Why a "Salvo then Close" stack commits to the run-in, or ""
+        while it should keep holding range.
+
+        Two conditions, both fixed
+        (docs/research-engagement-range.md:51): the target has begun
+        disengaging - the one case where closing is unambiguously
+        right, a broken enemy walking off the board with your kills
+        aboard (:59) - or its armour has fallen to or below
+        CLOSE_FOR_KILL_ARMOUR_PERCENT of what it entered the battle
+        with. Armour never heals during a battle, so the trigger is
+        monotonic: it fires once and never un-fires (:53).
+        """
+        if target.flee_rounds > 0 or target.disengaged:
+            return "closing for the kill - target disengaging"
+        token = target.token
+        if token is not None and token.initial_armor > 0 \
+                and (token.armor / token.initial_armor * 100.0
+                     <= CLOSE_FOR_KILL_ARMOUR_PERCENT):
+            return ("closing for the kill - target below "
+                    f"{CLOSE_FOR_KILL_ARMOUR_PERCENT:.0f}% armour")
+        return ""
+
+    def _clamp_to_board(
+        self, position: NovaPoint, heading: NovaPoint
+    ) -> NovaPoint:
+        """
+        Shorten a give-ground step at the board wall.
+
+        The 1000-unit grid is the whole board (GRID_SIZE - canon's
+        10x10 squares at GRID_SCALE). The wall is what keeps kiting
+        beatable: the engagement-range review measured uncapped
+        retreat leaving the pursuing beam side at +0.04 mean margin
+        against +0.72 with the board clamped
+        (docs/research-engagement-range.md:345-352), so a stack gives
+        ground only to the edge and then stands.
+        """
+        clamped_x = min(max(position.x + heading.x, 0), self.GRID_SIZE)
+        clamped_y = min(max(position.y + heading.y, 0), self.GRID_SIZE)
+        return NovaPoint(clamped_x - position.x, clamped_y - position.y)
+
     def _battle_speed_vector(
         self, direction: NovaPoint, speed: float
     ) -> NovaPoint:
@@ -746,7 +1365,23 @@ class RonBattleEngine:
         """Generate weapon attacks with Ron's percentage-based system."""
         all_attacks: List[WeaponDetails] = []
 
-        for stack in battling_stacks:
+        # Equal initiative is a tie, and a tie has to be broken by
+        # something other than the order empires occupy in
+        # battling_stacks. The sort below is stable, so walking the
+        # list as built handed every tie to whichever empire
+        # _generate_stacks listed first - and in a mirror match, where
+        # every weapon carries the same initiative, that is the entire
+        # firing order. Firing first is worth a great deal (a stack
+        # killed before it fires contributes nothing), so this is the
+        # same defect as the movement one and needs the same answer:
+        # the tie goes to a random stack, exactly as canon breaks the
+        # equivalent movement tie (BattleEngine.cs:524 "juggle by
+        # 15%"). Within one stack the sequence is left alone - it is
+        # the target-priority spill order, not a tie.
+        firing_stacks = list(battling_stacks)
+        self._random.shuffle(firing_stacks)
+
+        for stack in firing_stacks:
             if stack.is_destroyed:
                 continue
             # A disengaged stack has left the battle and fires nothing
@@ -754,6 +1389,12 @@ class RonBattleEngine:
                 continue
             if not stack.token or not stack.token.design:
                 continue
+
+            # A braced stack fights from a fixed emplacement, so it
+            # gets the range bonus canonical Stars! gives a starbase
+            # (battle_plan.POSTURE_MODIFIERS)
+            range_bonus = self._plan_of(
+                stack).posture_modifiers.weapon_range_bonus
 
             for weapon in stack.token.design.weapons:
                 percent_fired = 0
@@ -768,7 +1409,8 @@ class RonBattleEngine:
                         target_index += 1
                         continue
                     dist_sq = stack.position.distance_to_squared(target.position)
-                    range_sq = weapon.range ** 2 * self.GRID_SCALE_SQUARED
+                    range_sq = ((weapon.range + range_bonus) ** 2
+                                * self.GRID_SCALE_SQUARED)
 
                     if dist_sq <= range_sq and target.total_armor_strength > 0:
                         # Calculate percentage of fire needed
@@ -860,10 +1502,15 @@ class RonBattleEngine:
                 source_design, target_design,
                 attack.weapon.accuracy / 100.0)
             # Stance trades accuracy, which is worth nothing to a beam
-            # fleet - the enemy's weapon class decides its value
+            # fleet - the enemy's weapon class decides its value. A
+            # Scatter posture on the far side is spread out, which is
+            # harder to guide a torpedo into and does nothing at all
+            # against beams (battle_plan.POSTURE_MODIFIERS)
             accuracy = max(0.0, min(
                 1.0,
-                accuracy * attacker_plan.stance_modifiers.missile_accuracy))
+                accuracy * attacker_plan.stance_modifiers.missile_accuracy
+                * self._plan_of(
+                    target).posture_modifiers.incoming_missile_accuracy))
             self._fire_missile(attacker, target, hit_power, accuracy, battle)
         else:
             # Capacitors boost / deflectors cut beam damage (canonical
@@ -913,8 +1560,10 @@ class RonBattleEngine:
         battle: BattleReport
     ) -> None:
         """Fire missile weapon with Ron's accuracy system."""
-        # Scale down damage (10 rounds per turn)
-        hit_power = hit_power / 10
+        # Hit power is applied directly, exactly as the C# FireMissile
+        # does (BattleEngine.cs:794-808). A former "10 rounds per turn"
+        # /10 here had no beam equivalent and no C# ancestor, deleting
+        # 90 percent of torpedo damage (DEF-33)
 
         # Random accuracy variation
         probability = self._random.randint(-50, 50)
@@ -977,6 +1626,28 @@ class RonBattleEngine:
         if hit_power > 0:
             # Drives "Disengage if Challenged" (canonical Stars! rule)
             target.damage_taken = True
+
+        # Per-ship attrition (DEF-35): enough armour damage kills whole
+        # ships out of the token, not just the token whole at the end.
+        # This is the rule the C# reference names for itself and
+        # declines - "Should destroy whole ships first, then spread
+        # remaining damage" (BattleEngine.cs:857) and "What about
+        # losses of a single ship within the token???"
+        # (BattleEngine.cs:713), both tracked in the reference's
+        # BUGS.txt - and the rule mines and storms already apply
+        # (turn_generator.py:1540, :1348). Firepower reads quantity,
+        # so a silenced gun follows for free; the shield pool is
+        # scaled with the survivors so dead ships stop shielding.
+        token = target.token
+        if token.initial_quantity > 0 and token.initial_armor > 0:
+            per_ship_armor = token.initial_armor / token.initial_quantity
+            surviving = math.ceil(max(0.0, token.armor) / per_ship_armor)
+            if surviving < token.quantity:
+                killed = token.quantity - surviving
+                token.shields *= surviving / token.quantity
+                token.quantity = surviving
+                battle.losses[target.owner] = \
+                    battle.losses.get(target.owner, 0) + killed
 
         step = BattleStepWeapons()
         step.damage = hit_power

@@ -47,10 +47,11 @@ def test_left_column_panel_polish_served(harness):
     assert "gap: 0.5rem 1.25rem;" in summary
 
     # Cache-buster bumped so clients pick up the polished stylesheet
-    # (v=12 adds the battle-viewer combatant roster classes)
+    # (v=12 adds the battle-viewer combatant roster classes, v=13 the
+    # .imminent-battle warning block in the fleet panel)
     index = harness.client.get("/")
     assert index.status_code == 200
-    assert "static/css/main.css?v=12" in index.text
+    assert "static/css/main.css?v=13" in index.text
 
 
 def test_left_column_spacing_scale(harness):

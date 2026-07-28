@@ -42,6 +42,8 @@ ITEM_TYPE_MAP = {
     "gate": ItemType.GATE,
     "defense": ItemType.DEFENSE,
     "weapon": ItemType.WEAPON,
+    # Web-only component class (boarding gear); see components.xml
+    "boarding": ItemType.BOARDING,
 }
 
 

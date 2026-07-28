@@ -67,31 +67,45 @@ class TestAdmiraltyPlans:
             assert plan.withdraw in WITHDRAW_OPTIONS
 
     def test_standard_plan_parameters(self):
-        """The doctrine axes each standard plan commits to."""
+        """The doctrine axes each standard plan commits to. The tactic
+        column is the engagement-range order each plan carries
+        (docs/research-engagement-range.md, panel-refined shape on the
+        existing tactic field)."""
         expected = {
-            "Aggressive Assault": ("Aggressive", "Standard", "Never"),
-            "Balanced": ("Balanced", "Standard", "Never"),
-            "Defensive Hold": ("Defensive", "Brace", "Half Armour"),
-            "Commerce Raid": ("Balanced", "Scatter", "Outnumbered"),
-            "Escort Screen": ("Defensive", "Standard", "Never"),
-            "Fighting Retreat": ("Defensive", "Scatter", "On Damage"),
+            "Aggressive Assault": ("Maximise Damage",
+                                   "Aggressive", "Standard", "Never"),
+            "Balanced": ("Salvo then Close",
+                         "Balanced", "Standard", "Never"),
+            "Defensive Hold": ("Maximise Damage Ratio",
+                               "Defensive", "Brace", "Half Armour"),
+            "Commerce Raid": ("Salvo then Close",
+                              "Balanced", "Scatter", "Outnumbered"),
+            "Escort Screen": ("Maximise Damage Ratio",
+                              "Defensive", "Standard", "Never"),
+            "Fighting Retreat": ("Minimise Damage to Self",
+                                 "Defensive", "Scatter", "On Damage"),
         }
-        for name, (stance, posture, withdraw) in expected.items():
+        for name, (tactic, stance, posture, withdraw) in expected.items():
             plan = ADMIRALTY_PLANS[name]
-            assert (plan.stance, plan.posture, plan.withdraw) == (
-                stance, posture, withdraw)
+            assert (plan.tactic, plan.stance, plan.posture,
+                    plan.withdraw) == (tactic, stance, posture, withdraw)
 
     def test_balanced_matches_the_legacy_default_plan(self):
-        """Moving an empire default from Default to Balanced must not
-        change how anything fights."""
+        """A remapped empire hunts the same things: Balanced keeps the
+        legacy Default targeting tiers, attack and no-modifier axes.
+        Its TACTIC deliberately differs - Salvo then Close is the
+        engagement-range doctrine (docs/research-engagement-range.md),
+        where legacy Default always closed to contact."""
         legacy = BattlePlan(attack="Enemies")
         balanced = ADMIRALTY_PLANS["Balanced"]
         for field in ("primary_target", "secondary_target",
                       "tertiary_target", "quaternary_target",
-                      "quinary_target", "tactic", "attack"):
+                      "quinary_target", "attack"):
             assert getattr(balanced, field) == getattr(legacy, field)
         assert balanced.stance_modifiers == STANCE_MODIFIERS["Balanced"]
         assert balanced.posture_modifiers == POSTURE_MODIFIERS["Standard"]
+        assert legacy.tactic == "Maximise Damage"
+        assert balanced.tactic == "Salvo then Close"
 
     def test_seeding_is_idempotent_and_never_overwrites(self):
         plans = {"Balanced": BattlePlan(name="Balanced", tactic="Disengage")}
@@ -102,7 +116,7 @@ class TestAdmiraltyPlans:
         assert plans["Balanced"].tactic == "Disengage"
         # Seeded copies are independent of the module-level templates
         plans["Commerce Raid"].tactic = "Disengage"
-        assert ADMIRALTY_PLANS["Commerce Raid"].tactic == "Maximise Damage Ratio"
+        assert ADMIRALTY_PLANS["Commerce Raid"].tactic == "Salvo then Close"
 
 
 # =============================================================================
@@ -234,13 +248,92 @@ class TestPostures:
         assert bracer.flee_rounds == 0
         assert bracer.disengaged is False
 
+    def test_brace_pays_for_its_survivability_in_gunnery(self):
+        """Brace fires deliberately, not aggressively.
+
+        Holding position turned out to cost almost nothing once the
+        engine stopped overshooting (DEF-30): an emplaced line fights
+        concentrated in one square while a manoeuvring force disperses
+        and arrives piecemeal, so Brace won every matchup in the
+        anti-degeneracy round-robin. The price is charged in the same
+        currency Scatter already pays - the posture's own hit power.
+        """
+        assert POSTURE_MODIFIERS["Brace"].damage_dealt == 0.80
+
+        plan = BattlePlan(name="P", posture="Brace")
+        server, engine = _doctrine_setup(plan)
+        bracer = _make_battle_stack(1, 1, 200, 200, battle_plan="P")
+        victim = _make_battle_stack(0, 2, 200, 200, armor=100000.0)
+        engine._select_targets([bracer, victim])
+
+        battle = BattleReport()
+        before = victim.token.armor
+        for attack in engine._generate_attacks([bracer, victim]):
+            engine._process_attack(attack, battle)
+        braced_damage = before - victim.token.armor
+
+        plan.posture = "Standard"
+        victim.token.armor = before
+        engine._select_targets([bracer, victim])
+        for attack in engine._generate_attacks([bracer, victim]):
+            engine._process_attack(attack, battle)
+        standard_damage = before - victim.token.armor
+
+        assert braced_damage == pytest.approx(standard_damage * 0.80)
+
+    def test_brace_does_not_pin_the_unarmed_hulls(self):
+        """Brace fixes a FIRING position, and an unarmed hull has none.
+
+        The order is "hold the line", not "park the freighters in the
+        open": canonically an unarmed ship keeps out of weapon range
+        (BATTLE.TXT gives new unarmed fleets Default-Defense, whose
+        "initial behavior is to try to avoid combat entirely"). Pinning
+        them made Brace the worst posture in the anti-degeneracy matrix
+        by a distance, because a third of every task force sat still to
+        be shot (DEF-31).
+        """
+        plan = BattlePlan(name="P", posture="Brace")
+        server, engine = _doctrine_setup(plan)
+        wolf = _make_battle_stack(0, 1, 200, 200)
+        freighter = _make_battle_stack(1, 2, 600, 200, has_weapons=False,
+                                       battle_plan="P")
+        stacks = [wolf, freighter]
+        battle = BattleReport()
+
+        for battle_round in range(5, 10):
+            engine._select_targets(stacks)
+            engine._move_stacks(stacks, battle_round, battle)
+
+        assert freighter.position.x > 600, \
+            "a braced fleet's freighters must still run from the guns"
+
     def test_brace_raises_shields(self):
         plan = BattlePlan(name="P", posture="Brace")
         server, engine = _doctrine_setup(plan)
         stack = _make_battle_stack(1, 1, 200, 200, shields=100.0,
                                    battle_plan="P")
         engine._apply_doctrine([stack])
-        assert stack.token.shields == pytest.approx(115.0)
+        assert stack.token.shields == pytest.approx(130.0)
+
+    def test_brace_fires_a_square_further(self):
+        """A braced stack fights from a fixed emplacement, so it gets
+        the range bonus canonical Stars! gives a starbase. It is the
+        other half of what the posture buys - the half that makes
+        never closing survivable."""
+        plan = BattlePlan(name="P", posture="Brace")
+        server, engine = _doctrine_setup(plan)
+        # Two squares apart, weapons reaching one square
+        bracer = _make_battle_stack(1, 1, 200, 200, weapon_range=1,
+                                    battle_plan="P")
+        target = _make_battle_stack(0, 2, 400, 200, armor=1000.0)
+
+        engine._select_targets([bracer, target])
+        assert [a for a in engine._generate_attacks([bracer, target])
+                if a.source_stack is bracer]
+
+        plan.posture = "Standard"
+        assert not [a for a in engine._generate_attacks([bracer, target])
+                    if a.source_stack is bracer]
 
     def test_scatter_cuts_its_own_damage(self):
         plan = BattlePlan(name="P", posture="Scatter")
@@ -263,7 +356,42 @@ class TestPostures:
             _make_battle_stack(0, 3, 200, 200, armor=1000.0))
 
         assert standard > 0
-        assert scattered == pytest.approx(standard * 0.75)
+        assert scattered == pytest.approx(standard * 0.85)
+
+    def test_scatter_is_harder_to_hit_with_missiles_only(self):
+        """A spread-out formation is harder to guide a torpedo into
+        and does nothing at all against beams, so the enemy's weapon
+        class decides what the posture is worth."""
+        plan = BattlePlan(name="P", posture="Scatter")
+        server, engine = _doctrine_setup(plan)
+        attacker = _make_battle_stack(0, 1, 200, 200)
+        attacker.token.design.weapons = [
+            MockWeapon(group="torpedo", power=100, range=5, accuracy=50)]
+        scattered = _make_battle_stack(1, 2, 200, 200, shields=0.0,
+                                       armor=1000.0, battle_plan="P")
+
+        seen = []
+        original = engine._fire_missile
+
+        def capture(a, t, power, accuracy, b):
+            seen.append(accuracy)
+            return original(a, t, power, accuracy, b)
+
+        engine._fire_missile = capture
+
+        def one_volley():
+            engine._select_targets([attacker, scattered])
+            attacks = [a for a
+                       in engine._generate_attacks([attacker, scattered])
+                       if a.source_stack is attacker]
+            assert attacks
+            engine._execute_attack(attacks[0], BattleReport())
+
+        one_volley()
+        plan.posture = "Standard"
+        one_volley()
+
+        assert seen[0] == pytest.approx(seen[1] * 0.85)
 
     def test_scatter_halves_missile_splash_taken(self):
         plan = BattlePlan(name="P", posture="Scatter")
@@ -426,6 +554,57 @@ class TestWithdrawalConsequences:
         assert server.all_messages == []
 
 
+class TestBattleDamageCarriesOut:
+    """Armour lost in a battle used to be discarded: the engine wrote
+    back destruction alone, so a fleet shot to one armour point was
+    whole again next turn and no order that traded damage for position
+    could ever be worth giving."""
+
+    def _damaged(self, remaining, already=0.0):
+        plan = BattlePlan(name="P")
+        server, engine = _doctrine_setup(plan)
+        empire = server.all_empires[1]
+
+        fleet = Fleet()
+        fleet.key = empire.get_next_fleet_key()
+        fleet.owner = empire.id
+        fleet.name = "Survivor"
+        fleet.position = NovaPoint(600, 200)
+        fleet.tokens[1] = ShipToken(design_key=1, quantity=2, armor=50,
+                                    damage_percent=already)
+        empire.owned_fleets[fleet.key] = fleet
+
+        stack = _make_battle_stack(1, 1, 600, 200, armor=200.0,
+                                   battle_plan="P")
+        stack.token.design_key = 1
+        stack.parent_key = fleet.key
+        stack.token.armor = 200.0 * remaining
+
+        engine._write_back_damage([stack])
+        return fleet.tokens[1]
+
+    def test_lost_armour_lands_on_the_fleet_token(self):
+        assert self._damaged(0.4).damage_percent == pytest.approx(60.0)
+
+    def test_an_untouched_survivor_is_left_alone(self):
+        assert self._damaged(1.0).damage_percent == 0.0
+
+    def test_damage_compounds_with_what_the_token_carried(self):
+        # Half of the armour that was left, on a token already at 50%
+        assert self._damaged(0.5, already=50.0).damage_percent == \
+            pytest.approx(75.0)
+
+    def test_a_wreck_is_capped_short_of_total(self):
+        assert self._damaged(0.0).damage_percent == pytest.approx(99.0)
+
+    def test_a_destroyed_stack_writes_nothing_back(self):
+        plan = BattlePlan(name="P")
+        server, engine = _doctrine_setup(plan)
+        stack = _make_battle_stack(1, 1, 600, 200, battle_plan="P")
+        stack.token = None
+        engine._write_back_damage([stack])  # no fleet, no crash
+
+
 # =============================================================================
 # Save compatibility
 # =============================================================================
@@ -507,3 +686,77 @@ class TestEmpireDefaultPlan:
         empire.battle_plans["Default"] = BattlePlan()
         step = self._star_update_step()
         assert step._default_battle_plan(empire) == "Default"
+
+
+# =============================================================================
+# Legacy save migration (DEF-36)
+# =============================================================================
+
+class TestLegacySaveDoctrineMigration:
+    """DEF-36: a save written before the doctrine wave bypassed it -
+    seed_admiralty_plans only adds missing plans, and the empire
+    default 'Default' (tactic Maximise Damage) made every fleet in a
+    loaded game close to contact regardless of the doctrine layer.
+    Loading now seeds the missing admiralty plans and remaps a
+    'Default' empire default to the admiralty default, without
+    clobbering a commander's own plans."""
+
+    def _reload(self, tmp_path, mutate):
+        import backend.services.game_manager as gm_module
+        from backend.services.game_manager import GameManager
+
+        gm_module._game_manager = None
+        try:
+            manager = GameManager(str(tmp_path / "migrate.db"))
+            game = manager.create_game("Doctrine Migrate", 2, "small",
+                                       seed=424242)
+            server_data = manager._load_game_state(game["id"])
+            state_dict = manager._serialize_state(server_data)
+            mutate(state_dict)
+            return manager._deserialize_state(state_dict)
+        finally:
+            gm_module._game_manager = None
+
+    def test_legacy_default_remaps_and_missing_plans_seed(self, tmp_path):
+        def mutate(state_dict):
+            for empire in state_dict["all_empires"].values():
+                # A pre-doctrine save: only the legacy Default plan,
+                # empire default "Default"
+                empire["battle_plans"] = {
+                    "Default": BattlePlan(attack="Enemies").to_dict()}
+                empire["default_battle_plan"] = "Default"
+
+        restored = self._reload(tmp_path, mutate)
+        for empire in restored.all_empires.values():
+            for name in ADMIRALTY_PLANS:
+                assert name in empire.battle_plans
+            assert empire.default_battle_plan == DEFAULT_EMPIRE_PLAN
+            # The legacy plan itself survives untouched for fleets
+            # that still reference it by name
+            assert empire.battle_plans["Default"].tactic == \
+                "Maximise Damage"
+
+    def test_customised_plans_and_named_defaults_survive(self, tmp_path):
+        def mutate(state_dict):
+            for empire in state_dict["all_empires"].values():
+                # A commander's own edits under two standard names,
+                # and an explicitly chosen empire default
+                empire["battle_plans"] = {
+                    "Default": BattlePlan(attack="Enemies").to_dict(),
+                    "Balanced": BattlePlan(
+                        name="Balanced", tactic="Disengage").to_dict(),
+                    "Escort Screen": BattlePlan(
+                        name="Escort Screen", posture="Brace").to_dict(),
+                }
+                empire["default_battle_plan"] = "Escort Screen"
+
+        restored = self._reload(tmp_path, mutate)
+        for empire in restored.all_empires.values():
+            # Seeding never overwrites a plan the commander edited
+            # under a standard name
+            assert empire.battle_plans["Balanced"].tactic == "Disengage"
+            assert empire.battle_plans["Escort Screen"].posture == "Brace"
+            # A named default that is not "Default" is honoured
+            assert empire.default_battle_plan == "Escort Screen"
+            # The other admiralty plans still seed in
+            assert "Commerce Raid" in empire.battle_plans

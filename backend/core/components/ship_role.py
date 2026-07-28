@@ -26,6 +26,7 @@ class ShipRole(str, Enum):
     """
     STARBASE = "Starbase"
     BOMBER = "Bomber"
+    BOARDER = "Boarding Ship"
     CAPITAL = "Capital Ship"
     ESCORT = "Escort"
     LOGISTICS = "Logistics"
@@ -39,6 +40,7 @@ class ShipRole(str, Enum):
 def infer_battle_role(
     is_starbase: bool = False,
     is_bomber: bool = False,
+    is_boarder: bool = False,
     has_weapons: bool = False,
     power_rating: int = 0,
     can_refuel: bool = False,
@@ -52,26 +54,35 @@ def infer_battle_role(
     The cascade is ordered, first match wins, and every design reaches
     a role (the last branch is unconditional):
 
-    1. Starbase     - is_starbase (an immobile base is its own class)
-    2. Bomber       - is_bomber (bomb racks make the design a bomber
-                      whether or not it also carries weapons)
-    3. Capital Ship - armed with power_rating > CAPITAL_SHIP_POWER_RATING
-    4. Escort       - armed with power_rating at or below the threshold
-    5. Logistics    - a fuel transport (can_refuel); the tanker fitting
-                      is specialised enough to outrank any other cargo
-                      signal
-    6. Support Ship - a colonisation module (can_colonize); a colony
-                      ship carries a hold, so this must outrank cargo
-    7. Support Ship - a fleet repair hull (heals_others_percent), for
-                      the same reason
-    8. Logistics    - a cargo hold (cargo_capacity), i.e. a freighter
-    9. Support Ship - anything else unarmed (scouts, minelayers,
-                      gate tenders)
+    1. Starbase      - is_starbase (an immobile base is its own class)
+    2. Bomber        - is_bomber (bomb racks make the design a bomber
+                       whether or not it also carries weapons)
+    3. Boarding Ship - is_boarder (fitted boarding gear multiplying the
+                       ship's party by BOARDER_MULTIPLIER_THRESHOLD or
+                       more, boarding.py). A specialisation this deep
+                       costs the slots it is fitted in, so it outranks
+                       whatever the design is otherwise armed with -
+                       which is what lets a target-class order hunt or
+                       screen against boarders
+    4. Capital Ship  - armed with power_rating > CAPITAL_SHIP_POWER_RATING
+    5. Escort        - armed with power_rating at or below the threshold
+    6. Logistics     - a fuel transport (can_refuel); the tanker fitting
+                       is specialised enough to outrank any other cargo
+                       signal
+    7. Support Ship  - a colonisation module (can_colonize); a colony
+                       ship carries a hold, so this must outrank cargo
+    8. Support Ship  - a fleet repair hull (heals_others_percent), for
+                       the same reason
+    9. Logistics     - a cargo hold (cargo_capacity), i.e. a freighter
+    10. Support Ship - anything else unarmed (scouts, minelayers,
+                       gate tenders)
     """
     if is_starbase:
         return ShipRole.STARBASE
     if is_bomber:
         return ShipRole.BOMBER
+    if is_boarder:
+        return ShipRole.BOARDER
     if has_weapons:
         if power_rating > CAPITAL_SHIP_POWER_RATING:
             return ShipRole.CAPITAL
@@ -98,6 +109,7 @@ def battle_role_of(design) -> ShipRole:
     return infer_battle_role(
         is_starbase=bool(getattr(design, 'is_starbase', False)),
         is_bomber=bool(getattr(design, 'is_bomber', False)),
+        is_boarder=bool(getattr(design, 'is_boarder', False)),
         has_weapons=bool(getattr(design, 'has_weapons', False)),
         power_rating=int(getattr(design, 'power_rating', 0) or 0),
         can_refuel=bool(getattr(design, 'can_refuel', False)),

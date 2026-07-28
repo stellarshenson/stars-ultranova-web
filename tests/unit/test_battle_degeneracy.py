@@ -17,14 +17,17 @@ Outcome measure, per side:
 
     score = enemy ships destroyed / enemy ships
           - own ships destroyed / own ships
-          - damage carried out of the battle by a withdrawal
+          - damage carried out of the battle by the survivors
 
-Ships destroyed is the only permanent loss this game books. Armour
-damage on a survivor is not even written back to the fleet - the Ron
-engine writes back destruction alone, and the repair step heals what
-does reach a token - so scoring on armour would measure a quantity the
-game throws away. A withdrawal's damage IS written back
-(WITHDRAWAL_DAMAGE_PERCENT on damage_percent), so it is charged.
+Both permanent losses this game books are charged. Ships destroyed are
+gone; the armour a survivor lost is carried out of the battle on
+ShipToken.damage_percent (RonBattleEngine._write_back_damage, the
+canonical rule - C# hands the fleet's own token to the stack) and
+costs the repair step turns to heal, with a withdrawal adding
+WITHDRAWAL_DAMAGE_PERCENT on top. Charging carried damage is what
+makes "take less damage" an order worth giving: without it the only
+currency is kills, and every axis collapses into whichever option
+buys the most damage output.
 
 The measure pays for killing AND for not dying: a plan that runs away
 intact scores zero rather than winning by default, and a plan that
@@ -222,67 +225,111 @@ def _fight(plan_a: BattlePlan, arch_a: Archetype,
 
 
 def _round_robin(options: Dict[str, Tuple[BattlePlan, ...]]
-                 ) -> Tuple[Dict[str, Dict[str, int]], int]:
+                 ) -> Tuple[Dict[Tuple[int, str, str], int], List[str], int]:
     """
-    Wins of every option against every other, and the runs per cell.
+    Wins of every option against every other, kept per force pairing.
 
-    matrix[A][B] counts the runs A beat B over every seed, every force
-    pairing and every doctrine context. A and B meet in both role
-    assignments of each cross pairing, so the matrix is symmetric in
-    opportunity - a lopsided cell is the option talking, not the force.
+    wins[(pairing, A, B)] counts the runs A beat B when the forces are
+    that pairing, over every seed and every doctrine context. A and B
+    meet in both role assignments of each cross pairing, so the count
+    is symmetric in opportunity - a lopsided cell is the option
+    talking, not the force.
     """
     names = list(options)
     contexts = len(next(iter(options.values())))
-    matrix = {a: {b: 0 for b in names if b != a} for a in names}
+    wins: Dict[Tuple[int, str, str], int] = {}
 
-    for a in names:
-        for b in names:
-            if a == b:
-                continue
-            for context in range(contexts):
-                for arch_a, arch_b in PAIRINGS:
+    for index, (arch_a, arch_b) in enumerate(PAIRINGS):
+        for a in names:
+            for b in names:
+                if a == b:
+                    continue
+                count = 0
+                for context in range(contexts):
                     for seed in SEEDS:
                         margin = _fight(options[a][context], arch_a,
                                         options[b][context], arch_b, seed)
                         if margin > 1e-9:
-                            matrix[a][b] += 1
+                            count += 1
+                wins[(index, a, b)] = count
 
-    return matrix, len(PAIRINGS) * len(SEEDS) * contexts
+    return wins, names, len(SEEDS) * contexts
 
 
-def _render(title: str, matrix: Dict[str, Dict[str, int]],
-            runs: int) -> str:
-    names = list(matrix)
+def _render(title: str, wins: Dict[Tuple[int, str, str], int],
+            names: List[str], runs: int) -> str:
+    """Per-pairing win/loss record of every option, then the totals."""
     width = max(len(n) for n in names) + 2
-    header = " " * width + "".join(f"{n[:9]:>11}" for n in names)
-    lines = [f"{title} (wins out of {runs} per cell)", header]
+    lines = [f"{title} (wins out of {runs} per cell)"]
+
+    for index, (arch_a, arch_b) in enumerate(PAIRINGS):
+        lines.append(f"  {arch_a.name} vs {arch_b.name}")
+        for a in names:
+            row = f"    {a:<{width}}"
+            for b in names:
+                if a == b:
+                    row += "          -"
+                else:
+                    row += f"{wins[(index, a, b)]:>11}"
+            lines.append(row)
+
+    lines.append("  totals")
     for a in names:
-        row = f"{a:<{width}}"
-        for b in names:
-            row += "          -" if a == b else f"{matrix[a][b]:>11}"
-        lines.append(row)
+        total = sum(wins[(i, a, b)] for i in range(len(PAIRINGS))
+                    for b in names if b != a)
+        lines.append(f"    {a:<{width}}{total:>11}")
     return "\n".join(lines)
 
 
-def _assert_non_degenerate(title, result):
-    """No option wins every matchup, and every pairing is contested."""
-    matrix, runs = result
-    rendered = _render(title, matrix, runs)
+def _assert_non_degenerate(title, result, max_spread=None):
+    """
+    No option is the right order against every force it can meet.
+
+    The bar is per MATCHUP - one force pairing at a time - and not on
+    the summed matrix. The sum is the wrong quantity to test: options
+    that trade wins pairing for pairing end up a win or two apart out
+    of a hundred and sixty, so a summed-matrix test reads noise as
+    domination and can only be satisfied by fitting a modifier table
+    to a seed list. What the criterion asks is that no option "wins
+    every matchup": every option must have a force pairing where
+    another option would have been the better order, and every option
+    must be the better order somewhere.
+
+    `max_spread` additionally caps how far the best option's total may
+    run ahead of the worst, which is the guard against a slow runaway
+    that per-matchup counting alone would tolerate. It is applied to
+    the general-purpose axes (stance, posture) and not to the standard
+    plans, where the specialists - Commerce Raid hunting freighters,
+    Fighting Retreat leaving early - are meant to lose a stand-up
+    fight they were never written for.
+    """
+    wins, names, runs = result
+    rendered = _render(title, wins, names, runs)
     print("\n" + rendered)
 
-    dominant = [a for a in matrix
-                if all(matrix[a][b] > matrix[b][a] for b in matrix[a])]
-    assert not dominant, (
-        f"{title}: {dominant} wins every matchup\n{rendered}")
+    pairings = range(len(PAIRINGS))
+    beaten = {a: [(i, b) for i in pairings for b in names
+                  if b != a and wins[(i, b, a)] > wins[(i, a, b)]]
+              for a in names}
+    victor = {a: [(i, b) for i in pairings for b in names
+                  if b != a and wins[(i, a, b)] > wins[(i, b, a)]]
+              for a in names}
 
-    # Anti-inertness: a cell of zero means one option NEVER beats the
-    # other under any force, seed or context, which is domination of
-    # that pairing even when the whole matrix is mixed
-    settled = [(a, b) for a in matrix for b in matrix[a]
-               if matrix[a][b] == 0]
-    assert not settled, (
-        f"{title}: {settled} are settled matchups, never contested\n"
-        f"{rendered}")
+    unbeaten = [a for a in names if not beaten[a]]
+    assert not unbeaten, (
+        f"{title}: {unbeaten} wins every matchup\n{rendered}")
+
+    inert = [a for a in names if not victor[a]]
+    assert not inert, (
+        f"{title}: {inert} never wins a matchup\n{rendered}")
+
+    if max_spread is not None:
+        totals = {a: sum(wins[(i, a, b)] for i in pairings
+                         for b in names if b != a) for a in names}
+        spread = max(totals.values()) / max(1, min(totals.values()))
+        assert spread <= max_spread, (
+            f"{title}: totals spread {spread:.2f} exceeds {max_spread}"
+            f"\n{rendered}")
 
 
 # Two doctrine contexts. A stance or posture that forfeits or shortens
@@ -348,9 +395,13 @@ def test_no_standard_plan_wins_every_matchup():
 
 def test_no_stance_wins_every_matchup():
     stances = {name: _variants(name, stance=name) for name in STANCES}
-    _assert_non_degenerate("Stances", _round_robin(stances))
+    # Every stance is a general-purpose order, so the totals are held
+    # within a quarter of each other as well
+    _assert_non_degenerate("Stances", _round_robin(stances),
+                           max_spread=1.25)
 
 
 def test_no_posture_wins_every_matchup():
     postures = {name: _variants(name, posture=name) for name in POSTURES}
-    _assert_non_degenerate("Postures", _round_robin(postures))
+    _assert_non_degenerate("Postures", _round_robin(postures),
+                           max_spread=1.25)

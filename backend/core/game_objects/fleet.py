@@ -93,6 +93,12 @@ class ShipToken:
     storm_shield: float = 0.0
     has_armor_components: bool = False
 
+    # Boarding party one ship of this design musters (web-only
+    # extension, backend/core/components/boarding.py). Cached from the
+    # design like the fields above; 0.0 on a token written before
+    # boarding existed, and the battle engine falls back to the design
+    boarding_strength: float = 0.0
+
     @property
     def key(self) -> int:
         """Return design key as the token key."""
@@ -167,6 +173,7 @@ class ShipToken:
             "mass_driver": self.mass_driver,
             "storm_shield": self.storm_shield,
             "has_armor_components": self.has_armor_components,
+            "boarding_strength": self.boarding_strength,
         }
 
     @classmethod
@@ -211,6 +218,9 @@ class ShipToken:
         token.mass_driver = data.get("mass_driver", 0)
         token.storm_shield = data.get("storm_shield", 0.0)
         token.has_armor_components = data.get("has_armor_components", False)
+        # Absent on tokens written before boarding existed; the battle
+        # engine falls back to the design, which derives the same value
+        token.boarding_strength = data.get("boarding_strength", 0.0)
         return token
 
 

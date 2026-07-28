@@ -36,7 +36,7 @@ const DesignPanel = {
     mountableItemTypes: [
         'ENGINE', 'MECHANICAL', 'ELECTRICAL', 'SCANNER', 'ORBITAL', 'GATE',
         'MINING_ROBOT', 'MINE_LAYER', 'SHIELD', 'ARMOR', 'BOMB',
-        'WEAPON', 'BEAM_WEAPONS', 'TORPEDOES'
+        'WEAPON', 'BEAM_WEAPONS', 'TORPEDOES', 'BOARDING'
     ],
 
     /**
@@ -209,7 +209,8 @@ const DesignPanel = {
             'MINE_LAYER': 'Mine Layers',
             'MINING_ROBOT': 'Mining Robots',
             'ORBITAL': 'Orbital',
-            'GATE': 'Orbital'
+            'GATE': 'Orbital',
+            'BOARDING': 'Boarding'
         };
 
         const categories = {};
@@ -476,14 +477,17 @@ const DesignPanel = {
             'scanner': ['SCANNER'],
             'bomb': ['BOMB'],
             'orbital': ['ORBITAL', 'GATE'],
-            'miner': ['MINING_ROBOT']
+            'miner': ['MINING_ROBOT'],
+            // A "Boarding" slot is a troop bay and takes boarding gear
+            // only (backend/core/components/boarding.py)
+            'boarding': ['BOARDING']
         };
 
         // General purpose: everything except engines and orbitals
         const generalPurpose = [
             'WEAPON', 'BEAM_WEAPONS', 'TORPEDOES', 'SHIELD', 'ARMOR',
             'ELECTRICAL', 'MECHANICAL', 'SCANNER', 'BOMB',
-            'MINING_ROBOT', 'MINE_LAYER'
+            'MINING_ROBOT', 'MINE_LAYER', 'BOARDING'
         ];
 
         const lowered = (slotType || '').toLowerCase();

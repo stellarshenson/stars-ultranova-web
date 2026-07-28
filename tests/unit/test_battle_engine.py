@@ -15,6 +15,7 @@ from backend.server.battle import (
     BattleStepTarget,
     BattleStepWeapons,
     BattleStepDestroy,
+    BattleStepWithdraw,
     TokenDefence,
     WeaponTarget,
     BattleReport,
@@ -219,7 +220,9 @@ class TestBattlePlan:
         assert restored.attack == "Everyone"
 
     def test_tactic_strings_match_csharp_dialog(self):
-        # Exact strings from BattlePlans.Designer.cs:168-174
+        # Exact strings from BattlePlans.Designer.cs:168-174, plus
+        # the web-only Salvo then Close (the engagement-range
+        # decision, docs/research-engagement-range.md section 3)
         from backend.server.battle.battle_plan import TACTICS
         assert TACTICS == [
             "Disengage",
@@ -228,6 +231,7 @@ class TestBattlePlan:
             "Maximise Damage Ratio",
             "Maximise Net Damage",
             "Minimise Damage to Self",
+            "Salvo then Close",
         ]
 
     def test_attack_strings_match_csharp_dialog(self):
@@ -243,8 +247,9 @@ class TestBattlePlan:
         # admiralty standard plans seeded into every empire, which
         # must not eat the commander's own allowance
         assert MAX_BATTLE_PLANS == 14 + len(ADMIRALTY_PLANS)
-        # Seven trunk tiers plus the web-only Logistics tier
-        assert len(VICTIMS_LABELS) == 8
+        # Seven trunk tiers plus the web-only Logistics and Boarding
+        # Ship tiers
+        assert len(VICTIMS_LABELS) == 9
         assert VICTIMS_LABELS[Victims.CAPITAL_SHIP] == "Capital Ship"
 
     def test_full_custom_plan_round_trip(self):
@@ -1143,6 +1148,10 @@ class TestTactics:
         server, engine, stacks, wolf, runner = self._setup(
             tactic, runner_shields=50.0, runner_range=4)
         battle = BattleReport()
+        # Twice the runner's mass: the wolf always moves first (the
+        # 15% mass juggle cannot swap a 2:1 gap), so every distance
+        # the runner reads below is deterministic
+        wolf.token.mass = 200
 
         # Out of range: the stack closes. The wolf moves first in the
         # same pass (200 -> 300), so the runner sees distance 500 > 400
@@ -1151,12 +1160,14 @@ class TestTactics:
         engine._move_stacks(stacks, 5, battle)
         assert runner.position.x < 800
 
-        # Within own longest weapon range (4 * GRID_SCALE): hold
+        # Inside the hold band [0.9 * 400, 400] of its own longest
+        # weapon range (4 * GRID_SCALE): hold. The wolf moves 200 ->
+        # 300 first, so the runner reads distance 380
         wolf.position = NovaPoint(200, 200)
-        runner.position = NovaPoint(500, 200)  # distance <= 400
+        runner.position = NovaPoint(680, 200)
         engine._select_targets(stacks)
         engine._move_stacks(stacks, 6, battle)
-        assert (runner.position.x, runner.position.y) == (500, 200)
+        assert (runner.position.x, runner.position.y) == (680, 200)
 
     def test_minimise_damage_to_self_falls_back_shieldless(self):
         server, engine, stacks, wolf, runner = self._setup(
@@ -1181,6 +1192,224 @@ class TestTactics:
         assert runner.position.x < 600
         assert runner.flee_rounds == 0
         assert runner.disengaged is False
+
+
+class TestEngagementRange:
+    """The engagement-range decision
+    (docs/research-engagement-range.md, panel-refined shape): the
+    stand-off tactics keep their band BOTH ways on the existing tactic
+    field, Maximise Net Damage holds where all weapons bear, and the
+    web-only Salvo then Close commits to the run-in once its target
+    breaks."""
+
+    def _setup(self, tactic, runner_x=680, wolf_x=200, runner_range=4):
+        server = MockServerData()
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+            server.all_empires[i] = empire
+        server.all_empires[1].battle_plans["Custom"] = BattlePlan(
+            name="Custom", tactic=tactic, attack="Everyone")
+        engine = RonBattleEngine(server, [])
+
+        # Twice the runner's mass: the wolf always moves first (the
+        # 15% mass juggle cannot swap a 2:1 gap), so every distance
+        # the runner reads is deterministic. Wolf speed 1.0 closes
+        # GRID_SCALE = 100 units per round
+        wolf = _make_battle_stack(0, 1, wolf_x, 200, mass=200)
+        runner = _make_battle_stack(1, 2, runner_x, 200,
+                                    shields=50.0,
+                                    weapon_range=runner_range,
+                                    battle_plan="Custom")
+        return engine, [wolf, runner], wolf, runner
+
+    def _round(self, engine, stacks, battle_round, battle):
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, battle_round, battle)
+
+    # -- 1: two-way range maintenance (give-ground restoration) ------
+
+    @pytest.mark.parametrize("tactic", ["Maximise Net Damage",
+                                        "Maximise Damage Ratio",
+                                        "Minimise Damage to Self"])
+    def test_gives_ground_when_the_target_presses_inside(self, tactic):
+        """Canon maintains the band both ways
+        (docs/research-battle-doctrine.md:39): a stand-off stack whose
+        target closes inside its band steps AWAY along the closing
+        vector instead of watching it walk into contact."""
+        engine, stacks, wolf, runner = self._setup(tactic, runner_x=450)
+        battle = BattleReport()
+
+        # Wolf 200 -> 300; the runner reads distance 150, well inside
+        # 0.9 * 400, and gives ground a full step (+100)
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (550, 200)
+
+        # Giving ground is NOT disengaging: no flee moves accumulate
+        # and no withdrawal is ever reported
+        # (docs/research-engagement-range.md:44)
+        assert runner.flee_rounds == 0
+        assert runner.disengaged is False
+        assert not [s for s in battle.steps
+                    if isinstance(s, BattleStepWithdraw)]
+
+    def test_closes_when_beyond_the_hold_range(self):
+        engine, stacks, wolf, runner = self._setup(
+            "Maximise Damage Ratio", runner_x=800)
+        battle = BattleReport()
+
+        # Wolf 200 -> 300; distance 500 > 400: the runner closes
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (700, 200)
+
+    def test_give_ground_stops_at_the_board_wall(self):
+        """The wall is what keeps kiting beatable: uncapped retreat
+        measured +0.04 for the pursuer against +0.72 wall-clamped
+        (docs/research-engagement-range.md:345-352)."""
+        engine, stacks, wolf, runner = self._setup(
+            "Maximise Damage Ratio", wolf_x=700, runner_x=980)
+        battle = BattleReport()
+
+        # Wolf 700 -> 800; distance 180 < 360: the give-ground step
+        # (980 + 100) is clamped at the 1000-unit board edge
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (1000, 200)
+
+        # Pressed against the wall, the stack stands instead of
+        # leaving the board
+        self._round(engine, stacks, 6, battle)
+        assert (runner.position.x, runner.position.y) == (1000, 200)
+        assert runner.flee_rounds == 0
+
+    def test_approach_lands_on_the_band_not_past_it(self):
+        """A closing stand-off step is capped ON the band: uncapped, a
+        full battle-speed step (100 units) leapfrogs the 30-unit
+        deadband entirely and two stand-off stacks bounce in and out
+        of each other's range forever, firing almost never (measured
+        as a 250-a-side mirror freezing at 9 volleys in 60 rounds)."""
+        engine, stacks, wolf, runner = self._setup(
+            "Maximise Damage Ratio", runner_x=650)
+        wolf.token.is_starbase = True  # an immobile threat
+        battle = BattleReport()
+
+        # Distance 450 > 400: the step is capped at distance - 0.9R =
+        # 90, landing exactly on the band floor instead of at 550
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (560, 200)
+
+        # In band: the stack stands, and keeps standing
+        self._round(engine, stacks, 6, battle)
+        assert (runner.position.x, runner.position.y) == (560, 200)
+
+    def test_give_ground_backs_off_to_the_band_edge_only(self):
+        """A give-ground step is capped at R - distance: back to
+        maximum range - "try to stay at maximum range",
+        docs/research-battle-doctrine.md:39 - and no further, so the
+        stack keeps firing while it keeps its distance."""
+        engine, stacks, wolf, runner = self._setup(
+            "Maximise Damage Ratio", runner_x=520)
+        wolf.token.is_starbase = True
+        battle = BattleReport()
+
+        # Distance 320 < 360: the give-ground step is capped at 80,
+        # landing on the band's outer edge instead of at 620
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (600, 200)
+        self._round(engine, stacks, 6, battle)
+        assert (runner.position.x, runner.position.y) == (600, 200)
+
+    # -- 2: the min/max hold-range split -----------------------------
+
+    def test_net_damage_holds_where_all_weapons_bear(self):
+        """Maximise Net Damage holds at the SHORTEST mounted range -
+        the range where ALL weapons bear
+        (docs/research-battle-doctrine.md:39) - so a mixed battery
+        keeps closing until its short guns come up."""
+        engine, stacks, wolf, runner = self._setup(
+            "Maximise Net Damage", runner_x=680)
+        runner.token.design.weapons = [MockWeapon(range=1),
+                                       MockWeapon(range=4)]
+        battle = BattleReport()
+
+        # Wolf 200 -> 300; distance 380 is far beyond the 1-square
+        # hold range, so the runner closes - under the old max() bug
+        # it halted here and the range-1 gun never fired
+        # (docs/research-engagement-range.md:19)
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (580, 200)
+
+    def test_damage_ratio_holds_at_the_longest_range(self):
+        """Maximise Damage Ratio 'only considers the longest range
+        weapon' (docs/research-engagement-range.md:17): the same mixed
+        battery at the same distance holds."""
+        engine, stacks, wolf, runner = self._setup(
+            "Maximise Damage Ratio", runner_x=680)
+        runner.token.design.weapons = [MockWeapon(range=1),
+                                       MockWeapon(range=4)]
+        battle = BattleReport()
+
+        # Wolf 200 -> 300; distance 380 sits inside [360, 400]
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (680, 200)
+
+    # -- 3: Salvo then Close -----------------------------------------
+
+    def test_salvo_holds_at_longest_range_before_the_trigger(self):
+        engine, stacks, wolf, runner = self._setup(
+            "Salvo then Close", runner_x=680)
+        battle = BattleReport()
+
+        # Wolf at full armour: no commitment, hold like Maximise
+        # Damage Ratio (distance 380 inside [360, 400])
+        self._round(engine, stacks, 5, battle)
+        assert (runner.position.x, runner.position.y) == (680, 200)
+        assert wolf.key not in runner.salvo_committed
+
+    def test_salvo_commits_at_half_armour_and_stays_committed(self):
+        engine, stacks, wolf, runner = self._setup(
+            "Salvo then Close", runner_x=680)
+        battle = BattleReport()
+
+        # Armour at exactly the threshold (100 of 200 = 50%): the
+        # trigger fires ("falls to or below",
+        # docs/research-engagement-range.md:51) and the stack closes
+        wolf.token.armor = 100.0
+        self._round(engine, stacks, 5, battle)
+        assert wolf.key in runner.salvo_committed
+        assert (runner.position.x, runner.position.y) == (580, 200)
+
+        # The report shows WHY the fleet closed: the switch round's
+        # movement step carries the motive
+        moves = [s for s in battle.steps
+                 if isinstance(s, BattleStepMovement)
+                 and s.stack_key == runner.key]
+        assert moves[-1].motive == \
+            "closing for the kill - target below 50% armour"
+
+        # One-way per target: even with the armour reading back above
+        # the threshold the commitment holds for the rest of the
+        # battle. Wolf 300 -> 400, runner 580 -> 480 keeps closing
+        wolf.token.armor = 200.0
+        self._round(engine, stacks, 6, battle)
+        assert (runner.position.x, runner.position.y) == (480, 200)
+
+    def test_salvo_commits_when_the_target_disengages(self):
+        """The second trigger: a broken enemy walking off the board is
+        the one case where closing is unambiguously right
+        (docs/research-engagement-range.md:59)."""
+        engine, stacks, wolf, runner = self._setup(
+            "Salvo then Close", runner_x=680)
+        battle = BattleReport()
+
+        wolf.flee_rounds = 1
+        self._round(engine, stacks, 5, battle)
+        assert wolf.key in runner.salvo_committed
+        assert (runner.position.x, runner.position.y) == (580, 200)
+        moves = [s for s in battle.steps
+                 if isinstance(s, BattleStepMovement)
+                 and s.stack_key == runner.key]
+        assert moves[-1].motive == \
+            "closing for the kill - target disengaging"
 
 
 # =============================================================================
@@ -1499,3 +1728,254 @@ class TestBattleReportYear:
         reports = self._one_battle_report(BattleEngine)
         assert reports
         assert all(r.year == 2455 for r in reports)
+
+
+class TestDamageSurvivesTheBattleBoundary:
+    """
+    Armour lost in battle 1 is the armour battle 2 starts with (DEF-34).
+
+    Canon holds the fleet's own token by reference (Stack.cs:125), so
+    damage persists for free. The web port copies the token into a
+    StackToken, so from_ship_token must read damage_percent back or
+    every fleet enters every battle at full armour.
+    """
+
+    def _fleet_in_a_server(self, armor=200, quantity=3):
+        server = MockServerData()
+        empire = MockEmpire(id=1)
+        server.all_empires[1] = empire
+
+        fleet = Fleet()
+        fleet.key = empire.get_next_fleet_key()
+        fleet.owner = 1
+        fleet.position = NovaPoint(100, 100)
+        token = ShipToken(design_key=7, design_name="Warship",
+                          quantity=quantity, armor=armor, shields=50,
+                          mass=100, has_weapons=True)
+        fleet.tokens[token.design_key] = token
+        empire.owned_fleets[fleet.key] = fleet
+        return server, fleet, token
+
+    def test_battle_two_starts_at_battle_one_exit_armor(self):
+        server, fleet, token = self._fleet_in_a_server()
+        engine = RonBattleEngine(server, [])
+
+        stack = Stack.from_fleet(fleet, 1, token)
+        assert stack.token.armor == 600.0  # full at first contact
+
+        # Battle 1 shoots the pool down to 350, engine writes it back
+        stack.token.armor = 350.0
+        engine._write_back_damage([stack])
+
+        # Battle 2 rebuilds the stack from the fleet token
+        second = Stack.from_fleet(fleet, 2, token)
+        assert second.token.armor == pytest.approx(350.0)
+        assert second.token.initial_armor == pytest.approx(350.0)
+
+    def test_a_fleet_that_fights_nobody_twice_does_not_decay(self):
+        server, fleet, token = self._fleet_in_a_server()
+        token.damage_percent = 40.0
+        engine = RonBattleEngine(server, [])
+
+        for stack_id in (1, 2):
+            stack = Stack.from_fleet(fleet, stack_id, token)
+            assert stack.token.armor == pytest.approx(360.0)
+            # No shot fired; the write-back must be a no-op
+            engine._write_back_damage([stack])
+            assert token.damage_percent == pytest.approx(40.0)
+
+
+class TestPerShipAttrition:
+    """
+    Enough armour damage kills whole ships out of a token (DEF-35).
+
+    The rule the C# reference names for itself and declines
+    (BattleEngine.cs:857 and :713, both in its BUGS.txt), and the one
+    mines and storms already apply. surviving = ceil(armor / per_ship);
+    the shield pool scales with the survivors so dead ships stop
+    shielding, and the kills land in battle.losses as they happen.
+    """
+
+    def _stack(self, owner=1, quantity=7, per_ship_armor=250.0,
+               shields=700.0):
+        stack = Stack()
+        stack.key = (owner << 32) | 1
+        stack.owner = owner
+        stack.token = StackToken()
+        stack.token.design_key = 7
+        stack.token.quantity = quantity
+        stack.token.initial_quantity = quantity
+        stack.token.armor = per_ship_armor * quantity
+        stack.token.initial_armor = per_ship_armor * quantity
+        stack.token.shields = shields
+        return stack
+
+    def test_armor_damage_kills_whole_ships_and_scales_shields(self):
+        engine = RonBattleEngine(MockServerData(), [])
+        attacker = self._stack(owner=2)
+        target = self._stack(owner=1)
+        battle = BattleReport()
+
+        # 600 off a 1750 pool leaves 1150: ceil(1150/250) = 5 survive
+        engine._damage_armor(attacker, target, 600.0, battle)
+        assert target.token.quantity == 5
+        assert target.token.shields == pytest.approx(700.0 * 5 / 7)
+        assert battle.losses[1] == 2
+
+        # 149 more does not cross the next 250 boundary
+        engine._damage_armor(attacker, target, 149.0, battle)
+        assert target.token.quantity == 5
+        assert battle.losses[1] == 2
+
+    def test_annihilation_counts_every_ship_exactly_once(self):
+        engine = RonBattleEngine(MockServerData(), [])
+        attacker = self._stack(owner=2)
+        target = self._stack(owner=1)
+        battle = BattleReport()
+
+        engine._damage_armor(attacker, target, 1750.0, battle)
+        assert target.token.quantity == 0
+        assert target.token.shields == 0.0
+        assert battle.losses[1] == 7
+        assert target.is_destroyed
+
+    def test_kills_land_on_the_fleet_token_at_write_back(self):
+        server = MockServerData()
+        empire = MockEmpire(id=1)
+        server.all_empires[1] = empire
+
+        fleet = Fleet()
+        fleet.key = empire.get_next_fleet_key()
+        fleet.owner = 1
+        fleet.position = NovaPoint(100, 100)
+        token = ShipToken(design_key=7, design_name="Warship",
+                          quantity=7, armor=250, shields=100,
+                          mass=100, has_weapons=True)
+        fleet.tokens[token.design_key] = token
+        empire.owned_fleets[fleet.key] = fleet
+
+        engine = RonBattleEngine(server, [])
+        stack = Stack.from_fleet(fleet, 1, token)
+        attacker = self._stack(owner=2)
+        battle = BattleReport()
+
+        # 1200 off the 1750 pool: 550 left, ceil(550/250) = 3 survive
+        # carrying 550 of their 750 -> 26.67% damage
+        engine._damage_armor(attacker, stack, 1200.0, battle)
+        engine._write_back_damage([stack])
+
+        assert token.quantity == 3
+        assert token.damage_percent == pytest.approx(100.0 * (1 - 550 / 750))
+
+
+class TestClosingMoveDoesNotOvershoot:
+    """
+    A stack closing on a target lands on it, never past it.
+
+    Canonical: PointUtilities.BattleMoveTo:224-247 steps an axis only
+    while it is strictly farther away, so a closing stack converges and
+    stops. The Ron engine moves a fixed-length vector instead, so
+    without the cap two stacks closing on each other jump past one
+    another every round and the engagement drifts across the board at
+    full battle speed - which is the mechanism behind DEF-30.
+    """
+
+    def _pair(self, gap, battle_speed=1.0):
+        server = MockServerData()
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+            server.all_empires[i] = empire
+        engine = RonBattleEngine(server, [])
+        left = _make_battle_stack(0, 1, 0, 0, battle_speed=battle_speed)
+        right = _make_battle_stack(1, 2, gap, 0, battle_speed=battle_speed)
+        return engine, [left, right], left, right
+
+    def test_a_closing_stack_stops_on_its_target(self):
+        """One battle speed is GRID_SCALE units of movement, so a stack
+        25 units from its target must close 25, not 100.
+
+        The scenario needs LEFT to move first: at equal masses the
+        _move_order juggle makes that a coin flip, and when right won
+        it, right closed onto left instead and left (already in
+        contact) rightly stayed at 0 - a flake in the expectation, not
+        the engine. Masses more than 30 percent apart never swap
+        (ron_battle_engine.py _move_order), so the heavier left always
+        moves first and the assertion is deterministic."""
+        engine, stacks, left, right = self._pair(25)
+        left.token.mass = 200
+        battle = BattleReport()
+        engine._select_targets(stacks)
+
+        # Round 5+ is past the opening random-flip rounds
+        engine._move_stacks(stacks, 5, battle)
+
+        assert left.position.x == 25, (
+            f"closing stack jumped to {left.position.x}, past its target "
+            f"at 25")
+
+    def test_two_closing_stacks_do_not_drift_across_the_board(self):
+        """The bias mechanism itself: once in contact, a pair that
+        leapfrogs travels a full battle speed every round in the
+        direction the first mover was heading, dragging the engagement
+        away from every stack still catching up."""
+        engine, stacks, left, right = self._pair(25)
+        battle = BattleReport()
+
+        for battle_round in range(5, 25):
+            engine._select_targets(stacks)
+            engine._move_stacks(stacks, battle_round, battle)
+
+        span = engine.GRID_SCALE
+        assert abs(left.position.x) <= span and abs(right.position.x) <= span, (
+            f"pair drifted to {left.position.x} / {right.position.x} after "
+            f"20 rounds; the engagement should stay where it was joined")
+
+    def _runner(self, gap):
+        server = MockServerData()
+        for i in range(2):
+            empire = MockEmpire(id=i)
+            empire.battle_plans["Default"] = BattlePlan(attack="Everyone")
+            server.all_empires[i] = empire
+        server.all_empires[1].battle_plans["Run"] = BattlePlan(
+            name="Run", tactic="Disengage", attack="Everyone")
+        engine = RonBattleEngine(server, [])
+
+        wolf = _make_battle_stack(0, 1, 0, 0)
+        runner = _make_battle_stack(1, 2, gap, 0, battle_plan="Run")
+        return engine, [wolf, runner], wolf, runner
+
+    def test_a_fleeing_stack_still_runs_at_full_speed(self):
+        """The cap applies to closing only - nothing is overshot by
+        moving away, so a disengaging stack keeps its legs."""
+        engine, stacks, wolf, runner = self._runner(400)
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 5, BattleReport())
+
+        # The wolf closed one battle speed to 100; the runner broke off
+        # a full battle speed from where the wolf now is
+        assert wolf.position.x == engine.GRID_SCALE
+        assert runner.position.x == 400 + engine.GRID_SCALE
+
+    def test_a_stack_run_down_in_its_own_square_still_breaks_off(self):
+        """A capped closing step lands the wolf ON the runner, so
+        there is no "away" left to point at. Canon covers it - a token
+        that can neither open nor hold the range moves to a random
+        square (Guts of the Battle Engine) - and without that the
+        runner would be pinned and could never disengage.
+
+        The run-down only happens if the wolf moves BEFORE the runner
+        breaks off; at equal masses the _move_order juggle makes that
+        a coin flip and the runner escaping first is a different (and
+        untested) scenario. Masses more than 30 percent apart never
+        swap (ron_battle_engine.py _move_order), so the heavier wolf
+        always moves first and the run-down is deterministic."""
+        engine, stacks, wolf, runner = self._runner(25)
+        wolf.token.mass = 200
+        engine._select_targets(stacks)
+        engine._move_stacks(stacks, 5, BattleReport())
+
+        assert wolf.position.x == 25, "the wolf should stop on the runner"
+        assert (runner.position.x, runner.position.y) != (25, 0), \
+            "a run-down stack is pinned and can never disengage"
+        assert runner.flee_rounds == 1

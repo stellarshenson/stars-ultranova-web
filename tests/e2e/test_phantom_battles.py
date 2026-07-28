@@ -98,8 +98,10 @@ class TestPhantomBattles:
 
     def test_armed_vs_unarmed_battles_with_loss_summary(self, harness):
         """An armed ship meeting the unarmed one still battles, and
-        both battle messages carry the C# loss summary
-        (BattleEngine.cs:945-953)."""
+        both battle messages carry a loss summary. The C# bare count
+        (BattleEngine.cs:945-953) grew into the per-design outcome
+        ledger with per-ship attrition (DEF-35), so the summary now
+        reads 'N x Design -> K destroyed, M survived at X% damage'."""
         harness.create_game(seed=SEED, size="tiny", players=2)
 
         px, py = _deep_space_point(harness)
@@ -111,7 +113,7 @@ class TestPhantomBattles:
         harness.generate_turn()
 
         pattern = re.compile(
-            r"(None|\d+) of your ships were destroyed\.")
+            r"\d+ x .+ -> \d+ destroyed, \d+ survived at \d+% damage")
         for empire_id in (1, 2):
             msgs = _battle_messages(harness, empire_id)
             assert len(msgs) == 1

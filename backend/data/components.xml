@@ -9228,4 +9228,212 @@ This scanner is capable of determining planetary statistics up to 200 ly away.</
       <Type>Mystery Trader Item</Type>
     </Property>
   </Component>
+  <!-- Boarding (web-only extension, user directive - not in the
+       original Stars! catalog and absent from the C# reference, which
+       has no boarding of any kind). EVERY ship already musters a
+       boarding party from its own crew (backend/core/components/
+       boarding.py derives it from the hull's slot count), so these
+       components do not grant the capability - they MULTIPLY it. The
+       Boarding property Value is that multiplier; it stacks
+       geometrically per slot and across slots and clamps at
+       BOARDING_MULTIPLIER_MAXIMUM. They mount in any general purpose
+       slot, so fitting them costs the weapon or armour that slot
+       would otherwise carry, and in the Boarding-only troop bays of
+       the Assault Transport hull below. -->
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Breaching Gear</Name>
+      <Type>Boarding</Type>
+    </Item>
+    <Mass>10</Mass>
+    <Cost>
+      <Ironium>6</Ironium>
+      <Boranium>2</Boranium>
+      <Germanium>3</Germanium>
+      <Energy>15</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>2</Weapons>
+      <Construction>3</Construction>
+    </Tech>
+    <Description>Cutting charges and grapples for forcing an enemy airlock. Multiplies this ship's boarding strength by 1.25.</Description>
+    <Race_Restrictions />
+    <Image>Mechanical/Cargo_Pod.png</Image>
+    <Property>
+      <Value>1.25</Value>
+      <Type>Boarding</Type>
+    </Property>
+  </Component>
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Assault Pod</Name>
+      <Type>Boarding</Type>
+    </Item>
+    <Mass>20</Mass>
+    <Cost>
+      <Ironium>12</Ironium>
+      <Boranium>5</Boranium>
+      <Germanium>6</Germanium>
+      <Energy>35</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>0</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>6</Weapons>
+      <Construction>7</Construction>
+    </Tech>
+    <Description>A one-shot pod that fires the boarding party straight through a hull plate. Multiplies this ship's boarding strength by 1.4.</Description>
+    <Race_Restrictions />
+    <Image>Mechanical/Colonization_Module.png</Image>
+    <Property>
+      <Value>1.4</Value>
+      <Type>Boarding</Type>
+    </Property>
+  </Component>
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Marine Barracks</Name>
+      <Type>Boarding</Type>
+    </Item>
+    <Mass>35</Mass>
+    <Cost>
+      <Ironium>18</Ironium>
+      <Boranium>4</Boranium>
+      <Germanium>12</Germanium>
+      <Energy>60</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>8</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>12</Construction>
+    </Tech>
+    <Description>Berths, drop gear and a training deck for a company of ship-to-ship marines. Multiplies this ship's boarding strength by 1.6.</Description>
+    <Race_Restrictions />
+    <Image>Mechanical/Super_Cargo_Pod.png</Image>
+    <Property>
+      <Value>1.6</Value>
+      <Type>Boarding</Type>
+    </Property>
+  </Component>
+  <!-- Assault Transport (web-only extension, user directive - the
+       dedicated boarding hull class). It carries six Boarding-only
+       troop bays, and a troop bay musters marines whether or not gear
+       is fitted in it (BOARDING_CREW_PER_TROOP_BAY), which is the
+       "high crew capacity" no general-purpose hull can buy: 11 slots
+       and 6 bays give it a base party of 290 against a Dreadnought's
+       130. It pays for that with firepower - ONE general purpose slot
+       is the whole of its armament. -->
+  <Component>
+    <Item>
+      <Key>0</Key>
+      <Name>Assault Transport</Name>
+      <Type>Hull</Type>
+    </Item>
+    <Mass>100</Mass>
+    <Cost>
+      <Ironium>60</Ironium>
+      <Boranium>10</Boranium>
+      <Germanium>20</Germanium>
+      <Energy>100</Energy>
+    </Cost>
+    <Tech>
+      <Biotechnology>3</Biotechnology>
+      <Electronics>0</Electronics>
+      <Energy>0</Energy>
+      <Propulsion>0</Propulsion>
+      <Weapons>0</Weapons>
+      <Construction>9</Construction>
+    </Tech>
+    <Description>A boarding hull: six troop bays, berthing for the marines that fill them, and a single weapon mount. It takes ships rather than killing them.</Description>
+    <Race_Restrictions />
+    <Image>Ship/Privateer0000.png</Image>
+    <Property>
+      <FuelCapacity>900</FuelCapacity>
+      <DockCapacity>0</DockCapacity>
+      <ARMaxPop>0</ARMaxPop>
+      <BaseCargo>200</BaseCargo>
+      <ArmorStrength>400</ArmorStrength>
+      <BattleInitiative>2</BattleInitiative>
+      <HealsOthersPercent>0</HealsOthersPercent>
+      <Module>
+        <CellNumber>1</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Engine</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>2</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>General Purpose</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>3</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Boarding</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>4</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Boarding</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>5</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Boarding</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>6</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Boarding</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>7</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Boarding</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>8</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Boarding</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>9</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>2</ComponentMaximum>
+        <ComponentType>Shield or Armor</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>10</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Armor</ComponentType>
+      </Module>
+      <Module>
+        <CellNumber>11</CellNumber>
+        <ComponentCount>0</ComponentCount>
+        <ComponentMaximum>1</ComponentMaximum>
+        <ComponentType>Scanner Electrical Mechanical</ComponentType>
+      </Module>
+      <Type>Hull</Type>
+    </Property>
+  </Component>
 </ROOT>

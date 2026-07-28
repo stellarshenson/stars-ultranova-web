@@ -35,6 +35,9 @@ SLOT_TOKEN_TYPES = {
     "bomb": {ItemType.BOMB},
     "orbital": {ItemType.ORBITAL, ItemType.GATE},
     "miner": {ItemType.MINING_ROBOT},  # "Robot Miner"
+    # Web-only: a "Boarding" slot is a troop bay and takes boarding
+    # gear only (backend/core/components/boarding.py)
+    "boarding": {ItemType.BOARDING},
 }
 
 # "Mine Layer" is two tokens; handled as a phrase
@@ -46,6 +49,7 @@ GENERAL_PURPOSE_TYPES = (
     | SLOT_TOKEN_TYPES["armor"] | SLOT_TOKEN_TYPES["electrical"]
     | SLOT_TOKEN_TYPES["mechanical"] | SLOT_TOKEN_TYPES["scanner"]
     | SLOT_TOKEN_TYPES["bomb"] | SLOT_TOKEN_TYPES["miner"]
+    | SLOT_TOKEN_TYPES["boarding"]
     | MINE_LAYER_TYPES
 )
 
