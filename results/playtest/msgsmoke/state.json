@@ -1,0 +1,151 @@
+{
+ "game_id": "237b4c8f-a257-43d2-a007-9a08711cd4b5",
+ "name": "msgsmoke",
+ "seed": 909,
+ "size": "small",
+ "model": null,
+ "turns_target": 3,
+ "next_turn": 4,
+ "year": 2103,
+ "server_log_offset": 10334,
+ "fleet_history": {
+  "1": {
+   "4294967297": {
+    "pos": [
+     632,
+     225
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967298": {
+    "pos": [
+     494,
+     347
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967300": {
+    "pos": [
+     577.2,
+     248.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "4294967301": {
+    "pos": [
+     543,
+     260
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967302": {
+    "pos": [
+     543,
+     260
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967303": {
+    "pos": [
+     543,
+     260
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "4294967304": {
+    "pos": [
+     543,
+     260
+    ],
+    "streak": 0,
+    "with_orders": false
+   }
+  },
+  "2": {
+   "8589934593": {
+    "pos": [
+     30.3,
+     534.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934594": {
+    "pos": [
+     30.5,
+     567.0
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934595": {
+    "pos": [
+     58.5,
+     600.2
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934596": {
+    "pos": [
+     31,
+     642
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934597": {
+    "pos": [
+     31,
+     642
+    ],
+    "streak": 0,
+    "with_orders": false
+   },
+   "8589934598": {
+    "pos": [
+     70.6,
+     581.8
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934599": {
+    "pos": [
+     54.4,
+     614.6
+    ],
+    "streak": 0,
+    "with_orders": true
+   },
+   "8589934600": {
+    "pos": [
+     31,
+     642
+    ],
+    "streak": 0,
+    "with_orders": false
+   }
+  }
+ },
+ "memo_paths": {
+  "1": "/home/lab/workspace/private/games/stars-ultranova-web/results/playtest/msgsmoke/memo-1.md",
+  "2": "/home/lab/workspace/private/games/stars-ultranova-web/results/playtest/msgsmoke/memo-2.md"
+ },
+ "done": false,
+ "victor": null,
+ "created": "2026-07-29T00:09:12+00:00",
+ "pending_messages": {
+  "2": {
+   "turn": 3,
+   "from": 1,
+   "text": "Agreed, Weaver. The east feeds my people well - I have no appetite for western threads. Tend your loom in peace, and we need never test whose cut runs deeper."
+  }
+ }
+}

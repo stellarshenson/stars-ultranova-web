@@ -577,6 +577,36 @@ class RonBattleEngine:
                 return candidate
         return None
 
+    def _boarding_intent(self, stack: Stack) -> Optional[Stack]:
+        """
+        The prize this stack is closing on to board, or None.
+
+        Same candidate walk as _boarding_target minus the same-square
+        gate: the first live, shields-down, boardable candidate in the
+        stack's own target order. _generate_attacks withholds this
+        stack's fire against it - the boarder wants a prize, not a
+        wreck, and without the restraint its own guns annihilated the
+        target whole while it was still closing, so a boarding order
+        could only ever be destruction's epilogue. The withheld fire is
+        the order's opportunity cost: those guns hit nothing else
+        harder, they simply spare the prize. The shields-down condition
+        keeps gate 3 honest - while shields are up the boarder still
+        shoots, because boarding rides on top of firepower.
+        """
+        if stack.boarding_spent or stack.is_starbase:
+            return None
+        if self._plan_of(stack).board != "When Able":
+            return None
+        for candidate in stack.target_list:
+            if candidate.is_destroyed or candidate.disengaged:
+                continue
+            if candidate.is_starbase or candidate.token is None:
+                continue
+            if candidate.token.shields > 0:
+                continue
+            return candidate
+        return None
+
     def _boarding_chance(self, attacker: Stack, defender: Stack) -> float:
         """
         Odds one boarding attempt succeeds.
@@ -1025,8 +1055,25 @@ class RonBattleEngine:
                     new_heading = self._break_off_heading(new_heading, speed)
                     self._count_flee_move(stack, battle)
                 elif stack.distance_to(stack.target) / self.GRID_SCALE < MAX_WEAPON_RANGE:
-                    # Run away from armed enemy
+                    # Run away from armed enemy. Avoidance, not a
+                    # declared disengage - it counts no flee moves and
+                    # never ends on its own - so it is bounded by the
+                    # board the way a give-ground step is. Unclamped,
+                    # an unarmed stack fled to infinity with every
+                    # armed pursuer in tow at a frozen gap (measured in
+                    # the boarding balance fight: gap stuck at 599
+                    # units, both battle lines dragged off the board
+                    # after the enemy's freighters, no stack ever in
+                    # weapon range again, so no boarding window - same
+                    # square, shields down - ever opened; 0 attempts in
+                    # all 14 runs). The board is canon's bounded 10x10;
+                    # a runner that cannot open the range any further
+                    # is catchable, which is also what keeps commerce
+                    # raiding possible. A DECLARED flee (Disengage
+                    # tactic) stays unclamped: leaving the board is its
+                    # point, and the flee counter removes the stack
                     new_heading = self._break_off_heading(new_heading, speed)
+                    gives_ground = True
                 else:
                     new_heading = NovaPoint(0, 0)
             elif tactic == "Disengage":
@@ -1396,6 +1443,11 @@ class RonBattleEngine:
             range_bonus = self._plan_of(
                 stack).posture_modifiers.weapon_range_bonus
 
+            # A boarding-ordered stack spares the prize it is closing
+            # on (see _boarding_intent); once the attempt is spent the
+            # intent is None and the guns come back
+            prize = self._boarding_intent(stack)
+
             for weapon in stack.token.design.weapons:
                 percent_fired = 0
                 target_index = 0
@@ -1406,6 +1458,11 @@ class RonBattleEngine:
                     # is gone (canonical: fleeing tokens can be fired
                     # upon only while still present)
                     if target.disengaged:
+                        target_index += 1
+                        continue
+                    # Fire withheld from the boarding prize - the
+                    # percent spills onto the next tier instead
+                    if target is prize:
                         target_index += 1
                         continue
                     dist_sq = stack.position.distance_to_squared(target.position)

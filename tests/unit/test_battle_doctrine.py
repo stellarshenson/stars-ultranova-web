@@ -15,6 +15,8 @@ missile-only, the shield multiplier never touches armour - and its
 sharpest cost is that Aggressive forfeits disengagement entirely.
 """
 
+from dataclasses import replace
+
 import pytest
 
 from backend.core.data_structures import NovaPoint
@@ -126,23 +128,29 @@ class TestAdmiraltyPlans:
 class TestStanceModifiers:
 
     def test_modifier_table(self):
+        """The literal pin of the calibrated stance table
+        (NN-surrogate candidate 076a9f0fef,
+        notebooks/balance_calibration.ipynb - the provenance comment
+        above STANCE_MODIFIERS). Every other test reads the table
+        constants, so this is the one place a recalibration is
+        re-pinned by hand."""
         aggressive = STANCE_MODIFIERS["Aggressive"]
         balanced = STANCE_MODIFIERS["Balanced"]
         defensive = STANCE_MODIFIERS["Defensive"]
 
         assert (aggressive.initiative, aggressive.missile_accuracy,
                 aggressive.shields, aggressive.may_disengage) == (
-                    2, 1.10, 0.80, False)
+                    1, 1.1746, 0.9463, False)
         assert (balanced.initiative, balanced.missile_accuracy,
                 balanced.shields, balanced.may_disengage,
                 balanced.disengage_moves) == (0, 1.0, 1.0, True, 7)
         assert (defensive.initiative, defensive.missile_accuracy,
                 defensive.shields, defensive.may_disengage,
-                defensive.disengage_moves) == (-2, 0.90, 1.25, True, 5)
+                defensive.disengage_moves) == (-2, 0.9488, 1.2575, True, 7)
 
     def test_shield_pool_scaled_at_battle_start_armour_untouched(self):
-        for stance, factor in (("Aggressive", 0.80), ("Balanced", 1.0),
-                               ("Defensive", 1.25)):
+        for stance in STANCES:
+            factor = STANCE_MODIFIERS[stance].shields
             plan = BattlePlan(name="P", stance=stance)
             server, engine = _doctrine_setup(plan)
             stack = _make_battle_stack(1, 1, 200, 200, armor=200.0,
@@ -166,7 +174,12 @@ class TestStanceModifiers:
         assert runner.flee_rounds == 0
         assert runner.position.x < 600  # closed instead of fleeing
 
-    def test_defensive_leaves_the_board_two_moves_sooner(self):
+    def test_defensive_leaves_after_its_table_moves(self):
+        """Calibration 076a9f0fef put Defensive's disengage at the
+        canonical 7 (it shipped at 5): leaving sooner is now bought
+        with the Scatter posture, not the stance. What the stance
+        still guarantees is that it MAY leave, after exactly the
+        moves its table row names."""
         plan = BattlePlan(name="P", tactic="Disengage", stance="Defensive")
         server, engine = _doctrine_setup(plan)
         wolf = _make_battle_stack(0, 1, 200, 200)
@@ -174,11 +187,12 @@ class TestStanceModifiers:
         stacks = [wolf, runner]
         battle = BattleReport()
 
-        assert engine._disengage_moves_required(runner) == 5
-        for battle_round in range(5, 10):
+        required = STANCE_MODIFIERS["Defensive"].disengage_moves
+        assert engine._disengage_moves_required(runner) == required
+        for battle_round in range(5, 5 + required):
             engine._select_targets(stacks)
             engine._move_stacks(stacks, battle_round, battle)
-        assert runner.flee_rounds == 5
+        assert runner.flee_rounds == required
         assert runner.disengaged is True
 
     def test_initiative_shifts_firing_order(self):
@@ -193,13 +207,18 @@ class TestStanceModifiers:
         engine._select_targets([slow, fast])
         attacks = engine._generate_attacks([slow, fast])
 
+        # The magnitude is the table's; the semantic is the order -
+        # any positive bonus puts the Aggressive stack first between
+        # otherwise identical designs
+        assert STANCE_MODIFIERS["Aggressive"].initiative > 0
         assert [a.source_stack.owner for a in attacks] == [1, 0]
-        assert attacks[0].initiative_bonus == 2
+        assert attacks[0].initiative_bonus == \
+            STANCE_MODIFIERS["Aggressive"].initiative
         assert attacks[1].initiative_bonus == 0
 
     def test_missile_accuracy_scaled_by_stance(self):
-        for stance, factor in (("Aggressive", 1.10), ("Balanced", 1.0),
-                               ("Defensive", 0.90)):
+        for stance in STANCES:
+            factor = STANCE_MODIFIERS[stance].missile_accuracy
             plan = BattlePlan(name="P", stance=stance)
             server, engine = _doctrine_setup(plan)
             attacker = _make_battle_stack(1, 1, 200, 200, battle_plan="P")
@@ -257,8 +276,13 @@ class TestPostures:
         and arrives piecemeal, so Brace won every matchup in the
         anti-degeneracy round-robin. The price is charged in the same
         currency Scatter already pays - the posture's own hit power.
+
+        The literal is the calibrated value (candidate 076a9f0fef,
+        notebooks/balance_calibration.ipynb) - this is the posture
+        table's one hand-pinned magnitude, mirroring
+        test_modifier_table for the stances.
         """
-        assert POSTURE_MODIFIERS["Brace"].damage_dealt == 0.80
+        assert POSTURE_MODIFIERS["Brace"].damage_dealt == 0.7864
 
         plan = BattlePlan(name="P", posture="Brace")
         server, engine = _doctrine_setup(plan)
@@ -279,7 +303,8 @@ class TestPostures:
             engine._process_attack(attack, battle)
         standard_damage = before - victim.token.armor
 
-        assert braced_damage == pytest.approx(standard_damage * 0.80)
+        assert braced_damage == pytest.approx(
+            standard_damage * POSTURE_MODIFIERS["Brace"].damage_dealt)
 
     def test_brace_does_not_pin_the_unarmed_hulls(self):
         """Brace fixes a FIRING position, and an unarmed hull has none.
@@ -313,7 +338,9 @@ class TestPostures:
         stack = _make_battle_stack(1, 1, 200, 200, shields=100.0,
                                    battle_plan="P")
         engine._apply_doctrine([stack])
-        assert stack.token.shields == pytest.approx(130.0)
+        # 100 x the posture table's shields multiplier
+        assert stack.token.shields == pytest.approx(
+            100.0 * POSTURE_MODIFIERS["Brace"].shields)
 
     def test_brace_fires_a_square_further(self):
         """A braced stack fights from a fixed emplacement, so it gets
@@ -356,7 +383,8 @@ class TestPostures:
             _make_battle_stack(0, 3, 200, 200, armor=1000.0))
 
         assert standard > 0
-        assert scattered == pytest.approx(standard * 0.85)
+        assert scattered == pytest.approx(
+            standard * POSTURE_MODIFIERS["Scatter"].damage_dealt)
 
     def test_scatter_is_harder_to_hit_with_missiles_only(self):
         """A spread-out formation is harder to guide a torpedo into
@@ -391,9 +419,13 @@ class TestPostures:
         plan.posture = "Standard"
         one_volley()
 
-        assert seen[0] == pytest.approx(seen[1] * 0.85)
+        assert seen[0] == pytest.approx(
+            seen[1] * POSTURE_MODIFIERS["Scatter"].incoming_missile_accuracy)
 
-    def test_scatter_halves_missile_splash_taken(self):
+    def test_scatter_reduces_missile_splash_taken(self):
+        """Calibration 076a9f0fef kept the semantic (a spread-out
+        formation takes less of a missile's area effect) but nearly
+        levelled the magnitude: splash_taken went 0.5 to 0.9728."""
         plan = BattlePlan(name="P", posture="Scatter")
         server, engine = _doctrine_setup(plan)
         attacker = _make_battle_stack(0, 1, 200, 200)
@@ -410,15 +442,28 @@ class TestPostures:
         engine._fire_missile(attacker, scattered, 800.0, 0.0, battle)
         splash_standard = 1000.0 - scattered.token.shields
 
-        assert splash_scattered == pytest.approx(splash_standard * 0.5)
+        assert splash_scattered < splash_standard
+        assert splash_scattered == pytest.approx(
+            splash_standard * POSTURE_MODIFIERS["Scatter"].splash_taken)
 
-    def test_scatter_shortens_the_disengage(self):
+    def test_scatter_shortens_the_disengage(self, monkeypatch):
         plan = BattlePlan(name="P", posture="Scatter")
         server, engine = _doctrine_setup(plan)
         runner = _make_battle_stack(1, 1, 600, 200, battle_plan="P")
+        # Balanced 7 + Scatter -2 = 5 (the tables' composition rule,
+        # _disengage_moves_required)
         assert engine._disengage_moves_required(runner) == 5
 
-        plan.stance = "Defensive"  # 5 - 2 = 3, at the floor
+        # Calibration 076a9f0fef put Defensive at the canonical 7 too,
+        # so the deepest shipped combination is 7 - 2 = 5 - above the
+        # floor, which the old table reached at 5 - 2 = 3
+        plan.stance = "Defensive"
+        assert engine._disengage_moves_required(runner) == 5
+
+        # The floor still binds any deeper reduction
+        monkeypatch.setitem(
+            POSTURE_MODIFIERS, "Scatter",
+            replace(POSTURE_MODIFIERS["Scatter"], disengage_moves_delta=-99))
         assert engine._disengage_moves_required(runner) == MIN_DISENGAGE_MOVES
 
 

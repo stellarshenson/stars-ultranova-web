@@ -1,0 +1,3 @@
+{"time": "2026-07-29T00:14:36+00:00", "turn": 1, "year": 2101, "type": "turn_time", "detail": {"seconds": 0.01, "anomaly": false}}
+{"time": "2026-07-29T00:17:38+00:00", "turn": 2, "year": 2102, "type": "turn_time", "detail": {"seconds": 0.01, "anomaly": false}}
+{"time": "2026-07-29T00:21:11+00:00", "turn": 3, "year": 2103, "type": "turn_time", "detail": {"seconds": 0.02, "anomaly": false}}

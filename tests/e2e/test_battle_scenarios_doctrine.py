@@ -352,7 +352,7 @@ def _stance_posture_scenario(stance, posture, axes):
     return Scenario(
         id=f"stance-{stance.lower()}-posture-{posture.lower()}",
         doc=(f"{stance} stance under the {posture} posture: shields "
-             f"x{axes.shields}, initiative {axes.initiative:+d}, "
+             f"x{axes.shields:.4f}, initiative {axes.initiative:+d}, "
              f"{axes.disengage_moves} board moves to break off."),
         plans=((2, _doctrine_plan(stance, posture)),),
         fleets=DOCTRINE_FLEETS,
@@ -360,35 +360,45 @@ def _stance_posture_scenario(stance, posture, axes):
     )
 
 
+def _axes(stance, posture, holds_position, may_disengage):
+    """One row's expected magnitudes, read off the doctrine tables
+    (NN-calibrated, candidate 076a9f0fef - the provenance comment
+    above STANCE_MODIFIERS) and composed by the documented rules: the
+    two shield pools multiply, hit power and reach are the posture's,
+    initiative is the stance's, and a break-off needs the stance's
+    moves plus the posture's delta, floored at MIN_DISENGAGE_MOVES.
+    The engine composes them in its own code, so every row still pins
+    the engine against the tables - and the next calibration does not
+    re-pin nine rows of literals here.
+
+    The SEMANTIC axes stay explicit per row - Brace holds position,
+    Aggressive forfeits withdrawal - and are cross-checked against the
+    tables, so a table edit cannot silently rewrite what a posture or
+    stance MEANS."""
+    stance_row = STANCE_MODIFIERS[stance]
+    posture_row = POSTURE_MODIFIERS[posture]
+    assert posture_row.holds_position is holds_position
+    assert stance_row.may_disengage is may_disengage
+    return Axes(
+        shields=stance_row.shields * posture_row.shields,
+        initiative=stance_row.initiative,
+        disengage_moves=max(
+            MIN_DISENGAGE_MOVES,
+            stance_row.disengage_moves + posture_row.disengage_moves_delta),
+        holds_position=holds_position,
+        damage_dealt=posture_row.damage_dealt,
+        range_bonus=posture_row.weapon_range_bonus,
+        may_disengage=may_disengage,
+    )
+
+
 STANCE_POSTURE_SCENARIOS = [
-    _stance_posture_scenario("Aggressive", "Standard", Axes(
-        shields=0.80, initiative=2, disengage_moves=7, holds_position=False,
-        damage_dealt=1.0, range_bonus=0, may_disengage=False)),
-    _stance_posture_scenario("Aggressive", "Brace", Axes(
-        shields=1.04, initiative=2, disengage_moves=7, holds_position=True,
-        damage_dealt=0.80, range_bonus=1, may_disengage=False)),
-    _stance_posture_scenario("Aggressive", "Scatter", Axes(
-        shields=0.80, initiative=2, disengage_moves=5, holds_position=False,
-        damage_dealt=0.85, range_bonus=0, may_disengage=False)),
-    _stance_posture_scenario("Balanced", "Standard", Axes(
-        shields=1.0, initiative=0, disengage_moves=7, holds_position=False,
-        damage_dealt=1.0, range_bonus=0, may_disengage=True)),
-    _stance_posture_scenario("Balanced", "Brace", Axes(
-        shields=1.30, initiative=0, disengage_moves=7, holds_position=True,
-        damage_dealt=0.80, range_bonus=1, may_disengage=True)),
-    _stance_posture_scenario("Balanced", "Scatter", Axes(
-        shields=1.0, initiative=0, disengage_moves=5, holds_position=False,
-        damage_dealt=0.85, range_bonus=0, may_disengage=True)),
-    _stance_posture_scenario("Defensive", "Standard", Axes(
-        shields=1.25, initiative=-2, disengage_moves=5, holds_position=False,
-        damage_dealt=1.0, range_bonus=0, may_disengage=True)),
-    _stance_posture_scenario("Defensive", "Brace", Axes(
-        shields=1.625, initiative=-2, disengage_moves=5, holds_position=True,
-        damage_dealt=0.80, range_bonus=1, may_disengage=True)),
-    _stance_posture_scenario("Defensive", "Scatter", Axes(
-        shields=1.25, initiative=-2, disengage_moves=MIN_DISENGAGE_MOVES,
-        holds_position=False, damage_dealt=0.85, range_bonus=0,
-        may_disengage=True)),
+    _stance_posture_scenario(stance, posture, _axes(
+        stance, posture,
+        holds_position=(posture == "Brace"),
+        may_disengage=(stance != "Aggressive")))
+    for stance in ("Aggressive", "Balanced", "Defensive")
+    for posture in ("Standard", "Brace", "Scatter")
 ]
 
 
@@ -408,9 +418,11 @@ def _check_aggressive_assault(field):
     line = field.stack("Escort Line")
     train = field.stack("Supply Train")
 
-    # Paid for in shields (Aggressive, x0.80), against an identical
-    # stack on the stock plan
-    assert wing.token.shields == pytest.approx(line.token.shields * 0.80)
+    # Paid for in shields (the Aggressive table multiplier), against
+    # an identical stack on the stock plan
+    assert wing.token.shields == pytest.approx(
+        line.token.shields * STANCE_MODIFIERS["Aggressive"].shields)
+    assert STANCE_MODIFIERS["Aggressive"].shields < 1.0
 
     # Warships before freighters: Armed Ship is the plan's secondary
     # tier, a freighter matches only the Any Ship tier at the bottom
@@ -422,7 +434,9 @@ def _check_aggressive_assault(field):
 
     # Fires ahead of a Balanced enemy of identical design
     generated = field.attacks("Assault Wing")
-    assert generated and all(a.initiative_bonus == 2 for a in generated)
+    assert generated and all(
+        a.initiative_bonus == STANCE_MODIFIERS["Aggressive"].initiative
+        for a in generated)
     ordered = field.engine._generate_attacks(field.stacks)
     assert ordered[0].source_stack is wing
 
@@ -479,8 +493,11 @@ def _check_defensive_hold(field):
     threshold can never carry it off the board."""
     bastion = field.stack("Bastion")
 
+    # The Defensive and Brace shield pools multiply (table rows)
     assert bastion.token.shields == pytest.approx(
-        field.stack("Assault Line").token.shields * 1.25 * 1.30)
+        field.stack("Assault Line").token.shields
+        * STANCE_MODIFIERS["Defensive"].shields
+        * POSTURE_MODIFIERS["Brace"].shields)
 
     field.place("Bastion", "Assault Line", 0)
     generated = field.attacks("Bastion")
@@ -548,12 +565,18 @@ def _check_escort_screen(field):
 
 def _check_fighting_retreat(field):
     """Leaves early and leaves fast: the first damage turns its tactic
-    to Disengage, and Defensive plus Scatter cut the break-off to the
-    MIN_DISENGAGE_MOVES floor."""
+    to Disengage, and Defensive plus Scatter cut the break-off two
+    moves under the canonical seven. (Calibration 076a9f0fef put the
+    Defensive stance's own disengage at 7, so the combination lands at
+    5 - it no longer reaches the MIN_DISENGAGE_MOVES floor.)"""
     rearguard = field.stack("Rearguard")
     engine = field.engine
 
-    assert engine._disengage_moves_required(rearguard) == MIN_DISENGAGE_MOVES
+    # Defensive 7 + Scatter -2 = 5, read off the tables
+    required = (STANCE_MODIFIERS["Defensive"].disengage_moves
+                + POSTURE_MODIFIERS["Scatter"].disengage_moves_delta)
+    assert required == 5
+    assert engine._disengage_moves_required(rearguard) == required
 
     # Undamaged it stands and fights its stand-off tactic
     field.place("Rearguard", "Pursuit", 6)
@@ -570,8 +593,8 @@ def _check_fighting_retreat(field):
     field.rounds(8, 9)
     assert rearguard.flee_rounds == 2
     assert rearguard.disengaged is False
-    field.rounds(10, 10)
-    assert rearguard.flee_rounds == MIN_DISENGAGE_MOVES
+    field.rounds(10, 12)
+    assert rearguard.flee_rounds == required
     assert rearguard.disengaged is True
     assert field.steps("Withdraw")
 
@@ -644,7 +667,7 @@ ADMIRALTY_SCENARIOS = [
     Scenario(
         id="admiralty-fighting-retreat",
         doc=("Fighting Retreat breaks off on first damage and needs "
-             "only the floor of board moves to do it."),
+             "two board moves fewer than the canonical seven to do it."),
         fleets=(
             FleetSpec(2, "Stalwart Defender", "Rearguard", 4,
                       "Fighting Retreat", parked=True),
@@ -890,10 +913,10 @@ def _check_withdraw_half_armour(field):
 
 
 def _check_withdraw_outnumbered(field):
-    """Outnumbered fires before a shot is taken - and on the deepest
-    reduction the shipped tables allow (Defensive plus Scatter) the
-    break-off still costs MIN_DISENGAGE_MOVES, because the floor holds
-    it there."""
+    """Outnumbered fires before a shot is taken - and the deepest
+    reduction the shipped tables allow (Defensive plus Scatter) now
+    stops above the MIN_DISENGAGE_MOVES floor, so the floor's own bite
+    is shown on a monkeypatched deeper reduction."""
     rearguard = field.stack("Rearguard")
     engine = field.engine
 
@@ -903,12 +926,13 @@ def _check_withdraw_outnumbered(field):
     assert engine._withdraw_threshold_met(rearguard) is True
     assert rearguard.damage_taken is False
 
-    # The reductions stack to exactly the floor, and the floor is what
-    # holds them there
-    assert (STANCE_MODIFIERS["Defensive"].disengage_moves
-            + POSTURE_MODIFIERS["Scatter"].disengage_moves_delta) == \
-        MIN_DISENGAGE_MOVES
-    assert engine._disengage_moves_required(rearguard) == MIN_DISENGAGE_MOVES
+    # Calibration 076a9f0fef stacks the shipped reductions to
+    # Defensive 7 + Scatter -2 = 5, above the floor (the old table
+    # reached it at 5 - 2 = 3); the floor still binds anything deeper
+    required = (STANCE_MODIFIERS["Defensive"].disengage_moves
+                + POSTURE_MODIFIERS["Scatter"].disengage_moves_delta)
+    assert MIN_DISENGAGE_MOVES < required == 5
+    assert engine._disengage_moves_required(rearguard) == required
     field.monkeypatch.setitem(
         POSTURE_MODIFIERS, "Scatter",
         replace(POSTURE_MODIFIERS["Scatter"], disengage_moves_delta=-99))
@@ -928,8 +952,10 @@ def _check_withdraw_outnumbered(field):
     field.rounds(8, 9)
     assert rearguard.flee_rounds == 2
     assert rearguard.disengaged is False
-    field.rounds(10, 10)
-    assert rearguard.flee_rounds == MIN_DISENGAGE_MOVES
+    field.rounds(10, 12)
+    assert rearguard.flee_rounds == (
+        STANCE_MODIFIERS["Defensive"].disengage_moves
+        + POSTURE_MODIFIERS["Scatter"].disengage_moves_delta)
     assert rearguard.disengaged is True
     assert field.steps("Withdraw")
 
@@ -959,9 +985,9 @@ WITHDRAWAL_SCENARIOS = [
     ),
     Scenario(
         id="withdraw-outnumbered-floored",
-        doc=("Outnumbered fires before a shot is taken, and the "
-             "MIN_DISENGAGE_MOVES floor holds the Defensive plus "
-             "Scatter reductions at three board moves."),
+        doc=("Outnumbered fires before a shot is taken; the Defensive "
+             "plus Scatter reductions stack to five board moves and "
+             "the MIN_DISENGAGE_MOVES floor caps anything deeper."),
         plans=((2, _threshold_plan("Outnumbered", stance="Defensive",
                                    posture="Scatter")),),
         fleets=_threshold_fleets(8),

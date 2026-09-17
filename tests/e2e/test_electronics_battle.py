@@ -222,17 +222,18 @@ class TestElectronicsBattle:
             harness, "Beam Cap", "Target Defl")
 
         # Beam range dissipation: the closing move leaves the stacks
-        # 0.82 of the Laser's range apart on the first exchange, so
-        # every hit keeps 100 - 10 * 0.82^2 = 93.276 percent of its
-        # power. The 0.82 is where the approach stops, and it moved
-        # from 0.80 when movement stopped being resolved in the order
-        # empires occupy in the stack list and started being resolved
-        # heaviest-first with a 15 percent juggle
-        # (RonBattleEngine._move_order, BattleEngine.cs:524). Both
-        # battles close to the same 0.82, so the claim this row is
+        # 0.94 of the Laser's range apart on the first exchange, so
+        # every hit keeps 100 - 10 * 0.94^2 = 91.164 percent of its
+        # power. The 0.94 is where the approach stops; it moved from
+        # 0.82 when the unarmed target's avoidance run stopped leaving
+        # the battle board (RonBattleEngine._move_stacks clamps it like
+        # a give-ground step; before that, 0.82 replaced 0.80 when
+        # movement went heaviest-first with a 15 percent juggle,
+        # RonBattleEngine._move_order, BattleEngine.cs:524). Both
+        # battles close to the same 0.94, so the claim this row is
         # really making - that the capacitor multiplies every hit by
         # exactly 1.21 - is untouched by the move
-        dissipation = 0.93276
+        dissipation = 0.91164
         # Laser power 10, quantity 1, deflector 10% -> 9.0 per hit;
         # with 2x Energy Capacitor (21% stacked) -> 10.89
         assert plain_steps[0]["damage"] == pytest.approx(

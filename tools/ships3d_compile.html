@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ships3d compile</title>
+<style>
+    body { margin: 0; background: #05070c; color: #cfd6df; font: 13px monospace; }
+    #log { padding: 10px; white-space: pre-wrap; }
+    canvas { display: block; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/frontend/vendor/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="log">compiling...</div>
+<script type="module">
+// Compile page: design record -> compiler -> GLTFExporter -> POST to the
+// save endpoint (tools/ships3d_server.py) -> assets/ships/<hull>.glb.
+// Usage: /tools/ships3d_compile.html?ship=destroyer
+//        /tools/ships3d_compile.html?ship=all   (full roster, sequential)
+import * as THREE from 'three';
+import { GLTFExporter } from '/frontend/vendor/three/examples/jsm/exporters/GLTFExporter.js';
+import { compileShip } from '/frontend/js/ships3d/compiler.js';
+import { loadDonorLibrary } from '/frontend/js/ships3d/donors.js';
+import { SHIP_RECORDS, HULL_NAMES } from '/frontend/js/ships3d/records.js';
+
+window.COMPILE_DONE = null;
+const log = (s) => { document.getElementById('log').textContent += '\n' + s; };
+const params = new URLSearchParams(location.search);
+const shipParam = params.get('ship') || 'destroyer';
+const ships = shipParam === 'all' ? HULL_NAMES : shipParam.split(',');
+let donors = null;
+
+async function compileOne(shipName) {
+    const record = SHIP_RECORDS[shipName];
+    if (!record) throw new Error(`unknown ship record: ${shipName}`);
+    const t0 = performance.now();
+    const { group, stats } = await compileShip(record, { donors });
+    log(`compiled ${shipName} in ${(performance.now() - t0).toFixed(0)} ms: ` +
+        `${stats.triangles} triangles, ${stats.components} components, materials [${stats.materials.join(', ')}]`);
+
+    const exporter = new GLTFExporter();
+    const glb = await new Promise((resolve, reject) => {
+        exporter.parse(group, resolve, reject, { binary: true });
+    });
+    log(`exported glb: ${(glb.byteLength / 1e6).toFixed(2)} MB`);
+
+    const res = await fetch(`/api/save-ship?name=${shipName}`, { method: 'POST', body: glb });
+    const saved = await res.json();
+    if (!saved.ok) throw new Error('save failed');
+    log(`saved: ${saved.path} (${saved.bytes} bytes)`);
+    return { ship: shipName, bytes: saved.bytes, stats: {
+        triangles: stats.triangles, vertices: stats.vertices, components: stats.components,
+        materials: stats.materials, three: stats.three,
+    } };
+}
+
+const results = [];
+try {
+    donors = await loadDonorLibrary();
+    log(`donor library: ${donors.size} parts`);
+    for (const shipName of ships) {
+        results.push(await compileOne(shipName));
+    }
+    window.COMPILE_DONE = { ok: true, count: results.length, results };
+    log('DONE');
+} catch (err) {
+    log('ERROR: ' + (err && err.message || err));
+    window.COMPILE_DONE = { ok: false, error: String(err && err.message || err), results };
+}
+</script>
+</body>
+</html>

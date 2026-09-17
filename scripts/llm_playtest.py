@@ -40,6 +40,8 @@ Outputs under results/playtest/<name>/:
     turnNNNN.json     full both-sides state dump per turn
     forensics.jsonl   anomaly events (see FORENSIC EVENT TYPES below)
     bug_reports.jsonl commanders' "observations" verbatim
+    messages.jsonl    commander-to-commander diplomacy, one per side
+                      per turn, delivered to the enemy the NEXT turn
     orders/           raw claude -p request+response per turn per side
 
 FORENSIC EVENT TYPES: order_rejected, commander_error, invalid_json,
@@ -124,7 +126,8 @@ ORDERS_SCHEMA_TEXT = """Reply with STRICT JSON only - a single JSON object, no m
   "cargo": [{"fleet_key": <key>, "ironium": <kT>, "boranium": <kT>, "germanium": <kT>, "colonists": <headcount>}],
   "designs": [{"name": "<new design name>", "hull": "<buildable hull name>", "role": "<warship|scout|colonizer|freighter|starbase>"}],
   "relations": [{"empire_id": <id>, "relation": "<Enemy|Neutral|Friend>"}],
-  "packets": [{"star": "<owned star with mass driver>", "target": "<star name>", "warp": <n>, "ironium": <kT>, "boranium": <kT>, "germanium": <kT>}]
+  "packets": [{"star": "<owned star with mass driver>", "target": "<star name>", "warp": <n>, "ironium": <kT>, "boranium": <kT>, "germanium": <kT>}],
+  "message": "<one short free-text message to the enemy commander; omit the key to stay silent>"
 }
 Rules:
 - production REPLACES the star's whole queue (list items in build order, max 6 per star); stars you omit keep their current queue
@@ -132,7 +135,8 @@ Rules:
 - cargo transfers with the orbited star: positive loads star -> fleet, negative unloads; colonists are headcount (load colonists before sending a colonizer)
 - designs: max 2 per turn; the harness fills slots with the best components your tech allows for the role; build the design afterwards via production type SHIP (or STARBASE) using its name
 - research: one field gets all progress; budget is the percent of resources spent on research
-- keep orders consistent with what you can see; invalid orders are rejected and wasted"""
+- keep orders consistent with what you can see; invalid orders are rejected and wasted
+- message: at most ONE per turn, delivered to the enemy commander at the start of their next turn; it is diplomacy, not truth - they may lie, and so may you"""
 
 
 def now_iso():
@@ -654,12 +658,12 @@ class Commander:
             words = words[:MEMO_WORD_CAP]
         self.memo_path.write_text(" ".join(words) + "\n")
 
-    def build_prompt(self, state_summary, digests):
+    def build_prompt(self, state_summary, digests, incoming=None):
         persona = PERSONAS[self.side]
         digest_text = "\n".join(
             f"  year {d['year']}: {d['digest']}" for d in digests
         ) or "  (none yet)"
-        return "\n\n".join([
+        sections = [
             f"You are \"{persona['name']}\", commander of empire "
             f"{self.side} in a game of Stars! (Nova web port). "
             f"This is a live playtest - play to win.",
@@ -667,9 +671,17 @@ class Commander:
             SHARED_BRIEF,
             "YOUR STRATEGY MEMO (from last turn):\n" + self.read_memo(),
             "RECENT EVENTS (last 5 turns):\n" + digest_text,
+        ]
+        if incoming:
+            sections.append(
+                "MESSAGE FROM THE ENEMY COMMANDER (sent last turn - "
+                "diplomacy, not truth; they may be lying):\n  "
+                + incoming)
+        sections += [
             "CURRENT STATE:\n" + state_summary,
             ORDERS_SCHEMA_TEXT,
-        ])
+        ]
+        return "\n\n".join(sections)
 
     def _call_claude(self, prompt):
         cmd = ["claude", "-p"]
@@ -687,12 +699,12 @@ class Commander:
                 f"claude -p rc={proc.returncode}: {proc.stderr[:400]}")
         return proc.stdout
 
-    def get_orders(self, turn, state_summary, digests):
+    def get_orders(self, turn, state_summary, digests, incoming=None):
         """Call claude -p; parse strict JSON with one retry.
 
         Returns (orders_dict_or_None, transcript). Never raises.
         """
-        prompt = self.build_prompt(state_summary, digests)
+        prompt = self.build_prompt(state_summary, digests, incoming)
         transcript = {"turn": turn, "side": self.side,
                       "persona": PERSONAS[self.side]["name"],
                       "model": self.model or "default",
@@ -1135,8 +1147,23 @@ class Playtest:
             state = self.get_state(side)
             summary = compact_state(state, self.catalog)
             commander = self.commanders[side]
+            # Deliver diplomatic messages sent to this side on EARLIER
+            # turns (same-turn messages wait, so side order confers no
+            # advantage). The mailbox is a QUEUE, not a slot: the first
+            # smoke run proved a single slot lets the first mover's new
+            # message overwrite its still-undelivered predecessor, so
+            # the second mover never receives anything.
+            incoming = None
+            pending = self.checkpoint.setdefault("pending_messages", {})
+            box = pending.get(str(side)) or []
+            if isinstance(box, dict):  # pre-queue checkpoint shape
+                box = [box]
+            due = [e for e in box if e.get("turn", turn) < turn]
+            if due:
+                incoming = "\n".join(e.get("text", "") for e in due)
+                pending[str(side)] = [e for e in box if e not in due]
             orders, transcript = commander.get_orders(
-                turn, summary, self.recent_digests(side))
+                turn, summary, self.recent_digests(side), incoming)
             stats["latency"] = [c.get("latency_s") for c in
                                 transcript.get("calls", [])
                                 if c.get("latency_s") is not None]
@@ -1148,6 +1175,24 @@ class Playtest:
                 observations = orders.get("observations") or []
                 if isinstance(observations, list) and observations:
                     self.forensics.bug_report(side, observations)
+                # Outgoing diplomatic message: one per turn, queued for
+                # the other side's next turn, logged verbatim
+                message = orders.get("message")
+                if isinstance(message, str) and message.strip():
+                    text = message.strip()[:600]
+                    other = 2 if side == 1 else 1
+                    box = pending.get(str(other)) or []
+                    if isinstance(box, dict):
+                        box = [box]
+                    box.append({"turn": turn, "from": side,
+                                "text": text})
+                    pending[str(other)] = box
+                    append_jsonl(self.run_dir / "messages.jsonl", {
+                        "ts": now_iso(), "turn": turn, "from": side,
+                        "from_name": PERSONAS[side]["name"],
+                        "to": other, "text": text})
+                    log(f"  side {side}: message -> side {other}: "
+                        f"{text[:80]}")
                 applier = OrderApplier(
                     self.api, self.checkpoint["game_id"],
                     self.forensics, self.catalog)

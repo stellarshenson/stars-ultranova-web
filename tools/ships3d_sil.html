@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ships3d silhouette harness</title>
+<style>
+    body { margin: 0; background: #ffffff; color: #333; font: 13px monospace; }
+    #log { padding: 10px; white-space: pre-wrap; }
+    canvas { display: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/frontend/vendor/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="log">rendering silhouettes...</div>
+<canvas id="main"></canvas>
+<script type="module">
+// Silhouette distance harness: renders every persisted assets/ships/<hull>.glb
+// as a flat black shape on white at thumbnail scale, POSTs sil-<hull>.png.
+// Usage: /tools/ships3d_sil.html[?ship=a,b,c][&size=256][&az=46&el=12]
+import * as THREE from 'three';
+import { GLTFLoader } from '/frontend/vendor/three/examples/jsm/loaders/GLTFLoader.js';
+import { HULL_NAMES } from '/frontend/js/ships3d/records.js';
+
+const log = (s) => { document.getElementById('log').textContent += '\n' + s; };
+const params = new URLSearchParams(location.search);
+const only = params.get('ship') ? params.get('ship').split(',') : null;
+const hulls = only || HULL_NAMES;
+const size = parseInt(params.get('size') || '256', 10);
+const az = (parseFloat(params.get('az') || '46') * Math.PI) / 180;
+const el = (parseFloat(params.get('el') || '12') * Math.PI) / 180;
+
+const canvas = document.getElementById('main');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+const black = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+// Camera distance at which the WHOLE hull fits in the square frame: every
+// mesh vertex is projected for the view direction and the farthest
+// constraint wins (screen-space extremes of a triangle occur at its
+// vertices), so the fit is tight AND no hull can clip at any render size
+// or angle. frac is the fraction of the half-frame the hull may occupy
+// (the margin), default 0.92.
+function fitDistance(root, center, azR, elR, fovDeg, frac) {
+    const t = Math.tan((fovDeg * Math.PI) / 360) * (frac || 0.92);
+    const u = new THREE.Vector3(Math.cos(elR) * Math.sin(azR), Math.sin(elR), Math.cos(elR) * Math.cos(azR));
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), u);
+    if (right.lengthSq() < 1e-9) right.set(1, 0, 0); else right.normalize();
+    const upv = new THREE.Vector3().crossVectors(u, right).normalize();
+    const v = new THREE.Vector3();
+    let d = 0;
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+        if (!o.isMesh) return;
+        const pos = o.geometry.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).sub(center);
+            const lat = Math.max(Math.abs(v.dot(right)), Math.abs(v.dot(upv)));
+            d = Math.max(d, v.dot(u) + lat / t);
+        }
+    });
+    return d;
+}
+
+async function renderOne(ship) {
+    const url = `/assets/ships/${ship}.glb`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`fetch ${url} -> ${resp.status}`);
+    const buf = await resp.arrayBuffer();
+    const gltf = await new Promise((resolve, reject) => {
+        new GLTFLoader().parse(buf, '/assets/ships/', resolve, reject);
+    });
+    gltf.scene.traverse((o) => { if (o.isMesh) o.material = black; });
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xffffff);
+    scene.add(gltf.scene);
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 800);
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const dist = fitDistance(gltf.scene, center, az, el, camera.fov, 0.92);
+    camera.position.set(
+        center.x + dist * Math.cos(el) * Math.sin(az),
+        center.y + dist * Math.sin(el),
+        center.z + dist * Math.cos(el) * Math.cos(az)
+    );
+    camera.lookAt(center);
+    renderer.setSize(size, size, false);
+    renderer.render(scene, camera);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    const res = await fetch(`/api/save-render?name=sil-${ship}`, { method: 'POST', body: blob });
+    const saved = await res.json();
+    if (!saved.ok) throw new Error(`save-render failed for sil-${ship}`);
+    scene.remove(gltf.scene);
+    gltf.scene.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+    log(`rendered sil-${ship}`);
+}
+
+window.RENDER_DONE = null;
+const done = [];
+try {
+    for (const h of hulls) { await renderOne(h); done.push(h); }
+    window.RENDER_DONE = { ok: true, count: done.length };
+    log('DONE');
+} catch (err) {
+    log('ERROR: ' + (err && err.message || err));
+    window.RENDER_DONE = { ok: false, error: String(err && err.message || err), count: done.length };
+}
+</script>
+</body>
+</html>

@@ -346,7 +346,7 @@ Feature-parity contract for the web port against the original Stars! Nova (C# re
 - [ ] **Storm balance calibration** - hazard and protection numbers calibrated via seeded trial games (survival rates with/without protection recorded and reviewed); constants adjusted until the curve feels right
   - log: 2026-07-13 user directive; calibration pass scheduled wave 6
 - [x] **Encyclopedia** - Help menu opens Encyclopedia with numbered entries (dust/emission nebulae, storms, wormholes, minefields, stargates) stating actual gameplay numbers
-  - log: 2026-07-13 implemented wave 3; frontend/js/views/encyclopedia.js, Help → Encyclopedia in menu-bar.js; entries mirror globals.py / MINE_STATS / gate catalog numbers; met with browser evidence wave 6
+  - log: 2026-07-13 implemented wave 3; frontend/js/views/encyclopedia.js, Help -> Encyclopedia in menu-bar.js; entries mirror globals.py / MINE_STATS / gate catalog numbers; met with browser evidence wave 6
   - log: 2026-07-14 storms entry extended wave 4 - Safe harbor bullet (orbit shelter) and a Protection paragraph mirroring the storm-protection constants (storm shield tiers 40/70/100% with tech costs, shields 35%, armor 15%, rad races 25%, additive with 100% cap, fleet-min, scan static never cleared); fleet panel shows "Storm protection: NN%" when > 0 (storm_protection in fleet API payload)
 - [x] **Emission nebula glare** - emission nebulae are not inert: their glow washes out sensors for a small scanner-range penalty at high glow density (constant in globals, far milder than dust), no effect on ship speed; encyclopedia entry updated to match
   - log: 2026-07-13 user directive - "must have some small effect, not entirely inert... maybe small sensor hit?"; scheduled wave 5
@@ -453,6 +453,12 @@ Canonical Stars! feature the C# reference never implemented (only a TODO in Game
   - log: 2026-07-13 thanks to beloved wife Ewa added by the user
   - log: 2026-07-13 implemented in menu-bar.js showAbout, verified in browser (walkthrough/final/wave3/01-about-dedication.png)
   - log: 2026-07-13 user fix: Henry named once, Ewa once - thanks line reworded, re-verified
+- [ ] **Ship 3D models ship in the game** - the compiled textured glb per hull (assets/ships/<hull>.glb, PBR materials, baked maps) is a runtime game asset, not a sprite-generation intermediate - user directive 'we keep 3d models in the game'; each glb self-contained, deterministic, under ~10 MB, loads cold via the vendored three.js GLTFLoader
+  - log: 2026-07-29 added
+- [ ] **In-game ship 3D viewer** - a ship detail view renders the hull's glb live in the client (vendored three.js, no CDN) with orbit, the three-point rig and tone mapping from the render harness; reachable from the ship designer and encyclopedia the same way the station refit view exposes station detail
+  - log: 2026-07-29 added
+- [ ] **Edge: missing or corrupt glb** - a hull whose glb is absent or fails to parse falls back to the existing 2D presentation with a console warning, never a broken canvas or a blocked panel
+  - log: 2026-07-29 added
 
 ## AI and Harness
 
@@ -508,6 +514,12 @@ A full-length game played by two LLM commanders against the real backend, mined 
   - log: 2026-07-28 DEF-8, DEF-9, DEF-10 fixed with unit + seeded e2e tests and closed in docs/defects.md; full suite 1013 passed, 8 skipped
   - log: 2026-07-28 DEF-14 (phantom unarmed battles), DEF-15 (battle loss summaries) and DEF-16 (homeworld placement fairness) fixed with unit + seeded e2e tests and closed in docs/defects.md - all nine run100 defects DEF-8..DEF-16 now closed; seeded fallout honestly updated (test_terraforming seed 20260713 -> 20260716, test_packets driver colony >= 26 ly) and the functional golden re-recorded and reproduced; full suite 1082 passed, 8 skipped
   - log: 2026-07-28 met - independent verification pass: all nine run100 defects closed in docs/defects.md with dated fix notes - DEF-8 (escort-spam score cap), DEF-9 (negative-hab truncation), DEF-10 (per-resource production banking), DEF-11 (in-transit placeholder warp), DEF-12 (colonize occupied-planet abort), DEF-13 (fuel-time distance cap + stranded message), DEF-14 (unarmed battle triggers), DEF-15 (battle loss summaries), DEF-16 (homeworld fairness); full suite 1082 passed 8 skipped, new defect e2es 18/18, functional gamethrough 8/8 against the regenerated golden, tests/e2e 85/85, both doc checkers clean
+- [ ] **Commander diplomacy channel** - each commander may send at most ONE free-text message per turn via the orders message key; delivered to the enemy commander at the start of their NEXT turn (same-turn messages wait, so side order confers no advantage); delivery consumes the message; pending message rides state.json so it survives --resume; no classification or typing of messages - free text only
+  - log: 2026-07-29 added
+- [ ] **Diplomacy logged verbatim** - every sent message appended to results/playtest/<name>/messages.jsonl with ts, turn, from, from_name, to and untruncated text (600 char cap applied at send); prompt marks the incoming message as diplomacy, not truth
+  - log: 2026-07-29 added
+- [ ] **Edge: no message sent** - omitted or blank message key sends nothing, logs nothing, and the enemy prompt carries no message block
+  - log: 2026-07-29 added
 
 ## Correspondence Play
 

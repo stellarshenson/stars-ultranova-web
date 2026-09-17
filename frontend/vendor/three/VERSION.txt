@@ -1,0 +1,2 @@
+three.js r0.185.1 (npm package 'three' 0.185.1), MIT license. Vendored files: build/three.module.js, build/three.core.js, examples/jsm/{loaders/GLTFLoader.js, exporters/GLTFExporter.js, controls/OrbitControls.js, utils/BufferGeometryUtils.js, utils/SkeletonUtils.js}
+, examples/jsm/environments/RoomEnvironment.js

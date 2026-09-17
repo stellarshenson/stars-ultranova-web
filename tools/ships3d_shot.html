@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ships3d shot harness</title>
+<style>
+    body { margin: 0; background: #05070c; color: #cfd6df; font: 13px monospace; }
+    #log { padding: 10px; white-space: pre-wrap; }
+    canvas { display: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/frontend/vendor/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="log">rendering...</div>
+<canvas id="main"></canvas>
+<script type="module">
+// Art-gate shot harness: renders persisted assets/ships/<hull>.glb from
+// arbitrary angles and POSTs pngs to /api/save-render.
+// Modes:
+//   ?orbit=1&ship=<hull|all>[&size=512]  - fixed 6-view orbit per hull:
+//       az/el: 46/12 (beauty), 90/2 (profile), 0/4 (bow), 180/8 (stern),
+//              90/78 (plan), 135/25 (aft quarter)
+//       slugs: orbit-<hull>-<view>
+//   ?ship=<hull>&az=..&el=..&size=..&slug=..[&fit=0.92][&fov=38] - single shot
+//   fit = fraction of the half-frame the hull may occupy; the camera distance
+//   is computed from the full bounding box so the hull NEVER clips
+import * as THREE from 'three';
+import { GLTFLoader } from '/frontend/vendor/three/examples/jsm/loaders/GLTFLoader.js';
+import { RoomEnvironment } from '/frontend/vendor/three/examples/jsm/environments/RoomEnvironment.js';
+import { HULL_NAMES } from '/frontend/js/ships3d/records.js';
+
+const log = (s) => { document.getElementById('log').textContent += '\n' + s; };
+const params = new URLSearchParams(location.search);
+
+const ORBIT_VIEWS = [
+    { v: 'beauty', az: 46, el: 12 },
+    { v: 'profile', az: 90, el: 2 },
+    { v: 'bow', az: 4, el: 6 },
+    { v: 'stern', az: 176, el: 10 },
+    { v: 'plan', az: 90, el: 78 },
+    { v: 'aftq', az: 135, el: 22 },
+];
+
+let jobs = [];
+if (params.get('orbit') === '1') {
+    const which = params.get('ship') || 'all';
+    const hulls = which === 'all' ? HULL_NAMES : which.split(',');
+    const size = parseInt(params.get('size') || '512', 10);
+    for (const h of hulls)
+        for (const o of ORBIT_VIEWS)
+            jobs.push({ ship: h, size, az: o.az, el: o.el, slug: `orbit-${h}-${o.v}`, fit: 0.92 });
+} else {
+    jobs = [{
+        ship: params.get('ship'),
+        size: parseInt(params.get('size') || '1024', 10),
+        az: parseFloat(params.get('az') || '46'),
+        el: parseFloat(params.get('el') || '12'),
+        slug: params.get('slug') || `shot-${params.get('ship')}`,
+        fit: parseFloat(params.get('fit') || '0.92'),
+        fov: parseFloat(params.get('fov') || '38'),
+    }];
+}
+
+const canvas = document.getElementById('main');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+function buildScene() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05070c);
+    const key = new THREE.DirectionalLight(0xfff0dc, 3.9);
+    key.position.set(6, 7, 5);
+    const fill = new THREE.DirectionalLight(0x8fb5ff, 1.0);
+    fill.position.set(-7, 1.5, 3);
+    const rim = new THREE.DirectionalLight(0xcfe2ff, 2.8);
+    rim.position.set(-2, 3.5, -8);
+    scene.add(key, fill, rim, new THREE.AmbientLight(0x1a2230, 1.0));
+    scene.environment = envTex;
+    scene.environmentIntensity = 0.45;
+    return scene;
+}
+
+const cache = new Map();
+async function loadShip(ship) {
+    if (cache.has(ship)) return cache.get(ship);
+    const url = `/assets/ships/${ship}.glb`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`fetch ${url} -> ${resp.status}`);
+    const buf = await resp.arrayBuffer();
+    const gltf = await new Promise((resolve, reject) => {
+        new GLTFLoader().parse(buf, '/assets/ships/', resolve, reject);
+    });
+    cache.set(ship, gltf);
+    if (cache.size > 2) {
+        const [oldKey] = cache.keys();
+        if (oldKey !== ship) {
+            const old = cache.get(oldKey);
+            cache.delete(oldKey);
+            old.scene.traverse((o) => {
+                if (!o.isMesh) return;
+                o.geometry.dispose();
+                for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+                    for (const k of Object.keys(m)) if (m[k] && m[k].isTexture) m[k].dispose();
+                    m.dispose();
+                }
+            });
+        }
+    }
+    return gltf;
+}
+
+// Camera distance at which the WHOLE hull fits in the square frame: every
+// mesh vertex is projected for the view direction and the farthest
+// constraint wins (screen-space extremes of a triangle occur at its
+// vertices), so the fit is tight AND no hull can clip at any render size
+// or angle. frac is the fraction of the half-frame the hull may occupy
+// (the margin), default 0.92.
+function fitDistance(root, center, az, el, fovDeg, frac) {
+    const t = Math.tan((fovDeg * Math.PI) / 360) * (frac || 0.92);
+    const u = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), u);
+    if (right.lengthSq() < 1e-9) right.set(1, 0, 0); else right.normalize();
+    const upv = new THREE.Vector3().crossVectors(u, right).normalize();
+    const v = new THREE.Vector3();
+    let d = 0;
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+        if (!o.isMesh) return;
+        const pos = o.geometry.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).sub(center);
+            const lat = Math.max(Math.abs(v.dot(right)), Math.abs(v.dot(upv)));
+            d = Math.max(d, v.dot(u) + lat / t);
+        }
+    });
+    return d;
+}
+
+async function renderOne(job) {
+    const gltf = await loadShip(job.ship);
+    const scene = buildScene();
+    scene.add(gltf.scene);
+    const camera = new THREE.PerspectiveCamera(job.fov || 38, 1, 0.05, 800);
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const az = (job.az * Math.PI) / 180, el = (job.el * Math.PI) / 180;
+    const dist = fitDistance(gltf.scene, center, az, el, camera.fov, job.fit || 0.92);
+    camera.position.set(
+        center.x + dist * Math.cos(el) * Math.sin(az),
+        center.y + dist * Math.sin(el),
+        center.z + dist * Math.cos(el) * Math.cos(az)
+    );
+    camera.lookAt(center);
+    renderer.setSize(job.size, job.size, false);
+    renderer.render(scene, camera);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    const res = await fetch(`/api/save-render?name=${job.slug}`, { method: 'POST', body: blob });
+    const saved = await res.json();
+    if (!saved.ok) throw new Error(`save-render failed for ${job.slug}`);
+    scene.remove(gltf.scene);
+    log(`rendered ${job.slug} (${saved.bytes} bytes)`);
+    return saved.bytes;
+}
+
+window.RENDER_DONE = null;
+const done = [];
+try {
+    for (const job of jobs) {
+        done.push({ slug: job.slug, bytes: await renderOne(job) });
+    }
+    window.RENDER_DONE = { ok: true, count: done.length, done };
+    log('DONE');
+} catch (err) {
+    log('ERROR: ' + (err && err.message || err));
+    window.RENDER_DONE = { ok: false, error: String(err && err.message || err), done };
+}
+</script>
+</body>
+</html>

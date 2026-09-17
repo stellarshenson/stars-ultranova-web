@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ships3d batch render</title>
+<style>
+    body { margin: 0; background: #05070c; color: #cfd6df; font: 13px monospace; }
+    #log { padding: 10px; white-space: pre-wrap; }
+    canvas { display: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/frontend/vendor/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="log">rendering...</div>
+<canvas id="main"></canvas>
+<script type="module">
+// Batch render driver: loads each persisted assets/ships/<hull>.glb cold
+// (never the generator), renders a beauty shot with the same rig as
+// frontend/preview-ships3d.html and POSTs the png to /api/save-render.
+// Usage: /tools/ships3d_render.html            (full roster at 1024)
+//        /tools/ships3d_render.html?detail=1   (2048 detail set only)
+//        ...&ship=a,b,c                        (restrict either mode to a subset)
+import * as THREE from 'three';
+import { GLTFLoader } from '/frontend/vendor/three/examples/jsm/loaders/GLTFLoader.js';
+import { RoomEnvironment } from '/frontend/vendor/three/examples/jsm/environments/RoomEnvironment.js';
+import { HULL_NAMES } from '/frontend/js/ships3d/records.js';
+
+const log = (s) => { document.getElementById('log').textContent += '\n' + s; };
+const params = new URLSearchParams(location.search);
+const detail = params.get('detail') === '1';
+const DETAIL_SET = ['dreadnought', 'battleship', 'battle-cruiser', 'nubian', 'ultra-miner'];
+const only = params.get('ship') ? params.get('ship').split(',') : null;
+const pick = (names) => (only ? names.filter((n) => only.includes(n)) : names);
+const jobs = detail
+    ? pick(DETAIL_SET).map((n) => ({ ship: n, size: 2048, slug: `detail-${n}` }))
+    : pick(HULL_NAMES).map((n) => ({ ship: n, size: 1024, slug: n }));
+
+const canvas = document.getElementById('main');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// Camera distance at which the WHOLE hull fits in the square frame: every
+// mesh vertex is projected for the view direction and the farthest
+// constraint wins (screen-space extremes of a triangle occur at its
+// vertices), so the fit is tight AND no hull can clip at any render size
+// or angle. frac is the fraction of the half-frame the hull may occupy
+// (the margin), default 0.92.
+function fitDistance(root, center, az, el, fovDeg, frac) {
+    const t = Math.tan((fovDeg * Math.PI) / 360) * (frac || 0.92);
+    const u = new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), u);
+    if (right.lengthSq() < 1e-9) right.set(1, 0, 0); else right.normalize();
+    const upv = new THREE.Vector3().crossVectors(u, right).normalize();
+    const v = new THREE.Vector3();
+    let d = 0;
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+        if (!o.isMesh) return;
+        const pos = o.geometry.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).sub(center);
+            const lat = Math.max(Math.abs(v.dot(right)), Math.abs(v.dot(upv)));
+            d = Math.max(d, v.dot(u) + lat / t);
+        }
+    });
+    return d;
+}
+
+function buildScene() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05070c);
+    let s = 12345;
+    const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const pts = [];
+    for (let i = 0; i < 900; i++) {
+        const v = new THREE.Vector3(rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1).normalize().multiplyScalar(220);
+        pts.push(v.x, v.y, v.z);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+    scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x9fb4d8, size: 0.35, sizeAttenuation: false })));
+    const key = new THREE.DirectionalLight(0xfff0dc, 3.9);
+    key.position.set(6, 7, 5);
+    const fill = new THREE.DirectionalLight(0x8fb5ff, 1.0);
+    fill.position.set(-7, 1.5, 3);
+    const rim = new THREE.DirectionalLight(0xcfe2ff, 2.8);
+    rim.position.set(-2, 3.5, -8);
+    scene.add(key, fill, rim, new THREE.AmbientLight(0x1a2230, 1.0));
+    scene.environment = envTex;
+    scene.environmentIntensity = 0.45;
+    return scene;
+}
+
+async function renderOne({ ship, size, slug }) {
+    const url = `/assets/ships/${ship}.glb`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`fetch ${url} -> ${resp.status}`);
+    const buf = await resp.arrayBuffer();
+    const gltf = await new Promise((resolve, reject) => {
+        new GLTFLoader().parse(buf, '/assets/ships/', resolve, reject);
+    });
+    const scene = buildScene();
+    scene.add(gltf.scene);
+
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 800);
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const azDeg = parseFloat(params.get('az') || '46'), elDeg = parseFloat(params.get('el') || '12');
+    const az = (azDeg * Math.PI) / 180, el = (elDeg * Math.PI) / 180;
+    const dist = fitDistance(gltf.scene, center, az, el, camera.fov, parseFloat(params.get('fit') || '0.92'));
+    camera.position.set(
+        center.x + dist * Math.cos(el) * Math.sin(az),
+        center.y + dist * Math.sin(el),
+        center.z + dist * Math.cos(el) * Math.cos(az)
+    );
+    camera.lookAt(center);
+
+    renderer.setSize(size, size, false);
+    renderer.render(scene, camera);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    const res = await fetch(`/api/save-render?name=${slug}`, { method: 'POST', body: blob });
+    const saved = await res.json();
+    if (!saved.ok) throw new Error(`save-render failed for ${slug}`);
+    log(`rendered ${slug} at ${size}: ${saved.path} (${saved.bytes} bytes)`);
+
+    // free GPU resources before the next ship
+    gltf.scene.traverse((o) => {
+        if (!o.isMesh) return;
+        o.geometry.dispose();
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+            for (const k of Object.keys(m)) if (m[k] && m[k].isTexture) m[k].dispose();
+            m.dispose();
+        }
+    });
+    return saved.bytes;
+}
+
+window.RENDER_DONE = null;
+const done = [];
+try {
+    for (const job of jobs) {
+        done.push({ slug: job.slug, bytes: await renderOne(job) });
+    }
+    window.RENDER_DONE = { ok: true, count: done.length, done };
+    log('DONE');
+} catch (err) {
+    log('ERROR: ' + (err && err.message || err));
+    window.RENDER_DONE = { ok: false, error: String(err && err.message || err), done };
+}
+</script>
+</body>
+</html>

@@ -135,14 +135,21 @@ class StanceModifiers:
     disengage_moves: int = 7
 
 
+# Values below are NN-surrogate calibrated (candidate 076a9f0fef,
+# notebooks/balance_calibration.ipynb, engine d7d028a): 256 real
+# round-robin evaluations, train total 90.8 within noise of the
+# 91.0 optimum while preserving the shipped semantic that
+# Aggressive forfeits withdrawal. Stance liveness 7 of 9 pairings,
+# posture 9 of 9, every spread inside the 1.25 bar. Exact floats
+# kept deliberately - rounding re-shifts the measured matrix
 STANCE_MODIFIERS: Dict[str, StanceModifiers] = {
     "Aggressive": StanceModifiers(
-        initiative=2, missile_accuracy=1.10, shields=0.80,
+        initiative=1, missile_accuracy=1.1746, shields=0.9463,
         may_disengage=False, disengage_moves=7),
     "Balanced": StanceModifiers(),
     "Defensive": StanceModifiers(
-        initiative=-2, missile_accuracy=0.90, shields=1.25,
-        may_disengage=True, disengage_moves=5),
+        initiative=-2, missile_accuracy=0.9488, shields=1.2575,
+        may_disengage=True, disengage_moves=7),
 }
 
 
@@ -197,16 +204,16 @@ POSTURE_MODIFIERS: Dict[str, PostureModifiers] = {
     # piecemeal. Without it Brace won every matchup in the
     # anti-degeneracy round-robin (tests/unit/test_battle_degeneracy)
     "Brace": PostureModifiers(
-        holds_position=True, shields=1.30, weapon_range_bonus=1,
-        damage_dealt=0.80),
+        holds_position=True, shields=1.0052, weapon_range_bonus=2,
+        damage_dealt=0.7864),
     # Scatter is spread out: harder to guide a torpedo into, half the
     # splash from a missile that misses, and two fewer board moves to
     # break off - paid for with concentration of fire. The evasion is
     # worth nothing against beams, so the enemy's weapon class decides
     # what the posture buys
     "Scatter": PostureModifiers(
-        splash_taken=0.5, incoming_missile_accuracy=0.85,
-        damage_dealt=0.85, disengage_moves_delta=-2),
+        splash_taken=0.9728, incoming_missile_accuracy=0.8095,
+        damage_dealt=0.9587, disengage_moves_delta=-2),
 }
 
 # Never fewer than this many board moves to leave a battle, however
